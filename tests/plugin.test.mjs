@@ -103,6 +103,7 @@ test("hook does not inspect messages, derive project from cwd, or accumulate tur
 
 test("guidance locates only the bundled memory skill relative to the package", () => {
   const guidance = buildGuidance(parseConfig(fixture()));
+  assert.ok(guidance.includes("For code tasks, use the obsidian-memory skill before working"));
   const file = JSON.parse(guidance.split("\n").find(line => line.startsWith('"')));
   assert.ok(isAbsolute(file));
   assert.ok(existsSync(file));
@@ -146,6 +147,7 @@ test("configuration is data, with delimiter markup escaped", () => {
 test("native manifest and entry agree without claiming a memory slot", () => {
   const manifest = JSON.parse(read("openclaw.plugin.json"));
   const codexManifest = JSON.parse(read(".codex-plugin/plugin.json"));
+  const hermesManifest = read("plugin.yaml");
   const pkg = JSON.parse(read("package.json"));
   assert.equal(manifest.id, plugin.id);
   assert.equal(manifest.version, pkg.version);
@@ -155,6 +157,9 @@ test("native manifest and entry agree without claiming a memory slot", () => {
   assert.equal(codexManifest.homepage, undefined);
   assert.equal(codexManifest.repository, undefined);
   assert.equal(manifest.kind, undefined);
+  assert.match(hermesManifest, /^name: obsidian-memory-plugin$/m);
+  assert.match(hermesManifest, /^version: 0\.4\.0$/m);
+  assert.match(hermesManifest, /^  vault_path:$/m);
   assert.deepEqual(manifest.configSchema.anyOf[1].required, ["agentId", "vaultPath"]);
   assert.deepEqual(manifest.skills, ["./skills"]);
   assert.equal(pkg.dependencies, undefined);
@@ -169,6 +174,7 @@ test("the only packaged skill is obsidian-memory, not external Obsidian skills",
   assert.deepEqual(readdirSync(new URL("skills/", root)).sort(), ["obsidian-memory"]);
   const body = read("skills/obsidian-memory/SKILL.md");
   assert.ok(body.includes("name: obsidian-memory"));
+  assert.ok(body.includes("For Hermes, the native adapter"));
   // Dependency declaration is an artifact check, not a claim of agent behavior.
   assert.ok(body.includes("https://github.com/kepano/obsidian-skills"));
 });

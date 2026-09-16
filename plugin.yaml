@@ -1,0 +1,34 @@
+name: obsidian-memory-plugin
+version: 0.4.0
+manifest_version: 2
+api_version: 1
+description: "Explicit, self-growing Obsidian memory workflow with lightweight always-on guidance."
+author: Cyber Health
+license: MIT
+homepage: https://github.com/annual30k/obsidian-memory-plugin
+tags:
+  - obsidian
+  - memory
+  - knowledge-base
+  - coding
+config_schema:
+  vault_path:
+    type: str
+    default: ""
+    description: "Absolute physical path of the user-selected Obsidian Vault."
+  vault:
+    type: str
+    default: ""
+    description: "Optional human-readable Vault label."
+  cli_path:
+    type: str
+    default: obsidian
+    description: "Obsidian CLI executable for app-only operations."
+  project_id:
+    type: str
+    default: ""
+    description: "Optional existing private project ID in projects.yaml."
+  project_root:
+    type: str
+    default: ""
+    description: "Optional actual code project root; never a gateway working directory by default."

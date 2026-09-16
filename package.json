@@ -1,13 +1,15 @@
 {
   "name": "obsidian-memory-plugin",
-  "version": "0.3.3",
+  "version": "0.4.0",
   "private": true,
-  "description": "The Obsidian Memory skill packaged for OpenClaw and Codex.",
+  "description": "The Obsidian Memory skill packaged for OpenClaw, Codex, and Hermes.",
   "type": "module",
   "license": "MIT",
   "engines": { "node": ">=22.22.3" },
   "files": [
     "index.js",
+    "__init__.py",
+    "plugin.yaml",
     "lib",
     "skills",
     "scripts",
@@ -23,9 +25,10 @@
   },
   "scripts": {
     "test": "node --test tests/*.test.mjs",
-    "check": "node --check index.js && node --check lib/config.js && node --check lib/prompt.js && node --check scripts/setup-codex.mjs",
+    "check": "node --check index.js && node --check lib/config.js && node --check lib/prompt.js && node --check scripts/setup-codex.mjs && node --check scripts/setup-hermes.mjs && python3 -m py_compile __init__.py",
     "check:codex": "node scripts/validate-codex-plugin.mjs",
     "setup:codex": "node scripts/setup-codex.mjs",
+    "setup:hermes": "node scripts/setup-hermes.mjs",
     "prepack": "npm run check && npm run check:codex && npm test"
   }
 }

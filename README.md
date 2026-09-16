@@ -2,20 +2,20 @@
 
 独立、可复用的 Obsidian 长期记忆插件。本文档只说明本插件自身的宿主接入、规则与排障；应用产品可以选择集成它，但不拥有或复制它。
 
-将已有的 **obsidian-memory Skill 内置到 OpenClaw 与 Codex 插件**。
+将已有的 **obsidian-memory Skill 内置到 OpenClaw、Codex 与 Hermes 插件**。
 插件负责加载入口与元数据配置；当前 Agent 按内置 Skill 建设与维护自生长知识库。
 
 ## 包含与依赖
 
 ```text
-宿主 (OpenClaw / Codex)
+宿主 (OpenClaw / Codex / Hermes)
   → 本插件内置 obsidian-memory Skill
   → 宿主独立安装的完整 kepano/obsidian-skills 套件（按任务加载）
   → 受限的 Vault 文件系统读写（默认）
   → Obsidian CLI → Obsidian 应用（仅应用专属操作）
 ```
 
-当前包版本：`0.3.3`。本包仅包含一个 Skill：`skills/obsidian-memory/`，
+当前包版本：`0.4.0`。本包仅包含一个 Skill：`skills/obsidian-memory/`，
 及其流程参考和 14 个最小记忆模板。
 **不打包、不复制、不重写 obsidian-skills。**
 
@@ -210,12 +210,36 @@ npm run check:codex
 
 ## Hermes 接入
 
-Hermes 原生加载 `SKILL.md` 目录，而非 OpenClaw/Codex manifest。集成方应从本包的已校验归档提取
-`obsidian-memory` 到 `$HERMES_HOME/skills/obsidian-memory`，并且仅在用户已确认 Vault 与项目范围后，
-设置 `OBSIDIAN_MEMORY_VAULT` 与 `OBSIDIAN_MEMORY_PROJECT_ID`。这不是独立的数据库或第二份记忆实现。
+本包现在包含 Hermes 原生插件。它注册一个**缓存安全、每个新会话仅生成一次**的系统提示词区块，
+规则只占很小的固定上下文；完整 Skill 和 Vault 检索仍按需加载。因此不会每轮扫描 Vault 或加载
+整份 `SKILL.md`。
 
-安装器只应覆盖带有自身所有权标记、且来源归档一致的 Hermes Skill；遇到用户已有的同名 Skill
-或不同 Vault 绑定必须拒绝并报告，不得替换用户内容。
+Hermes 的插件默认需要显式启用。安装并启用后，运行一次配置脚本；脚本会要求用户提供一个已经存在、
+可读取的 Vault 绝对路径，并且只调用 Hermes 配置命令写入本插件自己的 `settings.vault_path`：
+
+```sh
+hermes plugins install annual30k/obsidian-memory-plugin
+hermes plugins enable obsidian-memory-plugin
+node scripts/setup-hermes.mjs
+```
+
+非交互环境必须明确给出路径：
+
+```sh
+node scripts/setup-hermes.mjs --vault "/absolute/path/to/My Vault" --yes
+```
+
+插件不会猜测或创建 Vault，也不会在注册时读写 Vault。它把下面的主动规则放入**新的** Hermes 会话，
+然后由 Agent 按需加载命名空间 Skill `obsidian-memory-plugin:obsidian-memory`：
+
+```text
+For code tasks, use the obsidian-memory skill before working and when persisting durable project memory.
+```
+
+要让本机已安装但较旧的 Hermes 支持这项能力，需要升级到同时提供
+`register_skill()` 和 `register_system_prompt_section()` 的版本；适配层会检测缺失能力并拒绝假装已启用。
+配置变更也只对新会话生效。可用 `hermes plugins list`、`hermes prompt-size` 和 `hermes config show`
+确认状态；不要用全局 `AGENTS.md` 代替这个原生适配层。
 
 ## 首次使用
 
@@ -239,7 +263,7 @@ Hermes 原生加载 `SKILL.md` 目录，而非 OpenClaw/Codex manifest。集成�
 npm run check
 npm test
 npm pack
-node tests/openclaw-smoke.mjs obsidian-memory-plugin-0.3.3.tgz
+node tests/openclaw-smoke.mjs obsidian-memory-plugin-0.4.0.tgz
 openclaw plugins inspect obsidian-memory-plugin --runtime --json
 openclaw skills --agent main info obsidian-memory
 openclaw skills --agent main info obsidian-cli

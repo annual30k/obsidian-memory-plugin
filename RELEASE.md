@@ -5,7 +5,7 @@ It is not a submodule, runtime service, database, or private extension of an app
 
 ## Release artifact
 
-Each release publishes one immutable `npm pack` archive and a checksum. The archive contains the Plugin entry point, manifests, Skill, references, templates, tests, and validation scripts; it never contains `node_modules`, a Vault, user notes, or another application's source tree.
+Each release publishes one immutable `npm pack` archive and a checksum. The archive contains the Plugin entry point, manifests, Skill, references, templates and runtime validation scripts; source tests stay in the GitHub release source tree. It never contains `node_modules`, a Vault, user notes, or another application's source tree.
 
 ## Compatibility
 
@@ -16,4 +16,4 @@ Host integrations consume a pinned plugin version and checksum. An application-l
 1. Confirm that the release remains covered by the repository's MIT License.
 2. Run `npm run check`, `npm test`, `npm run check:codex`, and `npm pack`.
 3. Publish the generated archive, SHA-256 checksum, release notes, and host compatibility matrix together.
-4. Verify OpenClaw, Codex, and Hermes installation paths against that exact archive.
+4. Verify OpenClaw and Codex entrypoints plus Hermes `plugin.yaml`, namespaced Skill, proactive prompt section and Vault setup command against that exact archive.
