@@ -15,7 +15,7 @@
   → Obsidian CLI → Obsidian 应用（仅应用专属操作）
 ```
 
-当前包版本：`0.3.2`。本包仅包含一个 Skill：`skills/obsidian-memory/`，
+当前包版本：`0.3.3`。本包仅包含一个 Skill：`skills/obsidian-memory/`，
 及其流程参考和 14 个最小记忆模板。
 **不打包、不复制、不重写 obsidian-skills。**
 
@@ -157,9 +157,37 @@ npx skills add https://github.com/kepano/obsidian-skills
 
 发布后，应由本仓库的独立 Codex Marketplace 提供安装入口；不要再通过任何应用产品的 Marketplace 分发该通用插件。开发阶段可使用指向本仓库的本地 Marketplace 验证安装与升级。
 
-### 配置 Vault 环境变量
+### 一次性启用全部 Codex 代码项目
 
-Codex 通过环境变量或用户明确选择提供 Vault 连接。在终端或 shell profile（如 `~/.zshrc`）中配置：
+安装后的首次配置会要求用户明确提供 Vault 的绝对路径，再安全地更新用户全局
+`~/.codex/AGENTS.md`。它只新增或替换自己的标记区块，不覆盖其他指令，也不会
+猜测当前打开的 Obsidian Vault：
+
+```sh
+npm run setup:codex
+```
+
+也可用于非交互自动化；`--yes` 仅在明确提供 `--vault` 时可用：
+
+```sh
+npm run setup:codex -- --vault "/absolute/path/to/My Vault" --yes
+```
+
+配置完成后，脚本会写入以下规则和所选 Vault 路径（路径作为配置数据，而非指令）：
+
+```markdown
+<!-- obsidian-memory-plugin:start -->
+For code tasks, use the obsidian-memory skill before working and when persisting durable project memory.
+<!-- obsidian-memory-plugin:end -->
+```
+
+这让所有新 Codex 代码项目主动加载 memory workflow；它仍只选择性保存长期有价值的信息，
+不会自动记录每次聊天或每个 commit。若只希望某个仓库启用，请把同一规则放在该仓库根目录的
+`AGENTS.md`，不要运行全局配置脚本。
+
+### 使用环境变量或手动配置
+
+若不使用首次配置脚本，Codex 也可通过环境变量或用户明确选择提供 Vault 连接。在终端或 shell profile（如 `~/.zshrc`）中配置：
 
 ```sh
 export OBSIDIAN_MEMORY_VAULT="/absolute/path/to/My Vault"
@@ -211,7 +239,7 @@ Hermes 原生加载 `SKILL.md` 目录，而非 OpenClaw/Codex manifest。集成�
 npm run check
 npm test
 npm pack
-node tests/openclaw-smoke.mjs obsidian-memory-plugin-0.3.2.tgz
+node tests/openclaw-smoke.mjs obsidian-memory-plugin-0.3.3.tgz
 openclaw plugins inspect obsidian-memory-plugin --runtime --json
 openclaw skills --agent main info obsidian-memory
 openclaw skills --agent main info obsidian-cli

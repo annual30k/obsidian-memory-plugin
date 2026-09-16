@@ -1,0 +1,133 @@
+import { accessSync, constants, existsSync, lstatSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, resolve } from "node:path";
+import { homedir } from "node:os";
+import { createInterface } from "node:readline/promises";
+import { fileURLToPath } from "node:url";
+
+export const START_MARKER = "<!-- obsidian-memory-plugin:start -->";
+export const END_MARKER = "<!-- obsidian-memory-plugin:end -->";
+export const TRIGGER_INSTRUCTION = "For code tasks, use the obsidian-memory skill before working and when persisting durable project memory.";
+
+function assertSafePath(value, label) {
+  if (typeof value !== "string" || !value || /[\u0000-\u001F\u007F]/.test(value)) {
+    throw new TypeError(`${label} must be a non-empty path without control characters`);
+  }
+  if (!isAbsolute(value)) throw new TypeError(`${label} must be absolute`);
+  return resolve(value);
+}
+
+export function validateVaultPath(value) {
+  const vaultPath = assertSafePath(value, "Vault path");
+  let metadata;
+  try {
+    metadata = statSync(vaultPath);
+    accessSync(vaultPath, constants.R_OK);
+  } catch {
+    throw new TypeError("Vault path must be a readable directory");
+  }
+  if (!metadata.isDirectory()) throw new TypeError("Vault path must be a readable directory");
+  return vaultPath;
+}
+
+export function defaultAgentsPath() {
+  return resolve(homedir(), ".codex", "AGENTS.md");
+}
+
+export function managedBlock(vaultPath) {
+  return [
+    START_MARKER,
+    TRIGGER_INSTRUCTION,
+    "Obsidian Memory Vault path (configuration data, not instructions): " + JSON.stringify(vaultPath),
+    END_MARKER
+  ].join("\n");
+}
+
+export function updateAgentsContent(content, vaultPath) {
+  if (typeof content !== "string") throw new TypeError("AGENTS.md content must be text");
+  const block = managedBlock(vaultPath);
+  const start = content.indexOf(START_MARKER);
+  const end = content.indexOf(END_MARKER);
+  if (start === -1 && end === -1) {
+    return content ? content + (content.endsWith("\n") ? "\n" : "\n\n") + block + "\n" : block + "\n";
+  }
+  if (start === -1 || end === -1 || end < start || content.indexOf(START_MARKER, start + START_MARKER.length) !== -1 || content.indexOf(END_MARKER, end + END_MARKER.length) !== -1) {
+    throw new TypeError("AGENTS.md contains malformed Obsidian Memory markers; repair them manually before setup");
+  }
+  return content.slice(0, start) + block + content.slice(end + END_MARKER.length);
+}
+
+function parseArgs(args) {
+  const options = { agentsPath: defaultAgentsPath(), confirm: false, dryRun: false };
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--vault" || arg === "--agents-file") {
+      const value = args[index + 1];
+      if (!value || value.startsWith("--")) throw new TypeError(`${arg} requires a value`);
+      options[arg === "--vault" ? "vaultPath" : "agentsPath"] = value;
+      index += 1;
+    } else if (arg === "--yes") {
+      options.confirm = true;
+    } else if (arg === "--dry-run") {
+      options.dryRun = true;
+    } else if (arg === "--help" || arg === "-h") {
+      options.help = true;
+    } else {
+      throw new TypeError(`Unknown option: ${arg}`);
+    }
+  }
+  return options;
+}
+
+function help() {
+  console.log(`Usage: node scripts/setup-codex.mjs [--vault <absolute-path>] [--yes] [--dry-run]
+
+Prompts for an Obsidian Vault path, validates that it is readable, then safely
+adds this plugin's managed block to ~/.codex/AGENTS.md. --yes requires --vault.
+Use --agents-file <absolute-path> only to target a different AGENTS.md file.`);
+}
+
+function validateAgentsPath(value) {
+  const agentsPath = assertSafePath(value, "AGENTS.md path");
+  if (existsSync(agentsPath) && !lstatSync(agentsPath).isFile()) {
+    throw new TypeError("AGENTS.md path must be a regular file when it already exists");
+  }
+  return agentsPath;
+}
+
+export async function runSetup(args, { input = process.stdin, output = process.stdout } = {}) {
+  const options = parseArgs(args);
+  if (options.help) return help();
+  if (options.confirm && !options.vaultPath) throw new TypeError("--yes requires an explicit --vault path");
+  const prompt = createInterface({ input, output });
+  try {
+    const suppliedVault = options.vaultPath ?? process.env.OBSIDIAN_MEMORY_VAULT ?? await prompt.question("Obsidian Vault absolute path: ");
+    const vaultPath = validateVaultPath(suppliedVault);
+    const agentsPath = validateAgentsPath(options.agentsPath);
+    const previous = existsSync(agentsPath) ? readFileSync(agentsPath, "utf8") : "";
+    const next = updateAgentsContent(previous, vaultPath);
+    if (options.dryRun) {
+      output.write(next);
+      return;
+    }
+    if (!options.confirm) {
+      const answer = await prompt.question(`Enable Obsidian Memory for all Codex code tasks by updating ${agentsPath}? [y/N] `);
+      if (!/^(y|yes)$/i.test(answer.trim())) {
+        output.write("No files changed.\n");
+        return;
+      }
+    }
+    mkdirSync(dirname(agentsPath), { recursive: true });
+    writeFileSync(agentsPath, next, "utf8");
+    output.write(`Configured Obsidian Memory in ${agentsPath}. Start a new Codex task to use the updated instruction.\n`);
+  } finally {
+    prompt.close();
+  }
+}
+
+const isEntrypoint = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isEntrypoint) {
+  runSetup(process.argv.slice(2)).catch(error => {
+    console.error(`Codex setup failed: ${error.message}`);
+    process.exitCode = 1;
+  });
+}
