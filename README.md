@@ -75,6 +75,18 @@ Agent 会检查整套技能的实际来源与可用性；
   不应将拥有私有 Vault 权限的 Agent 无限制暴露给群聊/陌生用户。
 - 读取的资料可能发送到宿主配置的模型服务；本地存储不等于本地模型处理。
 
+## 从 GitHub 获取
+
+任何人都可以克隆公开仓库：
+
+```sh
+git clone https://github.com/annual30k/obsidian-memory-plugin.git
+cd obsidian-memory-plugin
+```
+
+然后按下方 OpenClaw、Codex 或 Hermes 的接入说明配置宿主。若只需下载源码，
+克隆完成即可；`package.json` 的 `private: true` 仅阻止误发布到 npm。
+
 ## 本地安装
 
 本包是本地开发产物，没有发布到 npm/ClawHub。替换下面的绝对路径：
