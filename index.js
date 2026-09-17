@@ -16,7 +16,9 @@ export default {
     api.on("before_prompt_build", (_event, context) => {
       const guidance = guidanceByAgent.get(context?.agentId);
       if (!guidance) return;
-      return { prependSystemContext: guidance };
+      // Keep memory guidance adjacent to this turn's request. OpenClaw's
+      // built-in memory instructions otherwise take precedence in practice.
+      return { prependContext: guidance };
     });
   }
 };

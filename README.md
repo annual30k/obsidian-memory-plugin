@@ -15,7 +15,7 @@
   → Obsidian CLI → Obsidian 应用（仅应用专属操作）
 ```
 
-当前包版本：`0.4.2`。本包仅包含一个 Skill：`skills/obsidian-memory/`，
+当前包版本：`0.4.3`。本包仅包含一个 Skill：`skills/obsidian-memory/`，
 及其流程参考和 14 个最小记忆模板。
 **不打包、不复制、不重写 obsidian-skills。**
 
@@ -94,7 +94,7 @@ cd obsidian-memory-plugin
 
 ```sh
 shasum -a 256 -c SHA256SUMS
-openclaw plugins install ./obsidian-memory-plugin-0.4.2.tgz
+openclaw plugins install ./obsidian-memory-plugin-0.4.3.tgz
 ```
 
 下例是从源码目录安装：
@@ -179,6 +179,9 @@ Inbox/ingest 边界和所选 Vault 配置。完整的依赖检查、作用域与
 `obsidian-memory` Skill 中按需加载；普通聊天不会因规则注入而访问 Vault。
 从 `0.4.2` 起，明确相关的待整理 Inbox 候选也可被找回，但必须标注“待整理”，
 不能被当作已确认的 Wiki 知识，召回也不会自动执行 ingest。
+`0.4.3` 将这段简短指引放在 OpenClaw 当前轮请求前，避免宿主内置的
+`memory_search` / `MEMORY.md` 空结果被误当成本插件 Vault 的空结果。
+它仍仅在已配置的 Agent 上触发；普通聊天不因此扫描 Vault。
 
 如果已有 plugins.allow，保留原成员并加入 `obsidian-memory-plugin`；
 检查技能可见性/同名覆盖后重启或重载实际 Gateway，使其载入配置。
@@ -306,8 +309,8 @@ For code tasks, use the obsidian-memory skill before working and when persisting
 npm run check
 npm test
 npm pack
-node tests/openclaw-smoke.mjs obsidian-memory-plugin-0.4.2.tgz
-node tests/host-package-smoke.mjs obsidian-memory-plugin-0.4.2.tgz
+node tests/openclaw-smoke.mjs obsidian-memory-plugin-0.4.3.tgz
+node tests/host-package-smoke.mjs obsidian-memory-plugin-0.4.3.tgz
 openclaw plugins inspect obsidian-memory-plugin --runtime --json
 openclaw skills --agent main info obsidian-memory
 openclaw skills --agent main info obsidian-cli

@@ -1,6 +1,6 @@
 {
   "name": "obsidian-memory-plugin",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "private": true,
   "description": "The Obsidian Memory skill packaged for OpenClaw, Codex, and Hermes.",
   "type": "module",

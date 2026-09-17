@@ -88,8 +88,8 @@ test("only one prompt hook is registered; it is scoped to the configured agent",
   assert.equal(hook({}, undefined), undefined);
   assert.equal(hook({}, { agentId: "another-agent" }), undefined);
   const result = hook({}, { agentId: "owner" });
-  assert.deepEqual(Object.keys(result), ["prependSystemContext"]);
-  assert.ok(result.prependSystemContext.includes("Example Vault"));
+  assert.deepEqual(Object.keys(result), ["prependContext"]);
+  assert.ok(result.prependContext.includes("Example Vault"));
 });
 
 test("hook does not inspect messages, derive project from cwd, or accumulate turns", () => {
@@ -98,7 +98,7 @@ test("hook does not inspect messages, derive project from cwd, or accumulate tur
   const ctx = { agentId: "owner", workspaceDir: "/not-a-code-project" };
   const first = hook(event, ctx);
   assert.deepEqual(hook(event, ctx), first);
-  assert.ok(!first.prependSystemContext.includes("/not-a-code-project"));
+  assert.ok(!first.prependContext.includes("/not-a-code-project"));
 });
 
 test("guidance locates only the bundled memory skill relative to the package", () => {
@@ -126,6 +126,7 @@ test("guidance stays compact while retaining memory triggers and explicit connec
   const guidance = buildGuidance(parseConfig({ agentId: "owner", vaultPath: fixture().vaultPath }));
   assert.ok(guidance.length < 1000, `guidance was ${guidance.length} characters`);
   assert.ok(guidance.includes("Ordinary chat needs no Vault access"));
+  assert.ok(guidance.includes("memory_search/MEMORY.md is a separate store"));
   assert.ok(guidance.includes("'remember' stages Inbox only"));
   assert.ok(guidance.includes("ingest requires an explicit user request"));
   const connection = JSON.parse(guidance.split("\n").find(line => line.startsWith("{") && line.includes("vaultPath")));
@@ -154,7 +155,7 @@ test("native manifest and entry agree without claiming a memory slot", () => {
   assert.equal(codexManifest.repository, undefined);
   assert.equal(manifest.kind, undefined);
   assert.match(hermesManifest, /^name: obsidian-memory-plugin$/m);
-  assert.match(hermesManifest, /^version: 0\.4\.2$/m);
+  assert.match(hermesManifest, new RegExp(`^version: ${pkg.version.replaceAll(".", "\\.")}$`, "m"));
   assert.match(hermesManifest, /^  vault_path:$/m);
   assert.deepEqual(manifest.configSchema.anyOf[1].required, ["agentId", "vaultPath"]);
   assert.deepEqual(manifest.skills, ["./skills"]);
