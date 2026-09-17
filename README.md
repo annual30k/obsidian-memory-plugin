@@ -15,7 +15,7 @@
   → Obsidian CLI → Obsidian 应用（仅应用专属操作）
 ```
 
-当前包版本：`0.4.0`。本包仅包含一个 Skill：`skills/obsidian-memory/`，
+当前包版本：`0.4.1`。本包仅包含一个 Skill：`skills/obsidian-memory/`，
 及其流程参考和 14 个最小记忆模板。
 **不打包、不复制、不重写 obsidian-skills。**
 
@@ -147,6 +147,10 @@ npx skills add https://github.com/kepano/obsidian-skills
 连接检查、初始化和跨项目 Global 偏好不要求项目配置，也不会顺带绑定项目。
 空配置可安装但不注入连接。插件不会在注册/Hook 中读取或写入 Vault。
 
+从 `0.4.1` 起，OpenClaw 每轮注入的规则只保留记忆触发条件、Skill 入口、
+Inbox/ingest 边界和所选 Vault 配置。完整的依赖检查、作用域与安全流程在
+`obsidian-memory` Skill 中按需加载；普通聊天不会因规则注入而访问 Vault。
+
 如果已有 plugins.allow，保留原成员并加入 `obsidian-memory-plugin`；
 检查技能可见性/同名覆盖后重启或重载实际 Gateway，使其载入配置。
 外部 Hook 的权限位于 hooks 下，不是 config 下。
@@ -263,7 +267,7 @@ For code tasks, use the obsidian-memory skill before working and when persisting
 npm run check
 npm test
 npm pack
-node tests/openclaw-smoke.mjs obsidian-memory-plugin-0.4.0.tgz
+node tests/openclaw-smoke.mjs obsidian-memory-plugin-0.4.1.tgz
 openclaw plugins inspect obsidian-memory-plugin --runtime --json
 openclaw skills --agent main info obsidian-memory
 openclaw skills --agent main info obsidian-cli

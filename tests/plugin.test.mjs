@@ -110,28 +110,24 @@ test("guidance locates only the bundled memory skill relative to the package", (
   assert.equal(file, fileURLToPath(new URL("skills/obsidian-memory/SKILL.md", root)));
 });
 
-test("guidance declares the complete external suite with task-relevant loading", () => {
+test("guidance delegates dependencies to the bundled skill without carrying the catalog every turn", () => {
   const guidance = buildGuidance(parseConfig(fixture()));
-  const prefix = "Host skill suite: ";
-  const declaration = guidance.split("\n").find(line => line.startsWith(prefix));
-  assert.ok(declaration);
-  const suite = JSON.parse(declaration.slice(prefix.length));
-  assert.equal(suite.repository, "https://github.com/kepano/obsidian-skills");
-  assert.equal(suite.installScope, "complete-upstream-suite");
-  assert.equal(suite.loadPolicy, "task-relevant-only");
-  assert.deepEqual(suite.skills, [
-    "obsidian-cli", "obsidian-markdown", "obsidian-bases", "json-canvas", "defuddle"
-  ]);
-  assert.equal(new Set(suite.skills).size, suite.skills.length);
-  for (const name of suite.skills) {
+  const body = read("skills/obsidian-memory/SKILL.md");
+  assert.ok(guidance.includes("Follow its dependency, scope, and safety rules"));
+  assert.ok(!guidance.includes("Host skill suite:"));
+  assert.ok(body.includes("https://github.com/kepano/obsidian-skills"));
+  for (const name of ["obsidian-cli", "obsidian-markdown", "obsidian-bases", "json-canvas", "defuddle"]) {
+    assert.ok(body.includes(name));
     assert.ok(!existsSync(new URL("skills/" + name, root)), "External skill must not be bundled: " + name);
   }
 });
 
-test("guidance permits scoped filesystem memory work and makes the CLI optional", () => {
+test("guidance stays compact while retaining memory triggers and explicit connection", () => {
   const guidance = buildGuidance(parseConfig({ agentId: "owner", vaultPath: fixture().vaultPath }));
-  assert.ok(guidance.includes("direct filesystem access"));
-  assert.ok(guidance.includes("Obsidian CLI only for requested app-specific operations"));
+  assert.ok(guidance.length < 1000, `guidance was ${guidance.length} characters`);
+  assert.ok(guidance.includes("Ordinary chat needs no Vault access"));
+  assert.ok(guidance.includes("'remember' stages Inbox only"));
+  assert.ok(guidance.includes("ingest requires an explicit user request"));
   const connection = JSON.parse(guidance.split("\n").find(line => line.startsWith("{") && line.includes("vaultPath")));
   assert.equal(connection.vault, undefined);
   assert.equal(connection.vaultPath, fixture().vaultPath);
@@ -158,7 +154,7 @@ test("native manifest and entry agree without claiming a memory slot", () => {
   assert.equal(codexManifest.repository, undefined);
   assert.equal(manifest.kind, undefined);
   assert.match(hermesManifest, /^name: obsidian-memory-plugin$/m);
-  assert.match(hermesManifest, /^version: 0\.4\.0$/m);
+  assert.match(hermesManifest, /^version: 0\.4\.1$/m);
   assert.match(hermesManifest, /^  vault_path:$/m);
   assert.deepEqual(manifest.configSchema.anyOf[1].required, ["agentId", "vaultPath"]);
   assert.deepEqual(manifest.skills, ["./skills"]);
