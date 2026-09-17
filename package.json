@@ -15,6 +15,7 @@
     "scripts",
     "openclaw.plugin.json",
     ".codex-plugin",
+    ".agents",
     "README.md",
     "SOURCES.md",
     "examples"

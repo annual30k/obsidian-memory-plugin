@@ -188,7 +188,14 @@ Inbox/ingest 边界和所选 Vault 配置。完整的依赖检查、作用域与
 
 本包遵循 Codex 原生插件规范，在根目录内置 `.codex-plugin/plugin.json`，与 OpenClaw 共享同一份自生长记忆 Skill。
 
-发布后，应由本仓库的独立 Codex Marketplace 提供安装入口；不要再通过任何应用产品的 Marketplace 分发该通用插件。开发阶段可使用指向本仓库的本地 Marketplace 验证安装与升级。
+本仓库自带独立的 `.agents/plugins/marketplace.json`，其条目指向仓库根目录的同一插件；发布到 GitHub 后可用以下命令安装，不依赖任何应用产品的 Marketplace：
+
+```sh
+codex plugin marketplace add annual30k/obsidian-memory-plugin
+codex plugin add obsidian-memory@obsidian-memory
+```
+
+开发阶段可将仓库路径作为本地 Marketplace 来源验证清单；GitHub 安装需等包含该清单的提交公开后才能使用。
 
 ### 一次性启用全部 Codex 代码项目
 

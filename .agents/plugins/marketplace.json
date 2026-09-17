@@ -1,0 +1,20 @@
+{
+  "name": "obsidian-memory",
+  "interface": {
+    "displayName": "Obsidian Memory"
+  },
+  "plugins": [
+    {
+      "name": "obsidian-memory",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/annual30k/obsidian-memory-plugin.git"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

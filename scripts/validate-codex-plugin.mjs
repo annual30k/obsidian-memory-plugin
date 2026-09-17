@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
 const manifestPath = resolve(root, ".codex-plugin", "plugin.json");
+const marketplacePath = resolve(root, ".agents", "plugins", "marketplace.json");
 const failures = [];
 
 function requireString(value, label) {
@@ -45,9 +46,30 @@ if (manifest) {
   if (JSON.stringify(manifest).includes("[TODO:")) failures.push("manifest contains an unfinished TODO placeholder");
 }
 
+let marketplace;
+try {
+  marketplace = JSON.parse(readFileSync(marketplacePath, "utf8"));
+} catch (error) {
+  failures.push(`cannot read valid JSON from .agents/plugins/marketplace.json: ${error.message}`);
+}
+if (marketplace) {
+  requireString(marketplace.name, "marketplace.name");
+  const entry = marketplace.plugins?.find(plugin => plugin.name === manifest?.name);
+  if (!entry) {
+    failures.push("marketplace must list the Codex plugin");
+  } else {
+    if (entry.source?.source !== "url" || entry.source?.url !== "https://github.com/annual30k/obsidian-memory-plugin.git") {
+      failures.push("marketplace must resolve this repository-root plugin");
+    }
+    if (entry.policy?.installation !== "AVAILABLE" || entry.policy?.authentication !== "ON_INSTALL") {
+      failures.push("marketplace policy must make the plugin available on install");
+    }
+  }
+}
+
 if (failures.length) {
   for (const failure of failures) console.error(`- ${failure}`);
   process.exitCode = 1;
 } else {
-  console.log(`Codex manifest validation passed: ${manifestPath}`);
+  console.log(`Codex manifest and marketplace validation passed: ${manifestPath}`);
 }

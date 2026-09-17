@@ -13,13 +13,18 @@ try {
   const root = join(sandbox, "package");
   const packageInfo = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
   const codexInfo = JSON.parse(readFileSync(join(root, ".codex-plugin", "plugin.json"), "utf8"));
+  const marketplace = JSON.parse(readFileSync(join(root, ".agents", "plugins", "marketplace.json"), "utf8"));
   const openclawInfo = JSON.parse(readFileSync(join(root, "openclaw.plugin.json"), "utf8"));
   const hermesInfo = readFileSync(join(root, "plugin.yaml"), "utf8");
   const skill = readFileSync(join(root, "skills", "obsidian-memory", "SKILL.md"), "utf8");
   assert.equal(codexInfo.version, packageInfo.version);
+  assert.ok(marketplace.plugins.some(plugin => plugin.name === codexInfo.name));
   assert.equal(openclawInfo.version, packageInfo.version);
   assert.match(hermesInfo, new RegExp(`^version: ${packageInfo.version.replaceAll(".", "\\.")}$`, "m"));
   assert.match(skill, /pending `inbox\/`/);
+  execFileSync(process.execPath, [join(root, "scripts", "validate-codex-plugin.mjs")], {
+    cwd: root, timeout: 15000
+  });
 
   const vault = join(sandbox, "vault");
   mkdirSync(vault);
