@@ -8,11 +8,27 @@ import {
   END_MARKER,
   START_MARKER,
   TRIGGER_INSTRUCTION,
+  defaultAgentsPath,
   managedBlock,
   runSetup,
   updateAgentsContent,
   validateVaultPath
 } from "../scripts/setup-codex.mjs";
+
+test("Codex onboarding targets the active global AGENTS file", () => {
+  const root = mkdtempSync(join(tmpdir(), "obsidian-memory-codex-"));
+  try {
+    const agents = join(root, "AGENTS.md");
+    const override = join(root, "AGENTS.override.md");
+    assert.equal(defaultAgentsPath(root), agents);
+    writeFileSync(override, "  \n");
+    assert.equal(defaultAgentsPath(root), agents);
+    writeFileSync(override, "# Active override\n");
+    assert.equal(defaultAgentsPath(root), override);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("Codex onboarding block contains the mandatory trigger and treats the Vault as data", () => {
   const block = managedBlock("/Volumes/My Vault");

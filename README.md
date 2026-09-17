@@ -193,7 +193,8 @@ Inbox/ingest 边界和所选 Vault 配置。完整的依赖检查、作用域与
 ### 一次性启用全部 Codex 代码项目
 
 安装后的首次配置会要求用户明确提供 Vault 的绝对路径，再安全地更新用户全局
-`~/.codex/AGENTS.md`。它只新增或替换自己的标记区块，不覆盖其他指令，也不会
+生效中的 Codex 全局 AGENTS 文件：通常是 `~/.codex/AGENTS.md`；若存在非空的
+`~/.codex/AGENTS.override.md`，则写入该文件。它只新增或替换自己的标记区块，不覆盖其他指令，也不会
 猜测当前打开的 Obsidian Vault：
 
 ```sh
@@ -226,7 +227,8 @@ For code tasks, use the obsidian-memory skill before working and when persisting
 export OBSIDIAN_MEMORY_VAULT="/absolute/path/to/My Vault"
 ```
 
-并在用户全局 `~/.codex/AGENTS.md`（或工作区 `AGENTS.md`）中确认包含引导：
+并在用户全局生效中的 `~/.codex/AGENTS.md` / `~/.codex/AGENTS.override.md`
+（或工作区 `AGENTS.md`）中确认包含引导：
 
 ```markdown
 For code tasks, use the obsidian-memory skill before working and when persisting durable project memory.
@@ -298,6 +300,7 @@ npm run check
 npm test
 npm pack
 node tests/openclaw-smoke.mjs obsidian-memory-plugin-0.4.2.tgz
+node tests/host-package-smoke.mjs obsidian-memory-plugin-0.4.2.tgz
 openclaw plugins inspect obsidian-memory-plugin --runtime --json
 openclaw skills --agent main info obsidian-memory
 openclaw skills --agent main info obsidian-cli

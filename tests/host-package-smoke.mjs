@@ -1,0 +1,60 @@
+// Verify the release archive itself, without changing installed host plugins or a real Vault.
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+
+if (!process.argv[2]) throw new Error("Usage: node tests/host-package-smoke.mjs <package.tgz>");
+const archive = resolve(process.argv[2]);
+const sandbox = mkdtempSync(join(tmpdir(), "obsidian-memory-hosts-"));
+try {
+  execFileSync("tar", ["-xzf", archive, "-C", sandbox], { timeout: 15000 });
+  const root = join(sandbox, "package");
+  const packageInfo = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+  const codexInfo = JSON.parse(readFileSync(join(root, ".codex-plugin", "plugin.json"), "utf8"));
+  const openclawInfo = JSON.parse(readFileSync(join(root, "openclaw.plugin.json"), "utf8"));
+  const hermesInfo = readFileSync(join(root, "plugin.yaml"), "utf8");
+  const skill = readFileSync(join(root, "skills", "obsidian-memory", "SKILL.md"), "utf8");
+  assert.equal(codexInfo.version, packageInfo.version);
+  assert.equal(openclawInfo.version, packageInfo.version);
+  assert.match(hermesInfo, new RegExp(`^version: ${packageInfo.version.replaceAll(".", "\\.")}$`, "m"));
+  assert.match(skill, /pending `inbox\/`/);
+
+  const vault = join(sandbox, "vault");
+  mkdirSync(vault);
+  const agents = join(sandbox, "AGENTS.md");
+  execFileSync(process.execPath, [join(root, "scripts", "setup-codex.mjs"),
+    "--vault", vault, "--agents-file", agents, "--yes"], { timeout: 15000 });
+  const codexRules = readFileSync(agents, "utf8");
+  assert.match(codexRules, /For code tasks, use the obsidian-memory skill/);
+  assert.ok(codexRules.includes(JSON.stringify(vault)));
+
+  const hermesProbe = String.raw`
+import importlib.util, json, sys
+from pathlib import Path
+root = Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location("obsidian_memory_plugin", root / "__init__.py", submodule_search_locations=[str(root)])
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+class Ctx:
+    def __init__(self): self.skills, self.sections = [], {}
+    def get_config(self, key, default=None): return {"vault_path": sys.argv[2]}.get(key, default)
+    def register_skill(self, name, path, description=""): self.skills.append((name, str(path)))
+    def register_system_prompt_section(self, ident, content, **kwargs): self.sections[ident] = content({})
+ctx = Ctx()
+module.register(ctx)
+print(json.dumps({"skills": ctx.skills, "guidance": ctx.sections[module.SECTION_ID]}))
+`;
+  const hermes = JSON.parse(execFileSync("python3", ["-c", hermesProbe, root, vault], {
+    encoding: "utf8", timeout: 15000
+  }));
+  assert.equal(hermes.skills[0][0], "obsidian-memory");
+  assert.equal(hermes.skills[0][1], join(root, "skills", "obsidian-memory", "SKILL.md"));
+  assert.match(hermes.guidance, /obsidian-memory-plugin:obsidian-memory/);
+  assert.ok(hermes.guidance.includes(vault));
+  console.log(`Archive host smoke passed for OpenClaw, Codex and Hermes manifests and adapters: ${packageInfo.version}`);
+} finally {
+  rmSync(sandbox, { recursive: true, force: true });
+}

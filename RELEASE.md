@@ -16,5 +16,5 @@ Host integrations consume a pinned plugin version and checksum. An application-l
 1. Confirm that the release remains covered by the repository's MIT License.
 2. Run `npm run check`, `npm test`, `npm run check:codex`, and `npm pack`.
 3. Publish the generated archive, SHA-256 checksum, release notes, and host compatibility matrix together.
-4. Verify OpenClaw and Codex entrypoints plus Hermes `plugin.yaml`, namespaced Skill, proactive prompt section and Vault setup command against that exact archive.
+4. Run `node tests/host-package-smoke.mjs <archive.tgz>` and `node tests/openclaw-smoke.mjs <archive.tgz>` against that exact archive. These cover packaged Codex and Hermes entrypoints, the shared Skill, and isolated OpenClaw host loading; they do not prove model behavior.
 5. For memory behavior changes, run the relevant isolated, synthetic-Vault conversations in `tests/skill-scenarios.md` on the intended host/model. Record the observed recall, provenance, scope, writes and latency; passing unit and package tests alone is not proof of agent behavior.

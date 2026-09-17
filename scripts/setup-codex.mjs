@@ -29,8 +29,15 @@ export function validateVaultPath(value) {
   return vaultPath;
 }
 
-export function defaultAgentsPath() {
-  return resolve(homedir(), ".codex", "AGENTS.md");
+export function defaultAgentsPath(codexHome = resolve(homedir(), ".codex")) {
+  const overridePath = resolve(codexHome, "AGENTS.override.md");
+  if (existsSync(overridePath)) {
+    if (!lstatSync(overridePath).isFile()) {
+      throw new TypeError("Codex AGENTS.override.md must be a regular file");
+    }
+    if (readFileSync(overridePath, "utf8").trim()) return overridePath;
+  }
+  return resolve(codexHome, "AGENTS.md");
 }
 
 export function managedBlock(vaultPath) {
@@ -82,8 +89,9 @@ function help() {
   console.log(`Usage: node scripts/setup-codex.mjs [--vault <absolute-path>] [--yes] [--dry-run]
 
 Prompts for an Obsidian Vault path, validates that it is readable, then safely
-adds this plugin's managed block to ~/.codex/AGENTS.md. --yes requires --vault.
-Use --agents-file <absolute-path> only to target a different AGENTS.md file.`);
+adds this plugin's managed block to the active global AGENTS file (AGENTS.override.md
+when non-empty, otherwise AGENTS.md). --yes requires --vault.
+Use --agents-file <absolute-path> only to target a different AGENTS file.`);
 }
 
 function validateAgentsPath(value) {
