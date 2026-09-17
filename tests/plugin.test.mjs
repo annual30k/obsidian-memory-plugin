@@ -154,7 +154,7 @@ test("native manifest and entry agree without claiming a memory slot", () => {
   assert.equal(codexManifest.repository, undefined);
   assert.equal(manifest.kind, undefined);
   assert.match(hermesManifest, /^name: obsidian-memory-plugin$/m);
-  assert.match(hermesManifest, /^version: 0\.4\.1$/m);
+  assert.match(hermesManifest, /^version: 0\.4\.2$/m);
   assert.match(hermesManifest, /^  vault_path:$/m);
   assert.deepEqual(manifest.configSchema.anyOf[1].required, ["agentId", "vaultPath"]);
   assert.deepEqual(manifest.skills, ["./skills"]);

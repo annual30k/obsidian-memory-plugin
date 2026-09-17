@@ -46,6 +46,8 @@ an explicit user-approved ID and `roots: []`; it must be selected explicitly.
 Inbox is editable pending evidence. User-triggered ingest freezes the selected
 evidence into Raw before updating derived Wiki/Checkpoint/preference notes.
 Retained attachments go through inbox/assets then exact-copy raw/assets.
+Relevant pending Inbox candidates may be recalled within their selected scope,
+but must be labeled provisional; recall never promotes them to Raw or Wiki.
 
 At first meaningful ingest, establish the project taxonomy in its AGENTS from
 selected evidence, rather than assuming every project needs the same categories.

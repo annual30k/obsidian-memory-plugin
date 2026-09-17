@@ -11,9 +11,11 @@ const sandbox = await mkdtemp(join(tmpdir(), "obsidian-memory-smoke-"));
 try {
   const unpacked = join(sandbox, "unpacked");
   const state = join(sandbox, "state");
+  const vault = join(sandbox, "synthetic-vault");
   const configPath = join(state, "openclaw.json");
   await mkdir(unpacked);
   await mkdir(state);
+  await mkdir(vault);
   execFileSync("tar", ["-xzf", archive, "-C", unpacked], { timeout: 15000 });
   const packageRoot = join(unpacked, "package");
   const packedManifest = JSON.parse(await readFile(join(packageRoot, "openclaw.plugin.json"), "utf8"));
@@ -23,13 +25,7 @@ try {
       load: { paths: [packageRoot] },
       entries: {
         "obsidian-memory-plugin": {
-          enabled: true,
-          hooks: { allowConversationAccess: true, allowPromptInjection: true },
-          config: {
-            agentId: "owner",
-            vault: "Smoke Test (not connected)",
-            vaultPath: join(sandbox, "not-a-real-vault")
-          }
+          enabled: false
         }
       }
     }
@@ -46,6 +42,15 @@ try {
     stdio: ["ignore", "pipe", "pipe"]
   });
   const version = run(["--version"]).trim();
+  execFileSync(process.execPath, [join(packageRoot, "scripts", "setup-openclaw.mjs"),
+    "--vault", vault, "--agent", "main", "--yes"], {
+    env, cwd: sandbox, encoding: "utf8", timeout: 30000,
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  const configured = JSON.parse(run(["config", "get", "plugins.entries.obsidian-memory-plugin", "--json"]));
+  assert.ok(configured.config, JSON.stringify(configured));
+  assert.equal(configured.config.agentConfigs.main.vaultPath, vault);
+  assert.equal(configured.hooks.allowPromptInjection, true);
   const raw = run(["plugins", "inspect", "obsidian-memory-plugin", "--runtime", "--json"]);
   const offset = raw.indexOf("{");
   assert.ok(offset >= 0, "Expected JSON plugin inspection");
@@ -58,7 +63,7 @@ try {
   assert.deepEqual(report.services, []);
   assert.deepEqual(report.mcpServers, []);
   assert.ok(!report.diagnostics?.some(item => item.level === "error" || item.severity === "error"));
-  const skills = run(["skills", "info", "obsidian-memory", "--json"]);
+  const skills = run(["skills", "--agent", "main", "info", "obsidian-memory", "--json"]);
   const skillInfo = JSON.parse(skills.slice(skills.indexOf("{")));
   assert.equal(skillInfo.name, "obsidian-memory");
   assert.equal(skillInfo.eligible, true);
@@ -78,7 +83,8 @@ try {
     hook: "before_prompt_build",
     skillSource: "extracted tarball",
     verifiedSkillFiles: skillFiles.length,
-    liveGatewayChanged: false, vaultAccessed: false
+    liveGatewayChanged: false, syntheticVaultOnly: true,
+    memoryNotesWritten: (await readdir(vault)).length === 0 ? false : "unexpected"
   }, null, 2));
 } finally {
   await rm(sandbox, { recursive: true, force: true });

@@ -37,7 +37,8 @@ Inbox and Raw use the stable identity and evidence fields from their templates.
 
 ## Workflow and navigation
 
-Recall from index.md, Wiki, Raw and Checkpoints; Inbox is pending evidence.
+Recall from index.md, Wiki, Raw and Checkpoints. Relevant pending Inbox may be
+shown as provisional evidence within this project's scope, never as settled Wiki.
 Qualified capture goes to Inbox. Only a user-triggered ingest freezes Raw,
 updates canonical knowledge and index/log, then marks verified candidates ingested.
 Keep Raw immutable and log append-only. Serialize writes in this project.

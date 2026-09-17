@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { createInterface } from "node:readline/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -66,7 +67,7 @@ export async function runSetup(args, { input = process.stdin, output = process.s
   }
 }
 
-const isEntrypoint = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+const isEntrypoint = process.argv[1] && realpathSync(resolve(process.argv[1])) === fileURLToPath(import.meta.url);
 if (isEntrypoint) {
   runSetup(process.argv.slice(2)).catch(error => {
     console.error(`Hermes setup failed: ${error.message}`);

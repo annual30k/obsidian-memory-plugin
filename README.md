@@ -15,7 +15,7 @@
   → Obsidian CLI → Obsidian 应用（仅应用专属操作）
 ```
 
-当前包版本：`0.4.1`。本包仅包含一个 Skill：`skills/obsidian-memory/`，
+当前包版本：`0.4.2`。本包仅包含一个 Skill：`skills/obsidian-memory/`，
 及其流程参考和 14 个最小记忆模板。
 **不打包、不复制、不重写 obsidian-skills。**
 
@@ -89,11 +89,38 @@ cd obsidian-memory-plugin
 
 ## 本地安装
 
-本包是本地开发产物，没有发布到 npm/ClawHub。替换下面的绝对路径：
+本包没有发布到 npm/ClawHub。可从 [GitHub Release](https://github.com/annual30k/obsidian-memory-plugin/releases)
+下载对应版本的 `.tgz` 和 `SHA256SUMS`，校验后从压缩包安装；开发者也可替换下面的绝对路径链接源码：
+
+```sh
+shasum -a 256 -c SHA256SUMS
+openclaw plugins install ./obsidian-memory-plugin-0.4.2.tgz
+```
+
+下例是从源码目录安装：
 
 ```sh
 openclaw plugins install --link "/absolute/path/to/obsidian-memory-plugin"
 ```
+
+安装后运行一次配置向导，明确提供已经存在、可读取的 Vault 路径并选择要启用的 Agent
+（交互模式默认 `main`）。脚本会保留其他 Agent 和插件设置，验证配置后使用 OpenClaw
+自身的配置命令更新本插件条目；不会猜测 Vault，也不会自动创建它：
+
+```sh
+npm run setup:openclaw
+```
+
+非交互模式必须明确给出 Vault 和 Agent。先用 `--dry-run` 预检，确认后移除该参数：
+
+```sh
+npm run setup:openclaw -- --vault "/absolute/path/to/My Vault" --agent main --dry-run
+npm run setup:openclaw -- --vault "/absolute/path/to/My Vault" --agent main --yes
+openclaw gateway restart
+```
+
+如果从 Release 压缩包安装，配置脚本也在安装后的插件目录 `scripts/setup-openclaw.mjs`
+内；可运行该脚本（或解压压缩包后在包目录运行以上 `npm run` 命令）。
 
 安装前审核来源。如果宿主要求来源确认，先确认路径及同名旧插件；
 不要直接用强制覆盖绕过检查。
@@ -108,7 +135,7 @@ npx skills add https://github.com/kepano/obsidian-skills
 技能安装器补齐完整清单。不要覆盖已有定制版本或写入错误宿主目录。之后
 逐个检查来源、可见性和运行条件；只发现 CLI/Markdown 两项不能算全套就绪。
 
-然后将 [examples/openclaw.config.json](examples/openclaw.config.json) **合并**
+也可手动将 [examples/openclaw.config.json](examples/openclaw.config.json) **合并**
 进当前 OpenClaw 配置，不替换其他设置：
 
 ```json
@@ -150,6 +177,8 @@ npx skills add https://github.com/kepano/obsidian-skills
 从 `0.4.1` 起，OpenClaw 每轮注入的规则只保留记忆触发条件、Skill 入口、
 Inbox/ingest 边界和所选 Vault 配置。完整的依赖检查、作用域与安全流程在
 `obsidian-memory` Skill 中按需加载；普通聊天不会因规则注入而访问 Vault。
+从 `0.4.2` 起，明确相关的待整理 Inbox 候选也可被找回，但必须标注“待整理”，
+不能被当作已确认的 Wiki 知识，召回也不会自动执行 ingest。
 
 如果已有 plugins.allow，保留原成员并加入 `obsidian-memory-plugin`；
 检查技能可见性/同名覆盖后重启或重载实际 Gateway，使其载入配置。
@@ -252,10 +281,11 @@ For code tasks, use the obsidian-memory skill before working and when persisting
 1. “检查 Obsidian Memory 连接及完整 obsidian-skills 套件；有缺失就提示我补齐整套。”
 2. “初始化这个 Vault 的自生长知识库，并绑定项目 /absolute/path/to/project。”
 3. “记住：这个项目需要保留离线导出能力。”
-4. “整理刚才那条候选记忆。”
-5. 新会话问“这个项目对导出能力有什么要求？”
+4. 在新会话问“你记得离线导出的要求吗？”；此时应只显示“待整理”候选，而不是已确认知识。
+5. “整理刚才那条候选记忆。”
+6. 再问“这个项目对导出能力有什么要求？”；此时应从 Wiki/Raw 回答并保留来源。
 
-第 3 步只应生成 Inbox，第 4 步才更新 Raw/Wiki。以上演示用合成约束；
+第 3 步只应生成 Inbox，第 5 步才更新 Raw/Wiki。以上演示用合成约束；
 不要把它当作真实项目要求自动写入现有库。
 
 只说“检查知识库”时不应改文件；Vault 路径不可访问或所需写入失败时不能回答
@@ -267,7 +297,7 @@ For code tasks, use the obsidian-memory skill before working and when persisting
 npm run check
 npm test
 npm pack
-node tests/openclaw-smoke.mjs obsidian-memory-plugin-0.4.1.tgz
+node tests/openclaw-smoke.mjs obsidian-memory-plugin-0.4.2.tgz
 openclaw plugins inspect obsidian-memory-plugin --runtime --json
 openclaw skills --agent main info obsidian-memory
 openclaw skills --agent main info obsidian-cli

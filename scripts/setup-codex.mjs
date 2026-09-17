@@ -1,4 +1,4 @@
-import { accessSync, constants, existsSync, lstatSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { accessSync, constants, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { homedir } from "node:os";
 import { createInterface } from "node:readline/promises";
@@ -124,7 +124,7 @@ export async function runSetup(args, { input = process.stdin, output = process.s
   }
 }
 
-const isEntrypoint = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+const isEntrypoint = process.argv[1] && realpathSync(resolve(process.argv[1])) === fileURLToPath(import.meta.url);
 if (isEntrypoint) {
   runSetup(process.argv.slice(2)).catch(error => {
     console.error(`Codex setup failed: ${error.message}`);

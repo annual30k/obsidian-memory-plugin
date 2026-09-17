@@ -112,13 +112,22 @@ path; direct file access is never permission to inspect unrelated Vault content.
   index first for broad exploration; read only necessary results and useful
   linked evidence. Use app-managed search only when it is explicitly needed and
   the CLI is available.
+- If the user asks about something previously "remembered", or relevant established
+  knowledge is missing, also search only the selected scope's pending `inbox/`
+  notes for that topic. For an explicit cross-project preference, use
+  `10-Global/inbox/`; do not search other private projects. Read only matching
+  candidates and verify `status: pending-ingest`. Report them as unprocessed,
+  provisional user evidence with their note path, not as settled Wiki facts.
+  If pending and established notes conflict, show both and ask which to rely on;
+  never silently promote or ingest the candidate during recall.
 - Do not perform an unrestricted Vault search and only filter it afterward.
 - Do not read another private project unless the user explicitly requests a
   cross-project comparison. Global preferences are relevant only when an
   explicit durable preference could affect the task.
 - Cite the supporting Wiki/Raw when useful. State conflicts or missing evidence
   instead of inventing a remembered conclusion. Ordinary recall does not write
-  notes or log every question. Inbox is not established knowledge.
+  notes or log every question. Inbox is not established knowledge, even when a
+  pending candidate is shown in an answer.
 
 ## Selectively capture candidates
 
