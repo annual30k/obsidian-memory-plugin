@@ -15,7 +15,7 @@
   → Obsidian CLI → Obsidian 应用（仅应用专属操作）
 ```
 
-当前包版本：`0.4.3`。本包仅包含一个 Skill：`skills/obsidian-memory/`，
+当前包版本：`0.4.4`。本包仅包含一个 Skill：`skills/obsidian-memory/`，
 及其流程参考和 14 个最小记忆模板。
 **不打包、不复制、不重写 obsidian-skills。**
 
@@ -94,7 +94,7 @@ cd obsidian-memory-plugin
 
 ```sh
 shasum -a 256 -c SHA256SUMS
-openclaw plugins install ./obsidian-memory-plugin-0.4.3.tgz
+openclaw plugins install ./obsidian-memory-plugin-0.4.4.tgz
 ```
 
 下例是从源码目录安装：
@@ -309,8 +309,8 @@ For code tasks, use the obsidian-memory skill before working and when persisting
 npm run check
 npm test
 npm pack
-node tests/openclaw-smoke.mjs obsidian-memory-plugin-0.4.3.tgz
-node tests/host-package-smoke.mjs obsidian-memory-plugin-0.4.3.tgz
+node tests/openclaw-smoke.mjs obsidian-memory-plugin-0.4.4.tgz
+node tests/host-package-smoke.mjs obsidian-memory-plugin-0.4.4.tgz
 openclaw plugins inspect obsidian-memory-plugin --runtime --json
 openclaw skills --agent main info obsidian-memory
 openclaw skills --agent main info obsidian-cli

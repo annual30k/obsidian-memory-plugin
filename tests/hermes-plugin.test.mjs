@@ -25,21 +25,23 @@ class Ctx:
     def get_config(self, key, default=None): return self.values.get(key, default)
     def register_skill(self, name, path, description=""): self.skills.append((name, Path(path).exists(), description))
     def register_system_prompt_section(self, ident, content, **kwargs): self.sections[ident] = (content, kwargs)
-ctx = Ctx({"vault_path": "/Volumes/My Vault", "vault": "Personal", "project_id": "project_1"})
+ctx = Ctx({"vault_path": sys.argv[2], "vault": "Personal", "project_id": "project_1"})
 module.register(ctx)
 content, options = ctx.sections[module.SECTION_ID]
 empty = module.build_guidance({})
 print(json.dumps({"skills": ctx.skills, "id": module.SECTION_ID, "options": options, "content": content({}), "empty": empty}))
 `;
   const python = findPython();
-  const report = JSON.parse(execFileSync(python.command, [...python.args, "-c", program, root], { encoding: "utf8" }));
+  const vaultPath = join(root, "My Vault");
+  const report = JSON.parse(execFileSync(python.command, [...python.args, "-c", program, root, vaultPath], { encoding: "utf8" }));
   assert.deepEqual(report.skills.map(([name, exists]) => [name, exists]), [["obsidian-memory", true]]);
   assert.equal(report.id, "obsidian-memory-plugin.workflow");
   assert.equal(report.options.position, "after_memory");
   assert.equal(report.options.max_chars, 1800);
   assert.match(report.content, /For code tasks, use the obsidian-memory skill/);
   assert.match(report.content, /obsidian-memory-plugin:obsidian-memory/);
-  assert.match(report.content, /\/Volumes\/My Vault/);
+  const connection = JSON.parse(report.content.split("\n").find(line => line.startsWith("{")));
+  assert.equal(connection.vaultPath, vaultPath);
   assert.match(report.empty, /Do not guess a Vault/);
 });
 
