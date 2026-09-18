@@ -4,6 +4,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { findPython } from "../scripts/python.mjs";
 
 if (!process.argv[2]) throw new Error("Usage: node tests/host-package-smoke.mjs <package.tgz>");
 const archive = resolve(process.argv[2]);
@@ -52,7 +53,8 @@ ctx = Ctx()
 module.register(ctx)
 print(json.dumps({"skills": ctx.skills, "guidance": ctx.sections[module.SECTION_ID]}))
 `;
-  const hermes = JSON.parse(execFileSync("python3", ["-c", hermesProbe, root, vault], {
+  const python = findPython();
+  const hermes = JSON.parse(execFileSync(python.command, [...python.args, "-c", hermesProbe, root, vault], {
     encoding: "utf8", timeout: 15000
   }));
   assert.equal(hermes.skills[0][0], "obsidian-memory");

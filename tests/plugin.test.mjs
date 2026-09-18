@@ -123,8 +123,11 @@ test("guidance delegates dependencies to the bundled skill without carrying the 
 });
 
 test("guidance stays compact while retaining memory triggers and explicit connection", () => {
-  const guidance = buildGuidance(parseConfig({ agentId: "owner", vaultPath: fixture().vaultPath }));
-  assert.ok(guidance.length < 1000, `guidance was ${guidance.length} characters`);
+  const vaultPath = fixture().vaultPath;
+  const guidance = buildGuidance(parseConfig({ agentId: "owner", vaultPath }));
+  const skillPath = fileURLToPath(new URL("skills/obsidian-memory/SKILL.md", root));
+  const instructionLength = guidance.length - vaultPath.length - skillPath.length;
+  assert.ok(instructionLength < 1000, `guidance instructions were ${instructionLength} characters`);
   assert.ok(guidance.includes("Ordinary chat needs no Vault access"));
   assert.ok(guidance.includes("memory_search/MEMORY.md is a separate store"));
   assert.ok(guidance.includes("'remember' stages Inbox only"));
@@ -180,7 +183,7 @@ test("relative memory-skill references resolve within the package", () => {
   const skillRoot = "skills/obsidian-memory/";
   const paths = readdirSync(new URL(skillRoot, root), { recursive: true })
     .filter(path => path.endsWith(".md"))
-    .map(path => skillRoot + path);
+    .map(path => skillRoot + path.replaceAll("\\", "/"));
   const reachable = new Set([skillRoot + "SKILL.md"]);
   const edges = new Map();
   for (const path of paths) {

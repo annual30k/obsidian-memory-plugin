@@ -7,8 +7,9 @@ const read = name => readFileSync(new URL(name, templateRoot), "utf8");
 
 // These shipped templates deliberately use only flat, scalar/empty-list YAML.
 // This checks their artifact contract, not arbitrary YAML or LLM compliance.
-function frontmatter(name) {
-  const sections = read(name).split("---\n");
+function frontmatter(name, content = read(name)) {
+  // Git may check templates out with CRLF on Windows; their structure is unchanged.
+  const sections = content.replace(/\r\n/g, "\n").split("---\n");
   assert.equal(sections[0], "", name + ": frontmatter must be first");
   assert.ok(sections[1] && sections[2], name + ": frontmatter and body required");
   const fields = {};
@@ -42,6 +43,11 @@ test("the complete bootstrap template set is shipped", () => {
 
 test("all template frontmatter is valid in the supported flat subset", () => {
   for (const name of templates) assert.equal(typeof frontmatter(name).type, "string", name);
+});
+
+test("template frontmatter has the same fields with Windows CRLF", () => {
+  const name = "inbox-memory-candidate.md";
+  assert.deepEqual(frontmatter(name, read(name).replace(/\r?\n/g, "\r\n")), frontmatter(name));
 });
 
 test("candidate templates preserve pending status and have no premature Raw link", () => {

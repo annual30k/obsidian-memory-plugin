@@ -5,9 +5,11 @@ import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
+import { fileURLToPath } from "node:url";
 import { HERMES_PLUGIN_ID, HERMES_VAULT_KEY, hermesConfigArgs, runSetup } from "../scripts/setup-hermes.mjs";
+import { findPython } from "../scripts/python.mjs";
 
-const root = new URL("../", import.meta.url).pathname;
+const root = fileURLToPath(new URL("../", import.meta.url));
 
 test("Hermes adapter registers the namespaced Skill and a bounded proactive system section", () => {
   const program = String.raw`
@@ -29,7 +31,8 @@ content, options = ctx.sections[module.SECTION_ID]
 empty = module.build_guidance({})
 print(json.dumps({"skills": ctx.skills, "id": module.SECTION_ID, "options": options, "content": content({}), "empty": empty}))
 `;
-  const report = JSON.parse(execFileSync("python3", ["-c", program, root], { encoding: "utf8" }));
+  const python = findPython();
+  const report = JSON.parse(execFileSync(python.command, [...python.args, "-c", program, root], { encoding: "utf8" }));
   assert.deepEqual(report.skills.map(([name, exists]) => [name, exists]), [["obsidian-memory", true]]);
   assert.equal(report.id, "obsidian-memory-plugin.workflow");
   assert.equal(report.options.position, "after_memory");

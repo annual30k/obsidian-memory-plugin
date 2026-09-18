@@ -12,7 +12,10 @@ permissions:
 jobs:
   verify:
     name: Verify plugin
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -21,6 +24,11 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
 
       - name: Check syntax
         run: npm run check
