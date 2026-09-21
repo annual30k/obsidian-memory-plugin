@@ -29,7 +29,13 @@ try {
   const antigravityInfo = JSON.parse(readFileSync(join(root, "plugin.json"), "utf8"));
   const hermesInfo = readFileSync(join(root, "plugin.yaml"), "utf8");
   const skill = readFileSync(join(root, "skills", "obsidian-memory", "SKILL.md"), "utf8");
+  const icon = readFileSync(join(root, "assets", "icon.png"));
   assert.equal(codexInfo.version, packageInfo.version);
+  assert.equal(codexInfo.interface.composerIcon, "./assets/icon.png");
+  assert.equal(codexInfo.interface.logo, "./assets/icon.png");
+  assert.deepEqual([...icon.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
+  assert.equal(icon.readUInt32BE(16), 512);
+  assert.equal(icon.readUInt32BE(20), 512);
   assert.ok(marketplace.plugins.some(plugin => plugin.name === codexInfo.name));
   assert.equal(openclawInfo.version, packageInfo.version);
   assert.equal(antigravityInfo.version, packageInfo.version);

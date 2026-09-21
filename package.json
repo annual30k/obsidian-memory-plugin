@@ -1,6 +1,6 @@
 {
   "name": "obsidian-memory-plugin",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "private": true,
   "description": "The Obsidian Memory skill packaged for Antigravity, OpenClaw, Codex, and Hermes.",
   "type": "module",
@@ -12,6 +12,7 @@
     "plugin.yaml",
     "plugin.json",
     "lib",
+    "assets",
     "skills",
     "scripts",
     "openclaw.plugin.json",

@@ -154,6 +154,12 @@ test("native manifest and entry agree without claiming a memory slot", () => {
   assert.equal(manifest.version, pkg.version);
   assert.equal(codexManifest.version, pkg.version);
   assert.equal(codexManifest.skills, "./skills/");
+  assert.equal(codexManifest.interface.composerIcon, "./assets/icon.png");
+  assert.equal(codexManifest.interface.logo, "./assets/icon.png");
+  const icon = readFileSync(new URL(codexManifest.interface.logo, root));
+  assert.deepEqual([...icon.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
+  assert.equal(icon.readUInt32BE(16), 512);
+  assert.equal(icon.readUInt32BE(20), 512);
   assert.equal(codexManifest.author.url, undefined);
   assert.equal(codexManifest.homepage, undefined);
   assert.equal(codexManifest.repository, undefined);
@@ -164,6 +170,7 @@ test("native manifest and entry agree without claiming a memory slot", () => {
   assert.match(hermesManifest, /^name: obsidian-memory-plugin$/m);
   assert.match(hermesManifest, new RegExp(`^version: ${pkg.version.replaceAll(".", "\\.")}$`, "m"));
   assert.match(hermesManifest, /^  vault_path:$/m);
+  assert.match(read("skills/obsidian-memory/SKILL.md"), /^metadata:\n  icon: "💎"$/m);
   assert.deepEqual(manifest.configSchema.anyOf[1].required, ["agentId", "vaultPath"]);
   assert.deepEqual(manifest.skills, ["./skills"]);
   assert.equal(pkg.dependencies, undefined);

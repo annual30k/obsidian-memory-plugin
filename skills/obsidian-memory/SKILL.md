@@ -1,6 +1,8 @@
 ---
 name: obsidian-memory
 description: "Recall and selectively capture durable project knowledge and global preferences in a self-growing Obsidian knowledge base. Use for relevant past decisions, explicit remember requests, user-triggered source ingestion, and wiki maintenance. Uses the host-installed Obsidian skills."
+metadata:
+  icon: "💎"
 ---
 
 # Obsidian Memory

@@ -1,6 +1,6 @@
 {
   "name": "obsidian-memory",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Self-growing long-term memory for Obsidian. Recalls past project decisions and selectively captures durable knowledge with an explicit Inbox -> Raw -> Wiki lifecycle.",
   "author": {
     "name": "Cyber Health Agent"
@@ -31,6 +31,8 @@
       "Remember: this project requires offline export capability"
     ],
     "brandColor": "#7C3AED",
+    "composerIcon": "./assets/icon.png",
+    "logo": "./assets/icon.png",
     "screenshots": []
   }
 }

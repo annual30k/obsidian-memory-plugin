@@ -15,7 +15,7 @@
   → Obsidian CLI → Obsidian 应用（仅应用专属操作）
 ```
 
-当前包版本：`0.5.0`。本包仅包含一个 Skill：`skills/obsidian-memory/`，
+当前包版本：`0.5.1`。本包仅包含一个 Skill：`skills/obsidian-memory/`，
 及其流程参考和 14 个最小记忆模板。
 **不打包、不复制、不重写 obsidian-skills。**
 
@@ -94,7 +94,7 @@ cd obsidian-memory-plugin
 
 ```sh
 shasum -a 256 -c SHA256SUMS
-openclaw plugins install ./obsidian-memory-plugin-0.5.0.tgz
+openclaw plugins install ./obsidian-memory-plugin-0.5.1.tgz
 ```
 
 下例是从源码目录安装：
@@ -190,6 +190,9 @@ Inbox/ingest 边界和所选 Vault 配置。完整的依赖检查、作用域与
 ## Codex 接入
 
 本包遵循 Codex 原生插件规范，在根目录内置 `.codex-plugin/plugin.json`，与 OpenClaw 共享同一份自生长记忆 Skill。
+品牌图标位于 `assets/icon.png`：Codex 通过 `interface.composerIcon` 与 `interface.logo` 显式读取，
+OpenClaw 通过其约定的同名固定路径自动读取。Antigravity 的插件清单本身不支持图片字段，
+因此内置 Skill 额外声明 `metadata.icon: "💎"` 作为其 CLI 的图标退化方案。
 
 本仓库自带独立的 `.agents/plugins/marketplace.json`，其条目指向仓库根目录的同一插件；发布到 GitHub 后可用以下命令安装，不依赖任何应用产品的 Marketplace：
 
@@ -358,8 +361,8 @@ npm run check:codex
 npm run check:vault -- --vault /path/to/vault
 npm test
 npm pack
-node tests/openclaw-smoke.mjs obsidian-memory-plugin-0.5.0.tgz
-node tests/host-package-smoke.mjs obsidian-memory-plugin-0.5.0.tgz
+node tests/openclaw-smoke.mjs obsidian-memory-plugin-0.5.1.tgz
+node tests/host-package-smoke.mjs obsidian-memory-plugin-0.5.1.tgz
 openclaw plugins inspect obsidian-memory-plugin --runtime --json
 openclaw skills --agent main info obsidian-memory
 openclaw skills --agent main info obsidian-cli

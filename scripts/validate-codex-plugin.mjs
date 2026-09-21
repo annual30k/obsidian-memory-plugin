@@ -43,6 +43,25 @@ if (manifest) {
   if (!Array.isArray(manifest.interface?.defaultPrompt) || manifest.interface.defaultPrompt.length === 0) {
     failures.push("interface.defaultPrompt must be a non-empty array");
   }
+  for (const field of ["composerIcon", "logo"]) {
+    const assetPath = manifest.interface?.[field];
+    if (typeof assetPath !== "string" || !assetPath.startsWith("./")) {
+      failures.push(`interface.${field} must be a plugin-relative path`);
+      continue;
+    }
+    const resolvedAsset = resolve(root, assetPath);
+    if (!existsSync(resolvedAsset) || !statSync(resolvedAsset).isFile()) {
+      failures.push(`interface.${field} must point to an existing file`);
+      continue;
+    }
+    const png = readFileSync(resolvedAsset);
+    const isPng = png.length >= 24 && png.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    const width = isPng ? png.readUInt32BE(16) : 0;
+    const height = isPng ? png.readUInt32BE(20) : 0;
+    if (!isPng || width !== 512 || height !== 512) {
+      failures.push(`interface.${field} must point to a 512x512 PNG`);
+    }
+  }
   if (JSON.stringify(manifest).includes("[TODO:")) failures.push("manifest contains an unfinished TODO placeholder");
 }
 

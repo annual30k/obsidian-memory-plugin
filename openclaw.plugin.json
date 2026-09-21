@@ -1,7 +1,7 @@
 {
   "id": "obsidian-memory-plugin",
   "name": "Obsidian Memory",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Load the bundled self-growing memory skill and an explicit Obsidian connection.",
   "skills": ["./skills"],
   "activation": { "onStartup": true, "onCapabilities": ["hook"] },
