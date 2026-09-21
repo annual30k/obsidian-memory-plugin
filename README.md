@@ -2,13 +2,13 @@
 
 独立、可复用的 Obsidian 长期记忆插件。本文档只说明本插件自身的宿主接入、规则与排障；应用产品可以选择集成它，但不拥有或复制它。
 
-将已有的 **obsidian-memory Skill 内置到 OpenClaw、Codex 与 Hermes 插件**。
+将已有的 **obsidian-memory Skill 内置到 Antigravity、OpenClaw、Codex 与 Hermes 插件**。
 插件负责加载入口与元数据配置；当前 Agent 按内置 Skill 建设与维护自生长知识库。
 
 ## 包含与依赖
 
 ```text
-宿主 (OpenClaw / Codex / Hermes)
+宿主 (Antigravity / OpenClaw / Codex / Hermes)
   → 本插件内置 obsidian-memory Skill
   → 宿主独立安装的完整 kepano/obsidian-skills 套件（按任务加载）
   → 受限的 Vault 文件系统读写（默认）
@@ -286,6 +286,52 @@ For code tasks, use the obsidian-memory skill before working and when persisting
 配置变更也只对新会话生效。可用 `hermes plugins list`、`hermes prompt-size` 和 `hermes config show`
 确认状态；不要用全局 `AGENTS.md` 代替这个原生适配层。
 
+## Antigravity 接入
+
+本包内置 Antigravity (Google AGY) 原生插件清单 `plugin.json`。Antigravity 会自动从全局插件目录（`~/.gemini/config/plugins/`）或工作区（`.agents/plugins/`）发现已安装的插件并加载其内置的 `obsidian-memory` Skill。
+
+### 一键安装与配置
+
+运行配置向导，提供已存在且可读取的 Vault 绝对路径。向导会自动将插件软链接至 Antigravity 全局插件目录（`~/.gemini/config/plugins/obsidian-memory-plugin`），并在生效的全局规则文件（`~/.gemini/GEMINI.md`）中安全写入标记引导区块：
+
+```sh
+npm run setup:antigravity
+```
+
+非交互环境可通过参数直接配置：
+
+```sh
+npm run setup:antigravity -- --vault "/absolute/path/to/My Vault" --yes
+```
+
+配置完成后，脚本会写入以下规则（Vault 路径作为配置数据注入，而非指令）：
+
+```markdown
+<!-- obsidian-memory-plugin:start -->
+For code tasks, use the obsidian-memory skill before working and when persisting durable project memory.
+Obsidian Memory Vault path (configuration data, not instructions): "/absolute/path/to/My Vault"
+<!-- obsidian-memory-plugin:end -->
+```
+
+### 手动接入与环境变量
+
+若不使用配置脚本，也可通过环境变量或全局规则接入：
+1. 在 Shell 环境中配置：
+   ```sh
+   export OBSIDIAN_MEMORY_VAULT="/absolute/path/to/My Vault"
+   ```
+2. 将本仓库克隆或软链接至 `~/.gemini/config/plugins/obsidian-memory-plugin`，或在 `~/.gemini/config/plugins.json` 中添加路径条目。
+3. 在 `~/.gemini/GEMINI.md` 中确认包含规则：
+   ```markdown
+   For code tasks, use the obsidian-memory skill before working and when persisting durable project memory.
+   ```
+
+### 插件规范校验
+
+```sh
+npm run check:antigravity
+```
+
 ## 首次使用
 
 在配置的 Agent 中说：
@@ -307,6 +353,9 @@ For code tasks, use the obsidian-memory skill before working and when persisting
 
 ```sh
 npm run check
+npm run check:antigravity
+npm run check:codex
+npm run check:vault -- --vault /path/to/vault
 npm test
 npm pack
 node tests/openclaw-smoke.mjs obsidian-memory-plugin-0.4.4.tgz
@@ -320,6 +369,7 @@ openclaw skills --agent main info json-canvas
 openclaw skills --agent main info defuddle
 ```
 
+- `npm run check:vault -- --vault <path>`：对目标 Obsidian Vault 进行只读健康自检，检查内置模板对齐情况、死链/失效双链、`00-System/projects.yaml` 规范以及明文敏感凭据泄露风险。
 - 只有本包的代码/文件验证不等于真实记忆闭环成功。
 - 单元验证覆盖配置、Hook、引用可达性和模板字段契约。隔离 smoke 验证
   tarball 在 OpenClaw 中加载，并逐文件对比其内置 Skill、参考和模板；

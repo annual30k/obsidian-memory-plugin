@@ -4,7 +4,7 @@ import { createInterface } from "node:readline/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseConfigs } from "../lib/config.js";
-import { validateVaultPath } from "./setup-codex.mjs";
+import { validateVaultPath } from "../lib/managed-block.js";
 
 export const PLUGIN_ID = "obsidian-memory-plugin";
 const ENTRY_PATH = `plugins.entries.${PLUGIN_ID}`;
@@ -123,7 +123,13 @@ export async function runSetup(args, { input = process.stdin, output = process.s
   }
 }
 
-const isEntrypoint = process.argv[1] && realpathSync(resolve(process.argv[1])) === fileURLToPath(import.meta.url);
+const isEntrypoint = process.argv[1] && (() => {
+  try {
+    return realpathSync(resolve(process.argv[1])) === fileURLToPath(import.meta.url);
+  } catch {
+    return false;
+  }
+})();
 if (isEntrypoint) {
   runSetup(process.argv.slice(2)).catch(error => {
     console.error(`OpenClaw setup failed: ${error.message}`);

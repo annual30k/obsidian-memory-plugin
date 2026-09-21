@@ -147,6 +147,7 @@ test("configuration is data, with delimiter markup escaped", () => {
 test("native manifest and entry agree without claiming a memory slot", () => {
   const manifest = JSON.parse(read("openclaw.plugin.json"));
   const codexManifest = JSON.parse(read(".codex-plugin/plugin.json"));
+  const antigravityManifest = JSON.parse(read("plugin.json"));
   const hermesManifest = read("plugin.yaml");
   const pkg = JSON.parse(read("package.json"));
   assert.equal(manifest.id, plugin.id);
@@ -156,6 +157,9 @@ test("native manifest and entry agree without claiming a memory slot", () => {
   assert.equal(codexManifest.author.url, undefined);
   assert.equal(codexManifest.homepage, undefined);
   assert.equal(codexManifest.repository, undefined);
+  assert.equal(antigravityManifest.name, pkg.name);
+  assert.equal(antigravityManifest.version, pkg.version);
+  assert.equal(antigravityManifest.skills, "./skills/");
   assert.equal(manifest.kind, undefined);
   assert.match(hermesManifest, /^name: obsidian-memory-plugin$/m);
   assert.match(hermesManifest, new RegExp(`^version: ${pkg.version.replaceAll(".", "\\.")}$`, "m"));
@@ -174,6 +178,7 @@ test("the only packaged skill is obsidian-memory, not external Obsidian skills",
   assert.deepEqual(readdirSync(new URL("skills/", root)).sort(), ["obsidian-memory"]);
   const body = read("skills/obsidian-memory/SKILL.md");
   assert.ok(body.includes("name: obsidian-memory"));
+  assert.ok(body.includes("For Antigravity, the managed"));
   assert.ok(body.includes("For Hermes, the native adapter"));
   // Dependency declaration is an artifact check, not a claim of agent behavior.
   assert.ok(body.includes("https://github.com/kepano/obsidian-skills"));

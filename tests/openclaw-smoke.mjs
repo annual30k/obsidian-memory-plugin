@@ -1,12 +1,23 @@
 // Run explicitly after npm pack. Uses only an isolated state/config and no live Gateway.
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { mkdtemp, mkdir, writeFile, rm, readFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 
-if (!process.argv[2]) throw new Error("Usage: node tests/openclaw-smoke.mjs <package.tgz>");
-const archive = resolve(process.argv[2]);
+let archivePath = process.argv[2];
+if (!archivePath) {
+  const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+  const expectedName = `${pkg.name}-${pkg.version}.tgz`;
+  const candidates = [
+    join(process.cwd(), "dist", expectedName),
+    join(process.cwd(), expectedName),
+  ];
+  archivePath = candidates.find(c => existsSync(c));
+}
+if (!archivePath) throw new Error("Usage: node tests/openclaw-smoke.mjs <package.tgz>");
+const archive = resolve(archivePath);
 const sandbox = await mkdtemp(join(tmpdir(), "obsidian-memory-smoke-"));
 try {
   const unpacked = join(sandbox, "unpacked");

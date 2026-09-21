@@ -14,7 +14,7 @@ Host integrations consume a pinned plugin version and checksum. An application-l
 ## Before a GitHub Release
 
 1. Confirm that the release remains covered by the repository's MIT License.
-2. Run `npm run check`, `npm test`, `npm run check:codex`, and `npm pack`.
+2. Run `npm run check`, `npm test`, `npm run check:antigravity`, `npm run check:codex`, and `npm pack`.
 3. Publish the generated archive, SHA-256 checksum, release notes, and host compatibility matrix together.
-4. Run `node tests/host-package-smoke.mjs <archive.tgz>` and `node tests/openclaw-smoke.mjs <archive.tgz>` against that exact archive. These cover packaged Codex and Hermes entrypoints, the shared Skill, and isolated OpenClaw host loading; they do not prove model behavior. In an isolated `CODEX_HOME`, also add this repository as a Marketplace and install `obsidian-memory@obsidian-memory` after the release commit is public; verify the installed version matches the tag.
+4. Run `node tests/host-package-smoke.mjs <archive.tgz>` and `node tests/openclaw-smoke.mjs <archive.tgz>` against that exact archive. These cover packaged Antigravity, Codex and Hermes entrypoints, the shared Skill, and isolated OpenClaw host loading; they do not prove model behavior. In an isolated `CODEX_HOME`, also add this repository as a Marketplace and install `obsidian-memory@obsidian-memory` after the release commit is public; verify the installed version matches the tag.
 5. For memory behavior changes, run the relevant isolated, synthetic-Vault conversations in `tests/skill-scenarios.md` on the intended host/model. Record the observed recall, provenance, scope, writes and latency; passing unit and package tests alone is not proof of agent behavior.

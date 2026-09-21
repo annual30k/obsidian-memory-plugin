@@ -1,13 +1,23 @@
 // Verify the release archive itself, without changing installed host plugins or a real Vault.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { findPython } from "../scripts/python.mjs";
 
-if (!process.argv[2]) throw new Error("Usage: node tests/host-package-smoke.mjs <package.tgz>");
-const archive = resolve(process.argv[2]);
+let archivePath = process.argv[2];
+if (!archivePath) {
+  const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+  const expectedName = `${pkg.name}-${pkg.version}.tgz`;
+  const candidates = [
+    join(process.cwd(), "dist", expectedName),
+    join(process.cwd(), expectedName),
+  ];
+  archivePath = candidates.find(c => existsSync(c));
+}
+if (!archivePath) throw new Error("Usage: node tests/host-package-smoke.mjs <package.tgz>");
+const archive = resolve(archivePath);
 const sandbox = mkdtempSync(join(tmpdir(), "obsidian-memory-hosts-"));
 try {
   execFileSync("tar", ["-xzf", archive, "-C", sandbox], { timeout: 15000 });
@@ -16,14 +26,20 @@ try {
   const codexInfo = JSON.parse(readFileSync(join(root, ".codex-plugin", "plugin.json"), "utf8"));
   const marketplace = JSON.parse(readFileSync(join(root, ".agents", "plugins", "marketplace.json"), "utf8"));
   const openclawInfo = JSON.parse(readFileSync(join(root, "openclaw.plugin.json"), "utf8"));
+  const antigravityInfo = JSON.parse(readFileSync(join(root, "plugin.json"), "utf8"));
   const hermesInfo = readFileSync(join(root, "plugin.yaml"), "utf8");
   const skill = readFileSync(join(root, "skills", "obsidian-memory", "SKILL.md"), "utf8");
   assert.equal(codexInfo.version, packageInfo.version);
   assert.ok(marketplace.plugins.some(plugin => plugin.name === codexInfo.name));
   assert.equal(openclawInfo.version, packageInfo.version);
+  assert.equal(antigravityInfo.version, packageInfo.version);
+  assert.equal(antigravityInfo.name, packageInfo.name);
   assert.match(hermesInfo, new RegExp(`^version: ${packageInfo.version.replaceAll(".", "\\.")}$`, "m"));
   assert.match(skill, /pending `inbox\/`/);
   execFileSync(process.execPath, [join(root, "scripts", "validate-codex-plugin.mjs")], {
+    cwd: root, timeout: 15000
+  });
+  execFileSync(process.execPath, [join(root, "scripts", "validate-antigravity-plugin.mjs")], {
     cwd: root, timeout: 15000
   });
 
@@ -35,6 +51,14 @@ try {
   const codexRules = readFileSync(agents, "utf8");
   assert.match(codexRules, /For code tasks, use the obsidian-memory skill/);
   assert.ok(codexRules.includes(JSON.stringify(vault)));
+
+  const gemini = join(sandbox, "GEMINI.md");
+  const pluginDir = join(sandbox, "plugins", "obsidian-memory-plugin");
+  execFileSync(process.execPath, [join(root, "scripts", "setup-antigravity.mjs"),
+    "--vault", vault, "--gemini-file", gemini, "--plugin-dir", pluginDir, "--yes"], { timeout: 15000 });
+  const antigravityRules = readFileSync(gemini, "utf8");
+  assert.match(antigravityRules, /For code tasks, use the obsidian-memory skill/);
+  assert.ok(antigravityRules.includes(JSON.stringify(vault)));
 
   const hermesProbe = String.raw`
 import importlib.util, json, sys
@@ -61,7 +85,7 @@ print(json.dumps({"skills": ctx.skills, "guidance": ctx.sections[module.SECTION_
   assert.equal(hermes.skills[0][1], join(root, "skills", "obsidian-memory", "SKILL.md"));
   assert.match(hermes.guidance, /obsidian-memory-plugin:obsidian-memory/);
   assert.ok(hermes.guidance.includes(vault));
-  console.log(`Archive host smoke passed for OpenClaw, Codex and Hermes manifests and adapters: ${packageInfo.version}`);
+  console.log(`Archive host smoke passed for Antigravity, OpenClaw, Codex and Hermes manifests and adapters: ${packageInfo.version}`);
 } finally {
   rmSync(sandbox, { recursive: true, force: true });
 }

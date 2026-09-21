@@ -13,6 +13,13 @@ if (!["codex", "openclaw"].includes(host)) {
 }
 const root = resolve(import.meta.dirname, "..");
 const version = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
+const archivePath = [
+  join(root, "dist", `obsidian-memory-plugin-${version}.tgz`),
+  join(root, `obsidian-memory-plugin-${version}.tgz`)
+].find(c => existsSync(c));
+if (!archivePath) {
+  throw new Error(`Package archive not found. Run "npm run pack" before running behavior smoke tests.`);
+}
 const temp = mkdtempSync(join(tmpdir(), "obsidian-memory-behavior-"));
 const vault = join(temp, "vault");
 const projectA = join(temp, "project-a");
@@ -71,7 +78,7 @@ function codexSetup() {
   const env = { ...process.env, CODEX_HOME: codexHome, OBSIDIAN_MEMORY_VAULT: vault };
   const pluginRoot = join(temp, "codex-package");
   mkdirSync(pluginRoot);
-  const unpack = run("tar", ["-xzf", join(root, `obsidian-memory-plugin-${version}.tgz`), "-C", pluginRoot, "--strip-components=1"]);
+  const unpack = run("tar", ["-xzf", archivePath, "-C", pluginRoot, "--strip-components=1"]);
   if (unpack.status !== 0) throw new Error(`Cannot unpack Codex archive: ${unpack.stderr}`);
   const marketplaceRoot = temp;
   mkdirSync(join(marketplaceRoot, ".agents", "plugins"), { recursive: true });
@@ -108,7 +115,7 @@ function openclawSetup() {
   }
   const pluginRoot = join(temp, "package");
   mkdirSync(pluginRoot);
-  const unpack = run("tar", ["-xzf", join(root, `obsidian-memory-plugin-${version}.tgz`), "-C", pluginRoot, "--strip-components=1"]);
+  const unpack = run("tar", ["-xzf", archivePath, "-C", pluginRoot, "--strip-components=1"]);
   if (unpack.status !== 0) throw new Error(`Cannot unpack test archive: ${unpack.stderr}`);
   const entryPath = join(pluginRoot, "index.js");
   const source = readFileSync(entryPath, "utf8");

@@ -2,7 +2,7 @@
   "name": "obsidian-memory-plugin",
   "version": "0.4.4",
   "private": true,
-  "description": "The Obsidian Memory skill packaged for OpenClaw, Codex, and Hermes.",
+  "description": "The Obsidian Memory skill packaged for Antigravity, OpenClaw, Codex, and Hermes.",
   "type": "module",
   "license": "MIT",
   "engines": { "node": ">=22.22.3" },
@@ -10,6 +10,7 @@
     "index.js",
     "__init__.py",
     "plugin.yaml",
+    "plugin.json",
     "lib",
     "skills",
     "scripts",
@@ -25,12 +26,17 @@
     "runtimeExtensions": ["./index.js"]
   },
   "scripts": {
+    "clean": "node -e \"fs.rmSync('dist', {recursive:true, force:true}); fs.readdirSync('.').filter(f => f.endsWith('.tgz')).forEach(f => fs.unlinkSync(f))\"",
+    "pack": "node -e \"fs.mkdirSync('dist', {recursive:true})\" && npm pack --pack-destination dist",
     "test": "node --test tests/*.test.mjs",
-    "check": "node --check index.js && node --check lib/config.js && node --check lib/prompt.js && node --check scripts/setup-codex.mjs && node --check scripts/setup-hermes.mjs && node --check scripts/setup-openclaw.mjs && node scripts/check-python.mjs",
+    "check": "node --check index.js && node --check lib/config.js && node --check lib/managed-block.js && node --check lib/prompt.js && node --check scripts/check-vault.mjs && node --check scripts/setup-antigravity.mjs && node --check scripts/setup-codex.mjs && node --check scripts/setup-hermes.mjs && node --check scripts/setup-openclaw.mjs && node --check scripts/validate-antigravity-plugin.mjs && node --check scripts/validate-codex-plugin.mjs && node scripts/check-python.mjs",
+    "check:antigravity": "node scripts/validate-antigravity-plugin.mjs",
     "check:codex": "node scripts/validate-codex-plugin.mjs",
+    "check:vault": "node scripts/check-vault.mjs",
+    "setup:antigravity": "node scripts/setup-antigravity.mjs",
     "setup:codex": "node scripts/setup-codex.mjs",
     "setup:hermes": "node scripts/setup-hermes.mjs",
     "setup:openclaw": "node scripts/setup-openclaw.mjs",
-    "prepack": "npm run check && npm run check:codex && npm test"
+    "prepack": "npm run check && npm run check:antigravity && npm run check:codex && npm test"
   }
 }

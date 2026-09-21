@@ -36,6 +36,9 @@ jobs:
       - name: Run tests
         run: npm test
 
+      - name: Validate Antigravity manifest
+        run: npm run check:antigravity
+
       - name: Validate Codex manifest
         run: npm run check:codex
 
