@@ -194,3 +194,19 @@ test("LayaClient categorizes auth and server errors", async () => {
     (err) => err instanceof LayaHttpError && err.status === 500 && err.permanent === false
   );
 });
+
+test("truncateForInference preserves head and tail for inputs exceeding maxChars", async () => {
+  const { truncateForInference } = await import("../lib/memory-router/client.js");
+  assert.equal(truncateForInference("short text", 2048), "short text");
+
+  const head = "START_HEAD_SECTION_12345";
+  const tail = "END_TAIL_SECTION_67890";
+  const middle = "x".repeat(3000);
+  const longText = `${head}${middle}${tail}`;
+
+  const truncated = truncateForInference(longText, 2048);
+  assert.ok(truncated.length <= 2048, "Truncated text must not exceed maxChars");
+  assert.ok(truncated.startsWith(head), "Truncated text must retain head");
+  assert.ok(truncated.endsWith(tail), "Truncated text must retain tail");
+  assert.ok(truncated.includes("\n...\n"), "Truncated text must include truncation marker");
+});

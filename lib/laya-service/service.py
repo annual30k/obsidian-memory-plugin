@@ -151,6 +151,7 @@ class MockBackend(BaseBackend):
         return {
             "requires_memory": sanitize_score(req_score),
             "confidence": sanitize_score(confidence),
+            "category_confidence": sanitize_score(confidence),
             "scope": {k: sanitize_score(v) for k, v in scope_scores.items()},
             "categories": {k: sanitize_score(v) for k, v in cat_scores.items()}
         }
@@ -188,6 +189,7 @@ class MlxBackend(BaseBackend):
 
         cat_ans = answers.get("category", {})
         cat_probs = cat_ans.get("probabilities", {})
+        cat_confidence = sanitize_score(cat_ans.get("confidence", 0.5))
         categories = {
             "pitfall": sanitize_score(cat_probs.get("pitfall", 0.0)),
             "decision": sanitize_score(cat_probs.get("decision", 0.0)),
@@ -197,6 +199,7 @@ class MlxBackend(BaseBackend):
         return {
             "requires_memory": requires_memory,
             "confidence": confidence,
+            "category_confidence": cat_confidence,
             "scope": scope,
             "categories": categories
         }
@@ -234,6 +237,7 @@ class PyTorchBackend(BaseBackend):
 
         cat_ans = answers.get("category", {})
         cat_probs = cat_ans.get("probabilities", {})
+        cat_confidence = sanitize_score(cat_ans.get("confidence", 0.5))
         categories = {
             "pitfall": sanitize_score(cat_probs.get("pitfall", 0.0)),
             "decision": sanitize_score(cat_probs.get("decision", 0.0)),
@@ -243,6 +247,7 @@ class PyTorchBackend(BaseBackend):
         return {
             "requires_memory": requires_memory,
             "confidence": confidence,
+            "category_confidence": cat_confidence,
             "scope": scope,
             "categories": categories
         }

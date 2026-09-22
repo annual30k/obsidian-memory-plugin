@@ -49,7 +49,10 @@ export default {
       const fast = evaluateFastPath(text);
       if (fast.action !== "consult_laya") {
         if (fast.recallRecommended) {
-          return { prependContext: buildGuidance(agentConfig, { recallRecommended: true, scope: "project" }) };
+          return { prependContext: buildGuidance(agentConfig, { recallRecommended: true, scope: fast.scope ?? "project" }) };
+        }
+        if (fast.captureRecommended && memoryJudge.proactiveCapture !== false) {
+          return { prependContext: buildGuidance(agentConfig, { captureRecommended: true, captureCategory: fast.captureCategory, scope: fast.scope ?? "project" }) };
         }
         return { prependContext: baseGuidance };
       }
@@ -59,7 +62,7 @@ export default {
           const decision = await router.evaluateRecall(text, {
             project_id: agentConfig.projectId ?? null
           });
-          if (decision.recallRecommended) {
+          if (decision.recallRecommended || decision.captureRecommended) {
             return { prependContext: buildGuidance(agentConfig, decision) };
           }
         } catch (err) {

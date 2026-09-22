@@ -181,3 +181,66 @@ test("OpenClaw runtime maintains base guidance only when Laya fails", async () =
     globalThis.fetch = origFetch;
   }
 });
+
+test("OpenClaw runtime appends proactive capture recommendation when Laya detects high-value pitfall", async () => {
+  const origFetch = globalThis.fetch;
+  const CAPTURE_PITFALL_JSON = JSON.stringify({
+    requires_memory: 0.15,
+    confidence: 0.92,
+    scope: { project: 0.90 },
+    categories: { pitfall: 0.95, decision: 0.04, knowledge: 0.01 }
+  });
+
+  try {
+    globalThis.fetch = async (url) => {
+      const urlStr = String(url);
+      if (urlStr.endsWith("/health")) {
+        return {
+          ok: true,
+          status: 200,
+          headers: new Map(),
+          text: async () => VALID_HEALTH_JSON
+        };
+      }
+      if (urlStr.endsWith("/judge/recall")) {
+        return {
+          ok: true,
+          status: 200,
+          headers: new Map(),
+          text: async () => CAPTURE_PITFALL_JSON
+        };
+      }
+      return { ok: false, status: 404, text: async () => "" };
+    };
+
+    const { hook, dispose } = setup({
+      agentId: "owner",
+      vaultPath: "/my/test/vault",
+      memoryJudge: {
+        mode: "manual",
+        endpoint: "http://127.0.0.1:18791",
+        recallThreshold: 0.70,
+        captureThreshold: 0.75,
+        proactiveCapture: true
+      }
+    });
+
+    const promise = hook(
+      { prompt: "排查发现在 macOS 下不能通过 PID 强杀，因为 PID 复用会导致误杀，必须通过 /shutdown 停机。" },
+      { agentId: "owner", trigger: "user" }
+    );
+    const res = await promise;
+
+    assert.ok(res.prependContext.includes("[Obsidian Memory]"));
+    assert.ok(res.prependContext.includes("[End Obsidian Memory]"));
+    assert.ok(
+      res.prependContext.includes("[Laya Memory Judge: high-value pitfall detected (scope: project). Proactively stage candidate note to project inbox/ with status: pending-ingest upon concluding task.]"),
+      "Must include pitfall proactive capture instruction"
+    );
+
+    if (dispose) dispose();
+  } finally {
+    globalThis.fetch = origFetch;
+  }
+});
+

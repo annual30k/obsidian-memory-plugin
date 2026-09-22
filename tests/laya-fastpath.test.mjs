@@ -54,7 +54,7 @@ test("evaluateFastPath short-circuits explicit recall directives", () => {
   }
 });
 
-test("evaluateFastPath short-circuits explicit remember directives without recall", () => {
+test("evaluateFastPath short-circuits explicit remember directives to force_capture without recall", () => {
   const rememberPrompts = [
     "记住这个配置：timeout 设置为 5000",
     "把刚才的踩坑存入记忆库",
@@ -63,9 +63,9 @@ test("evaluateFastPath short-circuits explicit remember directives without recal
 
   for (const text of rememberPrompts) {
     const result = evaluateFastPath(text);
-    assert.equal(result.action, "skip", `Expected remember bypass for: ${text}`);
-    assert.equal(result.reason, "explicit_remember_intent");
+    assert.equal(result.action, "force_capture", `Expected force_capture for: ${text}`);
     assert.equal(result.recallRecommended, false);
+    assert.equal(result.captureRecommended, true);
   }
 });
 
@@ -80,4 +80,22 @@ test("evaluateFastPath delegates ambiguous queries to Laya", () => {
     const result = evaluateFastPath(text);
     assert.equal(result.action, "consult_laya");
   }
+});
+
+test("evaluateFastPath detects scope accurately (project vs global)", () => {
+  const globalRecall = evaluateFastPath("帮我回忆一下全局偏好配置");
+  assert.equal(globalRecall.action, "force_recall");
+  assert.equal(globalRecall.scope, "global");
+
+  const projectRecall = evaluateFastPath("帮我回忆一下之前的踩坑记录");
+  assert.equal(projectRecall.action, "force_recall");
+  assert.equal(projectRecall.scope, "project");
+
+  const globalCapture = evaluateFastPath("全局记住：默认使用 UTF-8 编码");
+  assert.equal(globalCapture.action, "force_capture");
+  assert.equal(globalCapture.scope, "global");
+
+  const projectCapture = evaluateFastPath("踩坑教训：端口被占用了");
+  assert.equal(projectCapture.action, "force_capture");
+  assert.equal(projectCapture.scope, "project");
 });

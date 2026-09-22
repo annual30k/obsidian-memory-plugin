@@ -1200,3 +1200,211 @@ test("MemoryRouter _ensureHealthHandshake rejects health response if instance_id
 
   router.dispose();
 });
+
+test("MemoryRouter evaluates proactive capture when model detects high-confidence pitfall", async () => {
+  const mockFetch = async (url) => {
+    const u = String(url);
+    if (u.endsWith("/health")) {
+      return {
+        ok: true,
+        status: 200,
+        headers: new Map(),
+        text: async () => JSON.stringify({
+          service: "laya-memory-judge",
+          status: "ok",
+          api_version: "1",
+          model_status: "ready",
+          capabilities: ["recall"]
+        })
+      };
+    }
+    if (u.endsWith("/judge/recall")) {
+      return {
+        ok: true,
+        status: 200,
+        headers: new Map(),
+        text: async () => JSON.stringify({
+          requires_memory: 0.15,
+          confidence: 0.88,
+          scope: { project: 0.95 },
+          categories: { pitfall: 0.92, decision: 0.05, knowledge: 0.03 }
+        })
+      };
+    }
+    throw new Error("Unexpected request: " + u);
+  };
+
+  const router = new MemoryRouter({
+    mode: "manual",
+    endpoint: "http://127.0.0.1:18791",
+    recallThreshold: 0.70,
+    captureThreshold: 0.75,
+    proactiveCapture: true
+  }, { fetch: mockFetch });
+
+  const res = await router.evaluateRecall("Some complex bug workaround discussion");
+  assert.equal(res.recallRecommended, false);
+  assert.equal(res.captureRecommended, true);
+  assert.equal(res.captureCategory, "pitfall");
+  assert.equal(res.reason, "laya_capture_recommended");
+  assert.equal(res.scope, "project");
+
+  router.dispose();
+});
+
+test("MemoryRouter evaluates proactive capture when model detects high-confidence decision", async () => {
+  const mockFetch = async (url) => {
+    const u = String(url);
+    if (u.endsWith("/health")) {
+      return {
+        ok: true,
+        status: 200,
+        headers: new Map(),
+        text: async () => JSON.stringify({
+          service: "laya-memory-judge",
+          status: "ok",
+          api_version: "1",
+          model_status: "ready",
+          capabilities: ["recall"]
+        })
+      };
+    }
+    if (u.endsWith("/judge/recall")) {
+      return {
+        ok: true,
+        status: 200,
+        headers: new Map(),
+        text: async () => JSON.stringify({
+          requires_memory: 0.20,
+          confidence: 0.91,
+          scope: { project: 0.90 },
+          categories: { pitfall: 0.02, decision: 0.95, knowledge: 0.03 }
+        })
+      };
+    }
+    throw new Error("Unexpected request: " + u);
+  };
+
+  const router = new MemoryRouter({
+    mode: "manual",
+    endpoint: "http://127.0.0.1:18791",
+    recallThreshold: 0.70,
+    captureThreshold: 0.75,
+    proactiveCapture: true
+  }, { fetch: mockFetch });
+
+  const res = await router.evaluateRecall("Architectural decision on backend implementation");
+  assert.equal(res.recallRecommended, false);
+  assert.equal(res.captureRecommended, true);
+  assert.equal(res.captureCategory, "decision");
+  assert.equal(res.reason, "laya_capture_recommended");
+
+  router.dispose();
+});
+
+test("MemoryRouter disables proactive capture when proactiveCapture is false", async () => {
+  const mockFetch = async (url) => {
+    const u = String(url);
+    if (u.endsWith("/health")) {
+      return {
+        ok: true,
+        status: 200,
+        headers: new Map(),
+        text: async () => JSON.stringify({
+          service: "laya-memory-judge",
+          status: "ok",
+          api_version: "1",
+          model_status: "ready",
+          capabilities: ["recall"]
+        })
+      };
+    }
+    if (u.endsWith("/judge/recall")) {
+      return {
+        ok: true,
+        status: 200,
+        headers: new Map(),
+        text: async () => JSON.stringify({
+          requires_memory: 0.20,
+          confidence: 0.95,
+          scope: { project: 0.90 },
+          categories: { pitfall: 0.01, decision: 0.96, knowledge: 0.03 }
+        })
+      };
+    }
+    throw new Error("Unexpected request: " + u);
+  };
+
+  const router = new MemoryRouter({
+    mode: "manual",
+    endpoint: "http://127.0.0.1:18791",
+    recallThreshold: 0.70,
+    captureThreshold: 0.75,
+    proactiveCapture: false
+  }, { fetch: mockFetch });
+
+  const res = await router.evaluateRecall("Architectural decision with proactiveCapture off");
+  assert.equal(res.recallRecommended, false);
+  assert.equal(res.captureRecommended, false);
+  assert.equal(res.captureCategory, null);
+  assert.equal(res.reason, "laya_below_threshold");
+
+  // Fast-path explicit pitfall directive must also respect proactiveCapture: false
+  const fastPitfall = await router.evaluateRecall("踩坑教训：macOS 下不能通过 PID 强杀");
+  assert.equal(fastPitfall.recallRecommended, false);
+  assert.equal(fastPitfall.captureRecommended, false);
+  assert.equal(fastPitfall.captureCategory, null);
+  assert.equal(fastPitfall.reason, "proactive_capture_disabled");
+
+  router.dispose();
+});
+
+test("MemoryRouter prioritizes recallRecommended over captureRecommended", async () => {
+  const mockFetch = async (url) => {
+    const u = String(url);
+    if (u.endsWith("/health")) {
+      return {
+        ok: true,
+        status: 200,
+        headers: new Map(),
+        text: async () => JSON.stringify({
+          service: "laya-memory-judge",
+          status: "ok",
+          api_version: "1",
+          model_status: "ready",
+          capabilities: ["recall"]
+        })
+      };
+    }
+    if (u.endsWith("/judge/recall")) {
+      return {
+        ok: true,
+        status: 200,
+        headers: new Map(),
+        text: async () => JSON.stringify({
+          requires_memory: 0.88,
+          confidence: 0.95,
+          scope: { project: 0.90 },
+          categories: { pitfall: 0.01, decision: 0.96, knowledge: 0.03 }
+        })
+      };
+    }
+    throw new Error("Unexpected request: " + u);
+  };
+
+  const router = new MemoryRouter({
+    mode: "manual",
+    endpoint: "http://127.0.0.1:18791",
+    recallThreshold: 0.70,
+    captureThreshold: 0.75,
+    proactiveCapture: true
+  }, { fetch: mockFetch });
+
+  const res = await router.evaluateRecall("User asking about previous architectural decision");
+  assert.equal(res.recallRecommended, true);
+  assert.equal(res.captureRecommended, false);
+  assert.equal(res.reason, "laya_threshold_met");
+
+  router.dispose();
+});
+

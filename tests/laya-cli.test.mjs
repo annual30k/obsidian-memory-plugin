@@ -245,3 +245,25 @@ test("CLI flags take precedence over stdin JSON on conflict (explicit CLI > stdi
   assert.equal(parsed3.reason, "trivial_greeting", "Explicit CLI --text '你好' must override stdin text '复杂问题'");
 });
 
+test("CLI tool outputs proactive capture recommendation on explicit remember directive", async () => {
+  let output = "";
+  const mockStdout = {
+    write: (chunk) => { output += chunk; return true; }
+  };
+  const mockStdin = Readable.from(["记住这个：我们在 macOS 必须用 /shutdown 停机，不要直接杀 PID"]);
+
+  const exitCode = await runCli(
+    ["--stdin", "--mode", "manual", "--endpoint", "http://127.0.0.1:18791"],
+    { stdin: mockStdin, stdout: mockStdout }
+  );
+
+  assert.equal(exitCode, 0);
+  const parsed = JSON.parse(output);
+  assert.equal(parsed.recallRecommended, false);
+  assert.equal(parsed.captureRecommended, true);
+  assert.equal(parsed.captureCategory, "decision");
+  assert.ok(parsed.guidanceAppend.includes("high-value decision detected"));
+  assert.ok(parsed.guidanceAppend.includes("pending-ingest"));
+});
+
+

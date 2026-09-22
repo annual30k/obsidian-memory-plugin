@@ -19,6 +19,8 @@ test("DEFAULT_MEMORY_JUDGE has expected safe defaults", () => {
   assert.equal(DEFAULT_MEMORY_JUDGE.coldStartTimeout, 5000);
   assert.equal(DEFAULT_MEMORY_JUDGE.healthTimeout, 200);
   assert.equal(DEFAULT_MEMORY_JUDGE.recallThreshold, 0.70);
+  assert.equal(DEFAULT_MEMORY_JUDGE.captureThreshold, 0.75);
+  assert.equal(DEFAULT_MEMORY_JUDGE.proactiveCapture, true);
   assert.equal(DEFAULT_MEMORY_JUDGE.consecutiveFailures, 2);
   assert.equal(DEFAULT_MEMORY_JUDGE.resetTimeout, 300000);
   assert.ok(Object.isFrozen(DEFAULT_MEMORY_JUDGE));
@@ -68,7 +70,9 @@ test("parseMemoryJudgeConfig validates valid options and rejects invalid fields"
     healthTimeout: 300,
     recallThreshold: 0.85,
     consecutiveFailures: 3,
-    resetTimeout: 60000
+    resetTimeout: 60000,
+    captureThreshold: 0.80,
+    proactiveCapture: false
   });
 
   assert.equal(custom.mode, "manual");
@@ -77,6 +81,8 @@ test("parseMemoryJudgeConfig validates valid options and rejects invalid fields"
   assert.equal(custom.coldStartTimeout, 6000);
   assert.equal(custom.healthTimeout, 300);
   assert.equal(custom.recallThreshold, 0.85);
+  assert.equal(custom.captureThreshold, 0.80);
+  assert.equal(custom.proactiveCapture, false);
   assert.equal(custom.consecutiveFailures, 3);
   assert.equal(custom.resetTimeout, 60000);
 
@@ -95,6 +101,8 @@ test("parseMemoryJudgeConfig validates valid options and rejects invalid fields"
   // Reject out-of-range numbers
   assert.throws(() => parseMemoryJudgeConfig({ timeout: 10 }), TypeError);
   assert.throws(() => parseMemoryJudgeConfig({ recallThreshold: 1.5 }), TypeError);
+  assert.throws(() => parseMemoryJudgeConfig({ captureThreshold: 1.5 }), TypeError);
+  assert.throws(() => parseMemoryJudgeConfig({ proactiveCapture: "true" }), TypeError);
   assert.throws(() => parseMemoryJudgeConfig({ consecutiveFailures: 0 }), TypeError);
   assert.throws(() => parseMemoryJudgeConfig({ discoveryInterval: 500 }), TypeError);
 });

@@ -64,9 +64,11 @@ server, daemon, database, or second agent.
 7. **Optional Laya Judge**: In hosts without runtime prompt hooks (Antigravity,
    Codex), if the user explicitly configures `memoryJudge` (`auto` or `manual`),
    the agent may optionally pipe task text into `obsidian-memory-laya-judge --stdin`
-   (or `node lib/memory-router/cli.js --stdin`) to assist recall decisions. If mode
-   is `off` (the default), do not invoke it. Laya provides advisory routing only
-   and never writes to the Vault.
+   (or `node lib/memory-router/cli.js --stdin`) to assist recall and proactive capture
+   decisions. If mode is `off` (the default), do not invoke it. When Laya detects a
+   high-value pitfall or architectural decision, stage a candidate card in `inbox/`
+   with `status: pending-ingest` upon task conclusion. Laya provides advisory routing
+   only and never writes directly to the Vault.
 
 The host's installed skills own CLI syntax, installation details, and Markdown
 formatting. This skill owns memory selection, scope, evidence and lifecycle
