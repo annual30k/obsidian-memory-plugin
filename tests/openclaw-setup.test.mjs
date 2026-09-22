@@ -99,12 +99,16 @@ test("OpenClaw setup refuses unknown agents and noninteractive inference", async
 
 test("OpenClaw setup keeps existing multi-agent settings when updating one Vault", () => {
   const entry = buildEntry({
-    config: { agentConfigs: {
-      main: { vaultPath: "/old", projectId: "Personal" },
-      "health-manager": { vaultPath: "/health", projectId: "Health" }
-    } }
+    config: {
+      memoryJudge: { mode: "manual", endpoint: "http://127.0.0.1:18791" },
+      agentConfigs: {
+        main: { vaultPath: "/old", projectId: "Personal" },
+        "health-manager": { vaultPath: "/health", projectId: "Health" }
+      }
+    }
   }, "main", "/new");
   assert.equal(entry.config.agentConfigs.main.vaultPath, "/new");
   assert.equal(entry.config.agentConfigs.main.projectId, "Personal");
   assert.equal(entry.config.agentConfigs["health-manager"].vaultPath, "/health");
+  assert.deepEqual(entry.config.memoryJudge, { mode: "manual", endpoint: "http://127.0.0.1:18791" });
 });

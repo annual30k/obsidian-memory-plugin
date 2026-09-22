@@ -387,9 +387,77 @@ openclaw skills --agent main info defuddle
 - Hook 不生效：检查 agentId、插件启用/允许列表、Hook 权限和实际 Gateway 是否重载。
 - 同一项目串行 ingest，不承诺多文件事务或多 Agent 并发写保护。
 
-升级只更新插件文件，不自动改 Vault 模板或历史记忆。已有候选/Raw 的路径
-和链接保持不变；旧数据关联不明确时先报告，不换 ID 制造重复 Raw。
-已有同名宿主 Skill 可能覆盖插件版，升级后也要核对实际加载来源。
+## Laya 本地召回裁决服务 (Laya Memory Judge)
+
+为提升 Agent 检索长期记忆的精准度，插件内置了基于轻量级非自回归决策引擎（Laya）的智能召回裁决路由。在用户发起提问时，可在毫秒级（约 7~35 ms）内完成对问题意图的快速研判，兼顾准确率与极低时延，避免无关闲聊或自包含编码任务消耗 Vault 检索 token。
+
+### 架构与硬件路线
+
+1. **Apple Silicon (macOS arm64)**：
+   - 采用独立开源 MLX 移植版 [mizorewww/laya-mlx](https://github.com/mizorewww/laya-mlx) (Apache-2.0，声明 378/378 权重对比验证与数值保真；请注意此为独立开源移植版，非 Convai 官方发行)。
+   - 模型 checkpoint：`aac6fef/laya-multilingual-mlx`。
+   - 资源预期：磁盘权重约 678 MiB，峰值内存占用约 688 MiB，单次决策中位数延迟 ~7.4 ms。
+   - 依赖极简：仅需 `mlx`, `huggingface-hub`, `numpy`, `tokenizers`，无 PyTorch / Transformers 运行时负担。
+2. **Windows / Linux / x64 macOS**：
+   - 采用官方 [NandhaKishorM/laya](https://github.com/NandhaKishorM/laya) (>=0.3.5, Apache-2.0) 基于 PyTorch 的跨平台后端。
+   - 模型 checkpoint：`convaiinnovations/laya-multilingual`。
+   - 资源预期：磁盘权重约 1.2 GiB，内存约 1.2 GiB。
+3. **环境隔离与安全性**：
+   - 使用 `uv` 在 `~/.laya/venv` 维护独立的 Python >=3.10 环境，不污染系统 Python。
+   - 严格落实安全边界：安装必须显式执行，绝不静默下载模型权重；支持 `--skip-model` 跳过下载。
+   - 服务严格仅允许 Loopback（`127.0.0.1` 或 `::1`）绑定；基于 `secrets.compare_digest` 常量时间校验 Bearer Token。
+   - 符号链接安全防护：对 `--token-file`、`--service-file` 及 `--pid-file` 在解析前先以 `lstat` 严格拦截符号链接，防止凭据窃取或跨目录文件篡改。
+   - 元数据原子写入与实例标识：`service.json` 与 `daemon.pid` 均采用同目录临时文件与 `os.replace` 原子写入（POSIX `0600`，目录 `0700`），并维护唯一 `instance_id`；退出时严格核验实例身份，绝不误删其他实例凭据。
+   - 停机安全闭环：服务停止与卸载必须通过带鉴权的本地 `POST /shutdown` 验证身份并等待进程退出；禁止凭不可靠的 PID 强杀，杜绝 PID 复用导致的误杀隐患。
+
+### 服务管理命令
+
+```sh
+# 1. 显式创建隔离环境、安装依赖并预下载模型权重（按系统架构自动选择 mlx 或 pytorch）
+npm run laya:install
+
+# 可选：仅安装 Python 依赖，跳过模型权重下载
+node scripts/laya-service.mjs install --skip-model
+
+# 2. 启动本地后台服务（后台 daemon 运行，生成 ~/.laya/service.json）
+npm run laya:start
+
+# 3. 查看服务运行状态（进程 PID、监听端口、模型状态、脱敏 Token）
+npm run laya:status
+
+# 4. 停止本地服务（调用本地已鉴权 POST /shutdown 优雅退出；核验进程真正退出与身份清理）
+npm run laya:stop
+
+# 5. 彻底卸载本地服务与虚拟环境（优先鉴权退出，清理 ~/.laya/venv 与服务元数据；默认保留 Hugging Face 权重缓存；若需清除可指定 --purge-cache，且仅精确清理两个 Laya 专属模型目录）
+npm run laya:uninstall
+```
+
+### 插件配置 (mode: auto)
+
+在 OpenClaw、Antigravity、Codex 或 Hermes 的插件配置中，配置 `memoryJudge` 为 `mode: "auto"` 即可自动发现本地 Laya 服务：
+
+```json
+{
+  "memoryJudge": {
+    "mode": "auto",
+    "serviceFile": "~/.laya/service.json",
+    "recallThreshold": 0.70,
+    "timeout": 1000,
+    "coldStartTimeout": 5000
+  }
+}
+```
+
+- 当服务未启动时，自动快速降级为安全模式（0 网络开销，后台低频本地探测）。
+- 当服务启动并就绪后，自动握手 `/health` 并承接 `/judge/recall` 裁决。
+- 支持独立命令行工具直接测试（兼容 PowerShell 与 POSIX 标准管道）：
+  ```sh
+  # POSIX (macOS / Linux bash / zsh)
+  printf '{"text": "我们之前在项目中对于数据库连接池是怎么约定的？"}' | obsidian-memory-laya-judge --stdin --mode auto
+
+  # Windows PowerShell
+  '{"text": "我们之前在项目中对于数据库连接池是怎么约定的？"}' | npx obsidian-memory-laya-judge --stdin --mode auto
+  ```
 
 ## 禁用与卸载
 

@@ -11,7 +11,8 @@
     "anyOf": [
       { "maxProperties": 0 },
       { "required": ["agentId", "vaultPath"] },
-      { "required": ["agentConfigs"] }
+      { "required": ["agentConfigs"] },
+      { "required": ["memoryJudge"] }
     ],
     "properties": {
       "agentId": { "type": "string", "minLength": 1, "maxLength": 128 },
@@ -36,6 +37,22 @@
             "projectRoot": { "type": "string", "minLength": 1, "maxLength": 4096 }
           }
         }
+      },
+      "memoryJudge": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "mode": { "type": "string", "enum": ["off", "auto", "manual"], "default": "off" },
+          "endpoint": { "type": ["string", "null"] },
+          "serviceFile": { "type": "string" },
+          "timeout": { "type": "integer", "minimum": 50, "maximum": 60000, "default": 1000 },
+          "coldStartTimeout": { "type": "integer", "minimum": 100, "maximum": 120000, "default": 5000 },
+          "healthTimeout": { "type": "integer", "minimum": 20, "maximum": 10000, "default": 200 },
+          "recallThreshold": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.7 },
+          "consecutiveFailures": { "type": "integer", "minimum": 1, "maximum": 10, "default": 2 },
+          "resetTimeout": { "type": "integer", "minimum": 1000, "maximum": 3600000, "default": 300000 },
+          "discoveryInterval": { "type": "integer", "minimum": 1000, "maximum": 3600000, "default": 300000 }
+        }
       }
     }
   },
@@ -45,6 +62,7 @@
     "vaultPath": { "label": "Absolute Vault root path" },
     "cliPath": { "label": "CLI executable for Obsidian app operations (default: obsidian)" },
     "projectId": { "label": "Default project ID (optional)" },
-    "projectRoot": { "label": "Actual code project root (optional)" }
+    "projectRoot": { "label": "Actual code project root (optional)" },
+    "memoryJudge": { "label": "Laya Optional Memory Judge settings (default mode: off)" }
   }
 }

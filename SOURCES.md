@@ -32,3 +32,17 @@ under the repository's [MIT License](LICENSE).
 The memory skill describes when and where operations are allowed. The external
 skills describe how to operate Obsidian. A skill dependency is not an automatic
 permission to modify unrelated host configuration.
+
+## External engines: Laya Memory Judge
+
+### mizorewww/laya-mlx (Apple Silicon Backend)
+- Repository: https://github.com/mizorewww/laya-mlx
+- License: Apache-2.0
+- Description: Independent open-source MLX port of the Laya decision engine for Apple Silicon (macOS arm64). Note: this is an independent community port, not an official release from Convai Innovations.
+- Pre-converted weights: `aac6fef/laya-multilingual-mlx` on Hugging Face.
+
+### NandhaKishorM/laya (Cross-Platform PyTorch Backend)
+- Repository: https://github.com/NandhaKishorM/laya
+- License: Apache-2.0
+- Description: Official non-autoregressive decision engine by Nandha Kishor M / Convai Innovations. Used as the cross-platform PyTorch backend on Windows and Linux (`laya==0.3.5`).
+- Pretrained weights: `convaiinnovations/laya-multilingual` on Hugging Face.

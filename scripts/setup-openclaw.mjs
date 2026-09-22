@@ -53,6 +53,10 @@ export function buildEntry(previous, agentId, vaultPath) {
     return [id, connection];
   }));
   agentConfigs[agentId] = { ...(agentConfigs[agentId] ?? {}), vaultPath };
+  const nextConfig = { agentConfigs };
+  if (oldConfig.memoryJudge) {
+    nextConfig.memoryJudge = oldConfig.memoryJudge;
+  }
   return {
     ...previous,
     enabled: true,
@@ -61,7 +65,7 @@ export function buildEntry(previous, agentId, vaultPath) {
       allowConversationAccess: true,
       allowPromptInjection: true
     },
-    config: { agentConfigs }
+    config: nextConfig
   };
 }
 

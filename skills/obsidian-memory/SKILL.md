@@ -61,6 +61,12 @@ server, daemon, database, or second agent.
    before reading or writing memory. If the self-growing layout has not been
    initialized, ask whether to initialize it; only then read and follow
    [references/bootstrap.md](references/bootstrap.md).
+7. **Optional Laya Judge**: In hosts without runtime prompt hooks (Antigravity,
+   Codex), if the user explicitly configures `memoryJudge` (`auto` or `manual`),
+   the agent may optionally pipe task text into `obsidian-memory-laya-judge --stdin`
+   (or `node lib/memory-router/cli.js --stdin`) to assist recall decisions. If mode
+   is `off` (the default), do not invoke it. Laya provides advisory routing only
+   and never writes to the Vault.
 
 The host's installed skills own CLI syntax, installation details, and Markdown
 formatting. This skill owns memory selection, scope, evidence and lifecycle
