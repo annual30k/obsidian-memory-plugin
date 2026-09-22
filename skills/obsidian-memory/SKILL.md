@@ -61,14 +61,11 @@ server, daemon, database, or second agent.
    before reading or writing memory. If the self-growing layout has not been
    initialized, ask whether to initialize it; only then read and follow
    [references/bootstrap.md](references/bootstrap.md).
-7. **Optional Laya Judge**: In hosts without runtime prompt hooks (Antigravity,
-   Codex), if the user explicitly configures `memoryJudge` (`auto` or `manual`),
-   the agent may optionally pipe task text into `obsidian-memory-laya-judge --stdin`
-   (or `node lib/memory-router/cli.js --stdin`) to assist recall and proactive capture
-   decisions. If mode is `off` (the default), do not invoke it. When Laya detects a
-   high-value pitfall or architectural decision, stage a candidate card in `inbox/`
-   with `status: pending-ingest` upon task conclusion. Laya provides advisory routing
-   only and never writes directly to the Vault.
+7. **Laya Judge (Self-Adaptive)**: The memory judge defaults to `auto` mode.
+   - In OpenClaw, the runtime hook automatically evaluates user turns and injects guidance when Laya service is running.
+   - In hosts without runtime prompt hooks (Antigravity, Codex, Hermes), if Laya service is running locally (`laya status` shows RUNNING or `~/.laya/service.json` exists), the agent may invoke `obsidian-memory-laya-judge --stdin` (or `node lib/memory-router/cli.js --stdin`) to assist recall and proactive capture decisions.
+   - If Laya is not running locally, or if the user explicitly configures `mode: "off"`, do not invoke it and proceed with standard memory workflow.
+   - When Laya detects a high-value pitfall or architectural decision, proactively stage a candidate card in `inbox/` with `status: pending-ingest` upon task conclusion. Laya provides advisory routing only and never writes directly to the Vault.
 
 The host's installed skills own CLI syntax, installation details, and Markdown
 formatting. This skill owns memory selection, scope, evidence and lifecycle

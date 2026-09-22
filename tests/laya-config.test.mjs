@@ -11,7 +11,7 @@ import {
 } from "../lib/config.js";
 
 test("DEFAULT_MEMORY_JUDGE has expected safe defaults", () => {
-  assert.equal(DEFAULT_MEMORY_JUDGE.mode, "off");
+  assert.equal(DEFAULT_MEMORY_JUDGE.mode, "auto");
   assert.equal(DEFAULT_MEMORY_JUDGE.endpoint, null);
   assert.equal(DEFAULT_MEMORY_JUDGE.discoveryInterval, 300000);
   assert.equal(DEFAULT_MEMORY_JUDGE.serviceFile, join(homedir(), ".laya", "service.json"));
@@ -122,19 +122,19 @@ test("parseConfigs supports top-level memoryJudge alongside agentConfigs", () =>
   assert.equal(result.memoryJudge.mode, "auto");
 });
 
-test("parseConfigs defaults memoryJudge to mode off for legacy configs", () => {
+test("parseConfigs defaults memoryJudge to mode auto for unconfigured setups", () => {
   const legacySingle = parseConfigs({
     agentId: "owner",
     vaultPath: "/path/to/vault"
   });
-  assert.equal(legacySingle.memoryJudge.mode, "off");
+  assert.equal(legacySingle.memoryJudge.mode, "auto");
 
   const legacyMulti = parseConfigs({
     agentConfigs: {
       owner: { vaultPath: "/path/to/vault" }
     }
   });
-  assert.equal(legacyMulti.memoryJudge.mode, "off");
+  assert.equal(legacyMulti.memoryJudge.mode, "auto");
 });
 
 test("parseMemoryJudgeConfig expands ~ in serviceFile to home directory", () => {

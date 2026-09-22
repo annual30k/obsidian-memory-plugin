@@ -432,9 +432,9 @@ npm run laya:stop
 npm run laya:uninstall
 ```
 
-### 插件配置 (mode: auto)
+### 插件自适应配置 (默认即 mode: auto，零配置开箱即用)
 
-在 OpenClaw、Antigravity、Codex 或 Hermes 的插件配置中，配置 `memoryJudge` 为 `mode: "auto"` 即可自动发现本地 Laya 服务：
+本插件默认开箱即用（`mode: "auto"`）。在 OpenClaw、Antigravity、Codex 或 Hermes 中，**无需进行任何手动配置**，系统会自动自适应发现本地运行的 Laya 服务（未运行或未安装时 0ms 安全跳过，完全不影响常规运行）。若需要自定义阈值或强制关闭（`mode: "off"`），可在配置中指定：
 
 ```json
 {
