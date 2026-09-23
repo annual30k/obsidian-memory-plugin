@@ -52,12 +52,34 @@ test("OpenClaw setup merges a new agent without erasing existing agents, hooks, 
     assert.equal(state.entry.enabled, true);
     assert.equal(state.entry.hooks.custom, true);
     assert.equal(state.entry.hooks.allowPromptInjection, true);
+    assert.equal(state.entry.hooks.allowConversationAccess, true);
     assert.equal(state.entry.config.agentConfigs.main.vaultPath, vault);
     assert.equal(state.entry.config.agentConfigs["health-manager"].projectId, "Health");
     assert.deepEqual(state.allow, ["another-plugin", "obsidian-memory-plugin"]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("OpenClaw buildEntry declares hook permissions allowConversationAccess and allowPromptInjection while preserving existing hooks", () => {
+  const previous = {
+    hooks: {
+      "internal.entries.memory-judge": { enabled: true },
+      preserveMe: 42
+    },
+    config: {
+      agentId: "agent-alpha",
+      vaultPath: "/alpha-vault"
+    }
+  };
+  const entry = buildEntry(previous, "agent-beta", "/beta-vault");
+  assert.equal(entry.enabled, true);
+  assert.equal(entry.hooks.allowConversationAccess, true);
+  assert.equal(entry.hooks.allowPromptInjection, true);
+  assert.equal(entry.hooks.preserveMe, 42);
+  assert.deepEqual(entry.hooks["internal.entries.memory-judge"], { enabled: true });
+  assert.equal(entry.config.agentConfigs["agent-alpha"].vaultPath, "/alpha-vault");
+  assert.equal(entry.config.agentConfigs["agent-beta"].vaultPath, "/beta-vault");
 });
 
 test("OpenClaw setup dry-run validates but changes nothing", async () => {

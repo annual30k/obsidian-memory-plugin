@@ -141,12 +141,31 @@ test("Package bin installed from npm pack tarball runs via symlink and exits nat
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "laya-bin-pack-test-"));
   try {
-    const packOut = execSync(`npm pack --ignore-scripts --pack-destination "${tmpDir}"`, { encoding: "utf8" }).trim();
-    const tarball = packOut.split("\n").filter(Boolean).pop().trim();
+    const cleanEnv = Object.fromEntries(
+      Object.entries(process.env).filter(([k]) => !k.startsWith("npm_"))
+    );
+    const packOut = execSync(`npm pack --ignore-scripts --pack-destination "${tmpDir}"`, {
+      encoding: "utf8",
+      env: cleanEnv
+    }).trim();
+    let tarball = "";
+    try {
+      const parsed = JSON.parse(packOut);
+      if (Array.isArray(parsed) && parsed[0]?.filename) {
+        tarball = parsed[0].filename;
+      }
+    } catch {}
+    if (!tarball) {
+      tarball = packOut.split("\n").filter(Boolean).pop().trim();
+    }
     const tarballPath = path.join(tmpDir, tarball);
 
     fs.writeFileSync(path.join(tmpDir, "package.json"), JSON.stringify({ name: "consumer-test", version: "1.0.0" }));
-    execSync(`npm install "${tarballPath}" --no-audit --no-fund`, { cwd: tmpDir, stdio: "ignore" });
+    execSync(`npm install "${tarballPath}" --no-audit --no-fund`, {
+      cwd: tmpDir,
+      stdio: "ignore",
+      env: cleanEnv
+    });
 
     const binName = process.platform === "win32" ? "obsidian-memory-laya-judge.cmd" : "obsidian-memory-laya-judge";
     const binPath = path.join(tmpDir, "node_modules", ".bin", binName);

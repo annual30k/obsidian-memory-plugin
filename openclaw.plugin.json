@@ -1,7 +1,7 @@
 {
   "id": "obsidian-memory-plugin",
   "name": "Obsidian Memory",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "description": "Load the bundled self-growing memory skill and an explicit Obsidian connection.",
   "skills": ["./skills"],
   "activation": { "onStartup": true, "onCapabilities": ["hook"] },
@@ -42,7 +42,7 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "mode": { "type": "string", "enum": ["off", "auto", "manual"], "default": "off" },
+          "mode": { "type": "string", "enum": ["off", "auto", "strict", "manual"], "default": "auto" },
           "endpoint": { "type": ["string", "null"] },
           "serviceFile": { "type": "string" },
           "timeout": { "type": "integer", "minimum": 50, "maximum": 60000, "default": 1000 },
@@ -63,6 +63,6 @@
     "cliPath": { "label": "CLI executable for Obsidian app operations (default: obsidian)" },
     "projectId": { "label": "Default project ID (optional)" },
     "projectRoot": { "label": "Actual code project root (optional)" },
-    "memoryJudge": { "label": "Laya Optional Memory Judge settings (default mode: off)" }
+    "memoryJudge": { "label": "Laya Optional Memory Judge settings (default mode: auto)" }
   }
 }

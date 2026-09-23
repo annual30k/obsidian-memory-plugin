@@ -1,0 +1,11 @@
+{
+  "obsidian-memory-router": {
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "node ./scripts/antigravity-hook.mjs",
+        "timeout": 5
+      }
+    ]
+  }
+}

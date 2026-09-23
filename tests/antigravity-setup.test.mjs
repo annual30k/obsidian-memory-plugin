@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -130,6 +130,33 @@ test("Antigravity plugin linking handles new links and existing links safely", (
     const brokenTarget = join(root, "target-broken");
     symlinkSync(join(root, "nonexistent"), brokenTarget);
     assert.equal(linkPlugin(sourceDir, brokenTarget), "linked");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Antigravity setup default does NOT write hooks.json to avoid duplicate hooks, and writes only with --hooks", async () => {
+  const root = mkdtempSync(join(tmpdir(), "obsidian-memory-agy-hooks-"));
+  try {
+    const vault = join(root, "vault");
+    const gemini = join(root, "GEMINI.md");
+    const pluginDir = join(root, "plugins", "obsidian-memory-plugin");
+    const hooksFile = join(root, "hooks.json");
+    mkdirSync(vault);
+
+    // 1. Default setup: does NOT configure hooks.json (relies on plugin hooks.json as single source)
+    await runSetup(["--vault", vault, "--gemini-file", gemini, "--plugin-dir", pluginDir, "--hooks-file", hooksFile, "--yes"], {
+      input: new PassThrough(), output: new PassThrough()
+    });
+    assert.equal(existsSync(hooksFile), false, "Default setup must NOT write hooks.json to avoid double execution");
+
+    // 2. Explicit --hooks opt-in: configures hooks.json
+    await runSetup(["--vault", vault, "--gemini-file", gemini, "--plugin-dir", pluginDir, "--hooks-file", hooksFile, "--hooks", "--yes"], {
+      input: new PassThrough(), output: new PassThrough()
+    });
+    assert.equal(existsSync(hooksFile), true, "--hooks must write hooks.json");
+    const hooksData = JSON.parse(readFileSync(hooksFile, "utf8"));
+    assert.ok(hooksData["obsidian-memory-router"]?.PreInvocation);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

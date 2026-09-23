@@ -1,5 +1,5 @@
 name: obsidian-memory-plugin
-version: 0.5.2
+version: 0.6.0
 manifest_version: 2
 api_version: 1
 description: "Explicit, self-growing Obsidian memory workflow with lightweight always-on guidance."
@@ -11,6 +11,8 @@ tags:
   - memory
   - knowledge-base
   - coding
+hooks:
+  - pre_llm_call
 config_schema:
   vault_path:
     type: str
@@ -32,3 +34,7 @@ config_schema:
     type: str
     default: ""
     description: "Optional actual code project root; never a gateway working directory by default."
+  memory_router_mode:
+    type: str
+    default: "auto"
+    description: "Memory router mode: auto (default fail-open), strict (host-dependent; Hermes lacks blocking contract and gracefully degrades with strict_unsupported trace), or off."

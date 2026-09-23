@@ -19,8 +19,67 @@ export function defaultGeminiPath(geminiHome = resolve(homedir(), ".gemini")) {
   return resolve(geminiHome, "GEMINI.md");
 }
 
+export function defaultHooksPath(geminiHome = resolve(homedir(), ".gemini")) {
+  return resolve(geminiHome, "hooks.json");
+}
+
 export function defaultPluginInstallDir(geminiConfigHome = resolve(homedir(), ".gemini", "config", "plugins")) {
   return resolve(geminiConfigHome, "obsidian-memory-plugin");
+}
+
+const UNSAFE_HOOK_PATH_CHARS = /[%!$`"\r\n\0\x00-\x1f\x7f]/;
+
+export function assertSafeHookScriptPath(scriptPath) {
+  if (!scriptPath || typeof scriptPath !== "string") {
+    throw new TypeError("Hook scriptPath must be a non-empty string");
+  }
+  if (UNSAFE_HOOK_PATH_CHARS.test(scriptPath)) {
+    throw new Error(
+      "Invalid hook scriptPath: path contains unsafe shell expansion, substitution, quote, or control characters"
+    );
+  }
+  return scriptPath;
+}
+
+export function formatWindowsSafePath(filePath) {
+  if (!filePath) return "";
+  let normalized = String(filePath).replace(/\\/g, "/");
+  if (/^\/[a-zA-Z]:\//.test(normalized)) {
+    normalized = normalized.slice(1);
+  }
+  return normalized;
+}
+
+export function buildAntigravityHookCommand(scriptPath) {
+  assertSafeHookScriptPath(scriptPath);
+  const safePath = formatWindowsSafePath(scriptPath);
+  return `node "${safePath}"`;
+}
+
+export function buildAntigravityHooksConfig(scriptPath) {
+  return {
+    "obsidian-memory-router": {
+      "PreInvocation": [
+        {
+          "type": "command",
+          "command": buildAntigravityHookCommand(scriptPath),
+          "timeout": 5
+        }
+      ]
+    }
+  };
+}
+
+export function mergeAntigravityHooks(existingConfig = {}, pluginHooksConfig = {}) {
+  const merged = { ...existingConfig };
+  for (const [key, value] of Object.entries(pluginHooksConfig)) {
+    if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+      merged[key] = { ...(merged[key] || {}), ...value };
+    } else {
+      merged[key] = value;
+    }
+  }
+  return merged;
 }
 
 export function updateGeminiContent(content, vaultPath) {
@@ -64,19 +123,26 @@ function parseArgs(args) {
   const options = {
     geminiPath: defaultGeminiPath(),
     pluginDir: defaultPluginInstallDir(),
+    hooksPath: defaultHooksPath(),
+    configureHooks: false, // Default: false (plugin-bundled hooks.json is primary; opt-in with --hooks)
     link: true,
     confirm: false,
     dryRun: false
   };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
-    if (arg === "--vault" || arg === "--gemini-file" || arg === "--plugin-dir") {
+    if (arg === "--vault" || arg === "--gemini-file" || arg === "--plugin-dir" || arg === "--hooks-file") {
       const value = args[index + 1];
       if (!value || value.startsWith("--")) throw new TypeError(`${arg} requires a value`);
       if (arg === "--vault") options.vaultPath = value;
       else if (arg === "--gemini-file") options.geminiPath = value;
       else if (arg === "--plugin-dir") options.pluginDir = value;
+      else if (arg === "--hooks-file") options.hooksPath = value;
       index += 1;
+    } else if (arg === "--hooks") {
+      options.configureHooks = true;
+    } else if (arg === "--no-hooks") {
+      options.configureHooks = false;
     } else if (arg === "--link") {
       options.link = true;
     } else if (arg === "--no-link") {
@@ -95,7 +161,7 @@ function parseArgs(args) {
 }
 
 function help() {
-  console.log(`Usage: node scripts/setup-antigravity.mjs [--vault <absolute-path>] [--gemini-file <absolute-path>] [--plugin-dir <absolute-path>] [--link|--no-link] [--yes] [--dry-run]
+  console.log(`Usage: node scripts/setup-antigravity.mjs [--vault <absolute-path>] [--gemini-file <absolute-path>] [--plugin-dir <absolute-path>] [--link|--no-link] [--hooks] [--yes] [--dry-run]
 
 Prompts for an Obsidian Vault path, validates that it is readable, links the plugin
 into Antigravity's global plugin directory (~/.gemini/config/plugins/obsidian-memory-plugin),
@@ -105,6 +171,8 @@ Options:
   --vault <path>        Absolute physical path of the Obsidian Vault
   --gemini-file <path>  Target GEMINI.md file (default: ~/.gemini/GEMINI.md)
   --plugin-dir <path>   Destination plugin directory (default: ~/.gemini/config/plugins/obsidian-memory-plugin)
+  --hooks-file <path>   Target hooks.json file (default: ~/.gemini/hooks.json)
+  --hooks / --no-hooks  Whether to configure standalone global hooks in ~/.gemini/hooks.json (default: false; plugin-bundled hooks.json is primary source)
   --link / --no-link    Whether to link the plugin directory (default: true)
   --dry-run             Print the resulting GEMINI.md content without changing files
   --yes                 Confirm automatically without interactive prompt (requires --vault)
@@ -154,6 +222,24 @@ export async function runSetup(args, { input = process.stdin, output = process.s
         output.write(`Linked plugin to ${options.pluginDir}.\n`);
       }
     }
+
+    if (options.configureHooks) {
+      const packageRoot = resolve(fileURLToPath(new URL("../", import.meta.url)));
+      const hookScript = resolve(packageRoot, "scripts", "antigravity-hook.mjs");
+      const hooksPath = options.hooksPath;
+      let existingHooks = {};
+      if (existsSync(hooksPath)) {
+        try {
+          existingHooks = JSON.parse(readFileSync(hooksPath, "utf8"));
+        } catch {}
+      }
+      const pluginHooks = buildAntigravityHooksConfig(hookScript);
+      const merged = mergeAntigravityHooks(existingHooks, pluginHooks);
+      mkdirSync(dirname(hooksPath), { recursive: true });
+      writeFileSync(hooksPath, JSON.stringify(merged, null, 2) + "\n", "utf8");
+      output.write(`Configured native pre-invocation hook in ${hooksPath}.\n`);
+    }
+
     output.write("Antigravity setup complete. Start a new Antigravity session to use the updated instruction.\n");
   } finally {
     prompt.close();

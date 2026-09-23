@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import http from "node:http";
+import { Readable } from "node:stream";
 import os from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
@@ -22,6 +23,8 @@ import {
 import { validateHealthResponse, validateRecallResponse } from "../lib/memory-router/schemas.js";
 import { readTrustedServiceFile } from "../lib/memory-router/security.js";
 import { MemoryRouter } from "../lib/memory-router/router.js";
+import { LayaClient } from "../lib/memory-router/client.js";
+import { runCli } from "../lib/memory-router/cli.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -102,6 +105,29 @@ test("service.py rejects non-loopback host bindings with exit code 2", () => {
 
     assert.equal(res.status, 2, `Host ${badHost} must be rejected with exit code 2`);
     assert.ok(res.stderr.includes("not a permitted loopback address"), `Stderr should explain loopback requirement: ${res.stderr}`);
+  }
+});
+
+test("UDS startup refuses symlinks and ordinary files without replacing their targets", () => {
+  if (process.platform === "win32") return;
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "laya-uds-path-test-"));
+  const serviceFile = path.join(tmpDir, "service.json");
+  const target = path.join(tmpDir, "keep.txt");
+  const socketPath = path.join(tmpDir, "service.sock");
+  try {
+    fs.writeFileSync(target, "preserve me");
+    fs.writeFileSync(socketPath, "not a socket");
+    const fileRes = spawnSync(python.command, [...python.args, SERVICE_PY, "--backend", "mock", "--transport", "uds", "--service-file", serviceFile, "--socket-file", socketPath], { encoding: "utf8", windowsHide: true });
+    assert.equal(fileRes.status, 2);
+    assert.equal(fs.readFileSync(socketPath, "utf8"), "not a socket");
+
+    fs.unlinkSync(socketPath);
+    fs.symlinkSync(target, socketPath);
+    const linkRes = spawnSync(python.command, [...python.args, SERVICE_PY, "--backend", "mock", "--transport", "uds", "--service-file", serviceFile, "--socket-file", socketPath], { encoding: "utf8", windowsHide: true });
+    assert.equal(linkRes.status, 2);
+    assert.equal(fs.readFileSync(target, "utf8"), "preserve me");
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });
 
@@ -316,6 +342,26 @@ test("Python service with mock backend starts on ephemeral port, enforces auth, 
     assert.ok(validatedRecall.confidence > 0.5);
     assert.equal(validatedRecall.bestScope, "project");
 
+    const captureResp = await fetch(`${endpoint}/judge/capture`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ text: "Verified pitfall: restart the local model after its idle unload before relying on the next inference." })
+    });
+    assert.equal(captureResp.status, 200);
+    const captureJson = await captureResp.json();
+    assert.equal(typeof captureJson.capture_score, "number");
+    assert.ok(["pitfall", "decision", "knowledge"].includes(captureJson.category));
+
+    const relationResp = await fetch(`${endpoint}/judge/relation`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ candidate: "test-relation:supersession", existing: "Previous policy excerpt" })
+    });
+    assert.equal(relationResp.status, 200);
+    const relationJson = await relationResp.json();
+    assert.equal(relationJson.relation, "supersession");
+    assert.ok(relationJson.confidence >= 0 && relationJson.confidence <= 1);
+
     // 5. POST /judge/recall with oversized body -> 413
     const oversizedBody = JSON.stringify({ text: "a".repeat(70000) });
     const overResp = await fetch(`${endpoint}/judge/recall`, {
@@ -483,6 +529,108 @@ test("Python service with mock backend starts on ephemeral port, enforces auth, 
   }
 });
 
+test("MLX backend loads on first inference, unloads after idle, and loads again on demand", () => {
+  const script = String.raw`
+import runpy, sys, time, types
+loads = []
+class FakeAgent:
+    def predict(self, state, questions):
+        return {"answers": {
+            "requires_memory": {"probabilities": {"yes": 0.1}, "confidence": 0.9},
+            "scope": {"probabilities": {"project": 0.8, "global": 0.1, "unknown": 0.1}},
+            "category": {"probabilities": {"pitfall": 0.1, "decision": 0.8, "knowledge": 0.1}, "confidence": 0.9}
+        }}
+def fake_load(name):
+    loads.append(name)
+    return FakeAgent()
+sys.modules["laya_mlx"] = types.SimpleNamespace(load=fake_load)
+ns = runpy.run_path(sys.argv[1])
+backend = ns["MlxBackend"]("test-model", idle_unload_seconds=1)
+backend.release_backend_cache = lambda: None
+assert backend.status == "unloaded" and not loads
+backend.predict("first")
+assert backend.status == "ready" and len(loads) == 1
+backend.last_used_at = time.monotonic() - 2
+assert backend.unload_if_idle(1)
+assert backend.status == "unloaded" and backend.agent is None
+backend.predict("second")
+assert backend.status == "ready" and len(loads) == 2
+print("lazy-load / idle-unload / reload lifecycle passed")
+`;
+  const result = spawnSync(python.command, [...python.args, "-c", script, SERVICE_PY], {
+    encoding: "utf8",
+    windowsHide: true
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /lazy-load \/ idle-unload \/ reload lifecycle passed/);
+});
+
+test("running service reports unloaded after idle and reloads on the next inference request", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "laya-idle-unload-test-"));
+  const serviceFile = path.join(tmpDir, "service.json");
+  const token = "idle-unload-test-token-123456";
+  const pyProc = spawn(python.command, [
+    ...python.args,
+    SERVICE_PY,
+    "--backend", "mock",
+    "--idle-unload-seconds", "1",
+    "--service-file", serviceFile,
+    "--token", token,
+    "--port", "0"
+  ], { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+
+  let stderrData = "";
+  pyProc.stderr.on("data", (d) => { stderrData += d.toString(); });
+  const authHeaders = { Authorization: `Bearer ${token}` };
+  const getHealth = async (endpoint) => {
+    const response = await fetch(`${endpoint}/health`, { headers: authHeaders });
+    assert.equal(response.status, 200, stderrData);
+    return response.json();
+  };
+  const waitForStatus = async (endpoint, expected, timeoutMs = 5000) => {
+    const started = Date.now();
+    while (Date.now() - started < timeoutMs) {
+      const health = await getHealth(endpoint);
+      if (health.model_status === expected) return health;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert.fail(`Timed out waiting for model_status=${expected}. ${stderrData}`);
+  };
+
+  try {
+    const started = Date.now();
+    while (!fs.existsSync(serviceFile) && Date.now() - started < 10000) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    assert.ok(fs.existsSync(serviceFile), `service.json was not created. ${stderrData}`);
+    const service = JSON.parse(fs.readFileSync(serviceFile, "utf8"));
+    const endpoint = service.endpoint;
+
+    await waitForStatus(endpoint, "unloaded");
+    const response = await fetch(`${endpoint}/judge/recall`, {
+      method: "POST",
+      headers: { ...authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ text: "Can the model reload after becoming idle?" })
+    });
+    const recall = await response.json();
+    assert.equal(response.status, 200, JSON.stringify(recall));
+    assert.equal(recall.requires_memory, 0.12);
+    assert.equal((await waitForStatus(endpoint, "ready")).model_status, "ready");
+    await waitForStatus(endpoint, "unloaded");
+  } finally {
+    try { pyProc.kill("SIGTERM"); } catch {}
+    await new Promise((resolve) => {
+      if (pyProc.exitCode !== null) return resolve();
+      const timer = setTimeout(resolve, 1500);
+      pyProc.once("exit", () => { clearTimeout(timer); resolve(); });
+    });
+    if (pyProc.exitCode === null) {
+      try { pyProc.kill("SIGKILL"); } catch {}
+    }
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test("Secure token delivery via --token-file deletes temporary file on startup", async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "laya-token-test-"));
   const serviceFile = path.join(tmpDir, "service.json");
@@ -554,6 +702,32 @@ test("Node management CLI start, status, and stop workflow with mock backend", a
     });
 
     assert.ok(fs.existsSync(serviceFile), "service.json must exist after start");
+    const serviceData = JSON.parse(fs.readFileSync(serviceFile, "utf8"));
+    if (process.platform !== "win32") {
+      assert.equal(serviceData.transport, "uds");
+      assert.equal(fs.statSync(serviceData.socket_path).mode & 0o777, 0o600);
+      const trusted = readTrustedServiceFile(serviceFile);
+      assert.equal(trusted.endpoint, `uds:${serviceData.socket_path}`);
+      assert.equal(trusted.token, serviceData.token);
+    } else {
+      assert.equal(serviceData.transport, "http");
+      assert.ok(serviceData.endpoint.startsWith("http://127.0.0.1:"));
+    }
+    const client = new LayaClient(serviceData.endpoint, { token: serviceData.token });
+    const capture = await client.judgeCapture({ text: "Verified pitfall: the service reloads the model after idle unload." });
+    assert.ok(capture.captureScore > 0.75);
+    assert.equal(capture.category, "pitfall");
+    const relation = await client.judgeRelation({ candidate: "test-relation:supersession", existing: "old decision" });
+    assert.equal(relation.relation, "supersession");
+    for (const [args, input] of [
+      [["--capture", "--stdin"], { text: "Verified pitfall: the model reloads after idle unload.", config: { mode: "auto", serviceFile } }],
+      [["--relation", "--stdin"], { candidate: "test-relation:duplicate", existing: "previous fact", config: { mode: "auto", serviceFile } }]
+    ]) {
+      let output = "";
+      const code = await runCli(args, { stdin: Readable.from([JSON.stringify(input)]), stdout: { write: (chunk) => { output += chunk; } } });
+      assert.equal(code, 0);
+      assert.equal(JSON.parse(output).task, args[0] === "--capture" ? "capture" : "relation");
+    }
 
     // 3. Status -> Running
     stdoutBuffer = "";
@@ -565,11 +739,18 @@ test("Node management CLI start, status, and stop workflow with mock backend", a
     }
     assert.ok(stdoutBuffer.includes("RUNNING"), "Status after start must be RUNNING");
     assert.ok(stdoutBuffer.includes("mock"), "Status must report mock backend");
+    assert.equal(fs.existsSync(path.join(tmpDir, ".laya", ".autostart-disabled")), false);
 
     // 4. Stop service gracefully
     await stopCommand({ home: tmpDir });
 
     assert.equal(fs.existsSync(serviceFile), false, "service.json must be removed after stop");
+    assert.equal(fs.existsSync(path.join(tmpDir, ".laya", ".autostart-disabled")), true, "explicit stop must suppress background recovery");
+
+    // A deliberate manual start re-enables crash recovery.
+    await startCommand({ home: tmpDir, backend: "mock", timeoutMs: 15000 });
+    assert.equal(fs.existsSync(path.join(tmpDir, ".laya", ".autostart-disabled")), false, "manual start must clear the stop marker");
+    await stopCommand({ home: tmpDir });
 
     // 5. Final status -> Stopped
     stdoutBuffer = "";
@@ -582,6 +763,26 @@ test("Node management CLI start, status, and stop workflow with mock backend", a
     assert.ok(stdoutBuffer.includes("STOPPED"), "Status after stop must be STOPPED");
 
   } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("automatic recovery start honors an explicit stop marker without starting the service", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "laya-recovery-suppressed-"));
+  const layaDir = path.join(tmpDir, ".laya");
+  const serviceFile = path.join(layaDir, "service.json");
+  fs.mkdirSync(layaDir, { recursive: true });
+  fs.writeFileSync(path.join(layaDir, ".autostart-disabled"), "stopped\n");
+  let output = "";
+  const originalWrite = process.stdout.write;
+  process.stdout.write = (chunk) => { output += chunk; return true; };
+  try {
+    await startCommand({ home: tmpDir, backend: "mock", recovery: true });
+    assert.equal(fs.existsSync(serviceFile), false);
+    assert.equal(fs.existsSync(path.join(layaDir, ".autostart-disabled")), true);
+    assert.match(output, /explicitly stopped/);
+  } finally {
+    process.stdout.write = originalWrite;
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });
@@ -1112,14 +1313,15 @@ test("linkGlobalCli and unlinkGlobalCli safely link and unlink global binary", a
 });
 
 test("laya-service parseArgs parses all CLI arguments including --port", () => {
-  const res = parseArgs(["start", "--port", "52752", "--backend", "mock", "--model", "custom/model", "--venv", "/custom/venv", "--home", "/custom/home", "--force", "--purge-cache"]);
+  const res = parseArgs(["start", "--port", "52752", "--idle-unload-seconds", "1800", "--backend", "mock", "--model", "custom/model", "--venv", "/custom/venv", "--home", "/custom/home", "--recovery", "--force", "--purge-cache"]);
   assert.equal(res.command, "start");
   assert.equal(res.options.port, 52752);
+  assert.equal(res.options.idleUnloadSeconds, 1800);
   assert.equal(res.options.backend, "mock");
   assert.equal(res.options.model, "custom/model");
   assert.equal(res.options.venv, "/custom/venv");
   assert.equal(res.options.home, "/custom/home");
+  assert.equal(res.options.recovery, true);
   assert.equal(res.options.force, true);
   assert.equal(res.options.purgeCache, true);
 });
-

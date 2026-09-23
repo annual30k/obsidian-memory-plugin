@@ -34,6 +34,15 @@ test("LayaClient executes successful health and recall requests", async () => {
         })
       };
     }
+    if (url.endsWith("/judge/capture")) {
+      return { ok: true, status: 200, headers: new Map(), text: async () => JSON.stringify({ capture_score: 0.91, confidence: 0.88, category: "decision", scope: "project" }) };
+    }
+    if (url.endsWith("/judge/relation")) {
+      const body = JSON.parse(options.body);
+      assert.equal(body.candidate, "new note");
+      assert.equal(body.existing, "old note");
+      return { ok: true, status: 200, headers: new Map(), text: async () => JSON.stringify({ relation: "supersession", confidence: 0.82 }) };
+    }
     throw new Error(`Unhandled url: ${url}`);
   };
 
@@ -43,6 +52,11 @@ test("LayaClient executes successful health and recall requests", async () => {
 
   const recall = await client.judgeRecall({ text: "test query" });
   assert.equal(recall.requiresMemory, 0.95);
+  const capture = await client.judgeCapture({ text: "completed task" });
+  assert.equal(capture.category, "decision");
+  assert.equal(capture.scope, "project");
+  const relation = await client.judgeRelation({ candidate: "new note", existing: "old note" });
+  assert.equal(relation.relation, "supersession");
 });
 
 test("LayaClient attaches Bearer token when provided", async () => {

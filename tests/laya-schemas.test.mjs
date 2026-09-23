@@ -13,6 +13,7 @@ test("validateHealthResponse validates correct responses and supports Open Schem
     api_version: "1",
     model: "laya-multilingual",
     model_status: "ready",
+    idle_unload_seconds: 900,
     capabilities: ["recall", "scope"],
     unknown_future_field: "tolerated"
   };
@@ -22,6 +23,7 @@ test("validateHealthResponse validates correct responses and supports Open Schem
   assert.equal(parsed.status, "ok");
   assert.equal(parsed.apiVersion, "1");
   assert.equal(parsed.modelStatus, "ready");
+  assert.equal(parsed.idleUnloadSeconds, 900);
   assert.deepEqual(parsed.capabilities, ["recall", "scope"]);
 });
 
@@ -35,6 +37,14 @@ test("validateHealthResponse throws SchemaValidationError on invalid fields with
     status: "healthy",
     api_version: "1",
     model_status: "ready",
+    capabilities: ["recall"]
+  }), SchemaValidationError);
+  assert.throws(() => validateHealthResponse({
+    service: "laya-memory-judge",
+    status: "ok",
+    api_version: "1",
+    model_status: "ready",
+    idle_unload_seconds: -1,
     capabilities: ["recall"]
   }), SchemaValidationError);
   // Rejects missing or invalid model_status

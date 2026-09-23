@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -91,6 +91,32 @@ test("Codex onboarding writes and safely refreshes only its own AGENTS block", a
     assert.ok(content.includes("Preserve this line."));
     assert.equal(content.split(START_MARKER).length, 2);
     assert.equal(content.split(END_MARKER).length, 2);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Codex setup default does NOT write hooks.json to avoid duplicate hooks, and writes only with --hooks", async () => {
+  const root = mkdtempSync(join(tmpdir(), "obsidian-memory-codex-hooks-"));
+  try {
+    const vault = join(root, "vault");
+    const agents = join(root, "AGENTS.md");
+    const hooksFile = join(root, "hooks.json");
+    mkdirSync(vault);
+
+    // 1. Default setup: does NOT configure hooks.json (relies on plugin hooks/hooks.json as single source)
+    await runSetup(["--vault", vault, "--agents-file", agents, "--hooks-file", hooksFile, "--yes"], {
+      input: new PassThrough(), output: new PassThrough()
+    });
+    assert.equal(existsSync(hooksFile), false, "Default setup must NOT write hooks.json to avoid double execution");
+
+    // 2. Explicit --hooks opt-in: configures hooks.json
+    await runSetup(["--vault", vault, "--agents-file", agents, "--hooks-file", hooksFile, "--hooks", "--yes"], {
+      input: new PassThrough(), output: new PassThrough()
+    });
+    assert.equal(existsSync(hooksFile), true, "--hooks must write hooks.json");
+    const hooksData = JSON.parse(readFileSync(hooksFile, "utf8"));
+    assert.ok(hooksData.hooks?.UserPromptSubmit);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

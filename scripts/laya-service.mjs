@@ -6,6 +6,8 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { findPython } from "./python.mjs";
+import { clearServiceStoppedMarker, markServiceStopped } from "../lib/memory-router/auto-restart.js";
+import { LayaClient } from "../lib/memory-router/client.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -113,17 +115,8 @@ export function getVenvPython(venvDir) {
 
 export async function checkServiceHealth(endpoint, token, timeoutMs = 1000) {
   try {
-    const url = new URL("/health", endpoint).toString();
-    const res = await fetch(url, {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
-        Authorization: `Bearer ${token}`
-      },
-      signal: AbortSignal.timeout(timeoutMs)
-    });
-    if (!res.ok) return null;
-    return await res.json();
+    const health = await new LayaClient(endpoint, { token }).healthCheck({ timeout: timeoutMs });
+    return health;
   } catch {
     return null;
   }
@@ -416,6 +409,22 @@ export async function startCommand(args = {}) {
   const pidFile = args.pidFile || getDefaultPidFilePath(customHome);
   const venvDir = args.venv || getDefaultVenvPath(customHome);
   const backend = detectBackend(args.backend);
+  const idleUnloadSeconds = args.idleUnloadSeconds ?? 900;
+  const transport = args.transport ?? "auto";
+  if (!["auto", "http", "uds"].includes(transport)) throw new TypeError("--transport must be auto, http, or uds");
+  if (process.platform === "win32" && transport === "uds") throw new TypeError("UDS is not supported on Windows; use auto or http");
+  if (!Number.isInteger(idleUnloadSeconds) || idleUnloadSeconds < 0 || idleUnloadSeconds > 86400) {
+    throw new TypeError("--idle-unload-seconds must be an integer between 0 and 86400");
+  }
+  if (args.recovery) {
+    const paths = path.join(layaDir, ".autostart-disabled");
+    if (fs.existsSync(paths)) {
+      process.stdout.write("Automatic recovery suppressed because the service was explicitly stopped. Run 'laya start' to resume.\n");
+      return 0;
+    }
+  } else {
+    clearServiceStoppedMarker(serviceFile);
+  }
 
   // Check if already running
   if (fs.existsSync(serviceFile)) {
@@ -465,9 +474,12 @@ export async function startCommand(args = {}) {
   const pyArgs = [
     SERVICE_PY,
     "--backend", backend,
+    "--idle-unload-seconds", String(idleUnloadSeconds),
     "--service-file", serviceFile,
     "--pid-file", pidFile,
-    "--token-file", tokenFilePath
+    "--token-file", tokenFilePath,
+    "--transport", transport,
+    "--socket-file", path.join(path.dirname(serviceFile), "service.sock")
   ];
 
   if (args.port) {
@@ -476,6 +488,14 @@ export async function startCommand(args = {}) {
 
   if (args.model) {
     pyArgs.push("--model", args.model);
+  }
+
+  // An explicit stop can race a background recovery attempt. Check immediately
+  // before spawning; stopCommand writes the marker before inspecting service.json.
+  if (args.recovery && fs.existsSync(path.join(layaDir, ".autostart-disabled"))) {
+    try { fs.unlinkSync(tokenFilePath); } catch {}
+    process.stdout.write("Automatic recovery suppressed because the service was explicitly stopped.\n");
+    return 0;
   }
 
   const child = spawn(pythonBin, [...pythonArgs, ...pyArgs], {
@@ -518,6 +538,14 @@ export async function startCommand(args = {}) {
           const health = await checkServiceHealth(data.endpoint, data.token, 500);
           const healthInstance = health?.instance_id ?? health?.instanceId;
           if (health && (!data.instance_id || !healthInstance || healthInstance === data.instance_id)) {
+            if (args.recovery && fs.existsSync(path.join(layaDir, ".autostart-disabled"))) {
+              try { await stopCommand({ home: customHome, serviceFile, pidFile }); } catch {}
+              try { child.stdout?.destroy(); } catch {}
+              try { child.stderr?.destroy(); } catch {}
+              try { fs.unlinkSync(tokenFilePath); } catch {}
+              process.stdout.write("Automatic recovery cancelled after an explicit stop request.\n");
+              return 0;
+            }
             process.stdout.write(
               `Laya service started successfully on ${data.endpoint} (PID: ${data.pid}, Backend: ${health.backend})\n`
             );
@@ -570,6 +598,10 @@ export async function stopCommand(args = {}) {
   const serviceFile = args.serviceFile || getDefaultServiceFilePath(customHome);
   const pidFile = args.pidFile || getDefaultPidFilePath(customHome);
 
+  // Persist intentional shutdown before reading service metadata so a concurrent
+  // recovery process either sees the marker or is caught by its final check.
+  markServiceStopped(serviceFile);
+
   let serviceData = null;
   if (fs.existsSync(serviceFile)) {
     try {
@@ -611,22 +643,12 @@ export async function stopCommand(args = {}) {
     );
   }
 
-  const shutdownUrl = new URL("/shutdown", serviceData.endpoint).toString();
-  const reqBody = {
-    pid: serviceData.pid,
-    instance_id: serviceData.instance_id
-  };
-
   let shutdownRes;
   try {
-    shutdownRes = await fetch(shutdownUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${serviceData.token}`
-      },
-      body: JSON.stringify(reqBody),
-      signal: AbortSignal.timeout(4000)
+    shutdownRes = await new LayaClient(serviceData.endpoint, { token: serviceData.token }).shutdown({
+      pid: serviceData.pid,
+      instanceId: serviceData.instance_id,
+      timeout: 4000
     });
   } catch (err) {
     throw new Error(
@@ -635,22 +657,7 @@ export async function stopCommand(args = {}) {
     );
   }
 
-  if (!shutdownRes.ok) {
-    let errBody = "";
-    try { errBody = await shutdownRes.text(); } catch {}
-    throw new Error(
-      `Laya service rejected /shutdown with HTTP ${shutdownRes.status}: ${errBody}.\n` +
-      "Refusing to terminate process without verified shutdown."
-    );
-  }
-
-  // Validate shutdown response JSON (P0-2)
-  let resJson;
-  try {
-    resJson = await shutdownRes.json();
-  } catch {
-    throw new Error("Laya service /shutdown returned non-JSON response.");
-  }
+  const resJson = shutdownRes;
 
   if (
     !resJson ||
@@ -769,7 +776,7 @@ export async function uninstallCommand(args = {}) {
     if (fs.existsSync(layaDir)) {
       const entries = fs.readdirSync(layaDir);
       for (const entry of entries) {
-        if (entry.startsWith(".token_")) {
+        if (entry.startsWith(".token_") || entry === ".autostart-disabled" || entry === ".autostart.lock") {
           try { fs.unlinkSync(path.join(layaDir, entry)); } catch {}
         }
       }
@@ -804,6 +811,12 @@ export function parseArgs(argv) {
       options.skipModel = false;
     } else if (arg === "--port" && i + 1 < argv.length) {
       options.port = parseInt(argv[++i], 10);
+    } else if (arg === "--transport" && i + 1 < argv.length) {
+      options.transport = argv[++i];
+    } else if (arg === "--idle-unload-seconds" && i + 1 < argv.length) {
+      options.idleUnloadSeconds = parseInt(argv[++i], 10);
+    } else if (arg === "--recovery") {
+      options.recovery = true;
     } else if (arg === "--force") {
       options.force = true;
     } else if (arg === "--purge-cache") {

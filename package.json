@@ -1,6 +1,6 @@
 {
   "name": "obsidian-memory-plugin",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "private": true,
   "description": "The Obsidian Memory skill packaged for Antigravity, OpenClaw, Codex, and Hermes.",
   "type": "module",
@@ -20,6 +20,8 @@
     "assets",
     "skills",
     "scripts",
+    "hooks",
+    "hooks.json",
     "openclaw.plugin.json",
     ".codex-plugin",
     ".agents",
@@ -29,13 +31,20 @@
   ],
   "openclaw": {
     "extensions": ["./index.js"],
-    "runtimeExtensions": ["./index.js"]
+    "runtimeExtensions": ["./index.js"],
+    "compat": {
+      "pluginApi": ">=2026.9.2",
+      "minGatewayVersion": "2026.9.2"
+    },
+    "build": {
+      "openclawVersion": "2026.9.2"
+    }
   },
   "scripts": {
     "clean": "node -e \"fs.rmSync('dist', {recursive:true, force:true}); fs.readdirSync('.').filter(f => f.endsWith('.tgz')).forEach(f => fs.unlinkSync(f))\"",
     "pack": "node -e \"fs.mkdirSync('dist', {recursive:true})\" && npm pack --pack-destination dist",
     "test": "node --test tests/*.test.mjs",
-    "check": "node --check index.js && node --check lib/config.js && node --check lib/managed-block.js && node --check lib/prompt.js && node --check lib/memory-router/schemas.js && node --check lib/memory-router/security.js && node --check lib/memory-router/fast-path.js && node --check lib/memory-router/circuit-breaker.js && node --check lib/memory-router/client.js && node --check lib/memory-router/cache.js && node --check lib/memory-router/router.js && node --check lib/memory-router/cli.js && node --check scripts/laya-service.mjs && node --check scripts/check-vault.mjs && node --check scripts/setup-antigravity.mjs && node --check scripts/setup-codex.mjs && node --check scripts/setup-hermes.mjs && node --check scripts/setup-openclaw.mjs && node --check scripts/validate-antigravity-plugin.mjs && node --check scripts/validate-codex-plugin.mjs && node scripts/check-python.mjs",
+    "check": "node --check index.js && node --check lib/config.js && node --check lib/managed-block.js && node --check lib/prompt.js && node --check lib/memory-router/schemas.js && node --check lib/memory-router/security.js && node --check lib/memory-router/fast-path.js && node --check lib/memory-router/circuit-breaker.js && node --check lib/memory-router/client.js && node --check lib/memory-router/cache.js && node --check lib/memory-router/auto-restart.js && node --check lib/memory-router/router.js && node --check lib/memory-router/cli.js && node --check scripts/codex-hook.mjs && node --check scripts/antigravity-hook.mjs && node --check scripts/laya-service.mjs && node --check scripts/check-vault.mjs && node --check scripts/setup-antigravity.mjs && node --check scripts/setup-codex.mjs && node --check scripts/setup-hermes.mjs && node --check scripts/setup-openclaw.mjs && node --check scripts/validate-antigravity-plugin.mjs && node --check scripts/validate-codex-plugin.mjs && node scripts/check-python.mjs",
     "check:antigravity": "node scripts/validate-antigravity-plugin.mjs",
     "check:codex": "node scripts/validate-codex-plugin.mjs",
     "check:vault": "node scripts/check-vault.mjs",

@@ -1,6 +1,6 @@
 {
   "name": "obsidian-memory",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "description": "Self-growing long-term memory for Obsidian. Recalls past project decisions and selectively captures durable knowledge with an explicit Inbox -> Raw -> Wiki lifecycle.",
   "author": {
     "name": "Cyber Health Agent"
@@ -15,6 +15,7 @@
     "wiki"
   ],
   "skills": "./skills/",
+  "hooks": "./hooks/hooks.json",
   "interface": {
     "displayName": "Obsidian Memory",
     "shortDescription": "Self-growing memory for Obsidian",

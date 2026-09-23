@@ -94,6 +94,146 @@ def build_guidance(settings: Mapping[str, str]) -> str:
     return "\n".join(lines)
 
 
+def _evaluate_router(user_message: str, project_id: str | None, mode: str) -> dict[str, Any]:
+    """Execute memory router CLI synchronously with input JSON on stdin."""
+    import shutil
+    import subprocess
+
+    node_bin = shutil.which("node")
+    if not node_bin:
+        LOGGER.warning("Node.js executable not found in PATH; cannot run memory router")
+        return {
+            "recallRecommended": False,
+            "captureRecommended": False,
+            "blocked": mode == "strict",
+            "reason": "node_not_found",
+            "trace": {
+                "route": "fallback",
+                "decision": "none",
+                "reason": "node_not_found",
+                "hookExecuted": True,
+                "layaAttempted": False
+            },
+            "guidanceAppend": None
+        }
+
+    cli_path = Path(__file__).parent / "lib" / "memory-router" / "cli.js"
+    payload = json.dumps({
+        "text": user_message,
+        "projectId": project_id,
+        "config": {"mode": mode}
+    })
+
+    try:
+        proc = subprocess.run(
+            [node_bin, str(cli_path), "--stdin"],
+            input=payload,
+            text=True,
+            capture_output=True,
+            timeout=5
+        )
+        if proc.returncode != 0:
+            LOGGER.warning("Memory router CLI exited with code %d: %s", proc.returncode, proc.stderr)
+            return {
+                "recallRecommended": False,
+                "captureRecommended": False,
+                "blocked": mode == "strict",
+                "reason": "cli_error",
+                "trace": {
+                    "route": "fallback",
+                    "decision": "none",
+                    "reason": "cli_error",
+                    "hookExecuted": True,
+                    "layaAttempted": False
+                },
+                "guidanceAppend": None
+            }
+        return json.loads(proc.stdout)
+    except subprocess.TimeoutExpired:
+        LOGGER.warning("Memory router evaluation timed out after 5s")
+        return {
+            "recallRecommended": False,
+            "captureRecommended": False,
+            "blocked": mode == "strict",
+            "reason": "timeout",
+            "trace": {
+                "route": "fallback",
+                "decision": "none",
+                "reason": "timeout",
+                "hookExecuted": True,
+                "layaAttempted": True
+            },
+            "guidanceAppend": None
+        }
+    except Exception as exc:
+        LOGGER.warning("Memory router execution failed: %s", exc)
+        return {
+            "recallRecommended": False,
+            "captureRecommended": False,
+            "blocked": mode == "strict",
+            "reason": "execution_failed",
+            "trace": {
+                "route": "fallback",
+                "decision": "none",
+                "reason": "execution_failed",
+                "hookExecuted": True,
+                "layaAttempted": False
+            },
+            "guidanceAppend": None
+        }
+
+
+def on_pre_llm_call(ctx: Any = None, *, user_message: str = "", session_id: str = "", **kwargs: Any) -> dict[str, Any]:
+    """Hermes pre_llm_call hook: run Fast-Path/Laya routing and inject guidance into user message."""
+    get_config = getattr(ctx, "get_config", None) if ctx else None
+    mode = "auto"
+    if callable(get_config):
+        mode = get_config("memory_router_mode", "auto") or "auto"
+    if os.environ.get("OBSIDIAN_MEMORY_ROUTER_MODE"):
+        mode = os.environ["OBSIDIAN_MEMORY_ROUTER_MODE"].strip()
+
+    if mode == "off":
+        return {}
+
+    if not isinstance(user_message, str) or not user_message.strip():
+        return {}
+
+    settings = _settings(ctx) if ctx else {}
+    project_id = settings.get("projectId")
+
+    is_strict = mode == "strict"
+    host_capability = "hermes_pre_llm_call"
+    effective_mode = mode
+    if is_strict:
+        host_capability = "hermes_pre_llm_call_strict_unsupported"
+        LOGGER.warning(
+            "Hermes pre_llm_call has no native fail-closed blocking contract; "
+            "explicitly marking strict unsupported and gracefully degrading to auto fail-open."
+        )
+        effective_mode = "auto"
+
+    result = _evaluate_router(user_message, project_id, effective_mode)
+    trace = result.get("trace") or {
+        "route": "fallback",
+        "decision": "none",
+        "reason": result.get("reason", "unknown"),
+        "hookExecuted": False,
+        "layaAttempted": False
+    }
+    trace["hookExecuted"] = True
+    if is_strict:
+        trace["hostCapability"] = host_capability
+        trace["strictDegraded"] = True
+
+    LOGGER.debug("Laya Memory Router Trace: %s", json.dumps(trace))
+
+    guidance = result.get("guidanceAppend")
+    if guidance and isinstance(guidance, str) and guidance.strip():
+        return {"context": guidance.strip()}
+
+    return {}
+
+
 def register(ctx: Any) -> None:
     """Register only current Hermes capabilities; older hosts fail safely."""
     register_skill = getattr(ctx, "register_skill", None)
@@ -116,3 +256,12 @@ def register(ctx: Any) -> None:
         position="after_memory",
         max_chars=1800,
     )
+
+    register_hook = getattr(ctx, "register_hook", None)
+    if callable(register_hook):
+        register_hook("pre_llm_call", lambda **kwargs: on_pre_llm_call(ctx=ctx, **kwargs))
+        LOGGER.info("Registered Obsidian Memory pre_llm_call hook for Hermes.")
+    else:
+        LOGGER.warning(
+            "Host does not support register_hook(); pre_llm_call hook skipped."
+        )

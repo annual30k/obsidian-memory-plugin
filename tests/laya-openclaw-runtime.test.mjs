@@ -141,8 +141,8 @@ test("OpenClaw runtime performs zero network calls for non-user triggers", async
     assert.equal(fetchCount, 0);
     assert.ok(res2.prependContext.includes("[Obsidian Memory]"));
 
-    // 3. Undefined trigger -> 0 network calls
-    const res3 = hook({ prompt: "system event" }, { agentId: "owner" });
+    // 3. System trigger -> 0 network calls
+    const res3 = hook({ prompt: "system event" }, { agentId: "owner", trigger: "system" });
     assert.equal(fetchCount, 0);
     assert.ok(res3.prependContext.includes("[Obsidian Memory]"));
 

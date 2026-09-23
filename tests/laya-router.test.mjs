@@ -528,6 +528,58 @@ test("model_status=loading uses coldStartTimeout", async () => {
   router.dispose();
 });
 
+test("long-lived router uses coldStartTimeout after the server idle-unload window", async () => {
+  let now = 100000;
+  let receivedTimeout = null;
+  let healthCalls = 0;
+  const mockFetch = async (url) => {
+    if (String(url).endsWith("/health")) {
+      healthCalls += 1;
+      return {
+        ok: true,
+        status: 200,
+        headers: new Map(),
+        text: async () => JSON.stringify({
+          service: "laya-memory-judge",
+          status: "ok",
+          api_version: "1",
+          model_status: "ready",
+          idle_unload_seconds: 10,
+          capabilities: ["recall"]
+        })
+      };
+    }
+    if (String(url).endsWith("/judge/recall")) {
+      return { ok: true, status: 200, headers: new Map(), text: async () => VALID_RECALL_JSON };
+    }
+    throw new Error("404");
+  };
+  const mockTimers = {
+    setTimeout: (_fn, ms) => { receivedTimeout = ms; return { id: 1 }; },
+    clearTimeout: () => {},
+    setInterval: () => ({ unref() {} }),
+    clearInterval: () => {}
+  };
+  const router = new MemoryRouter({
+    mode: "manual",
+    endpoint: "http://127.0.0.1:18792",
+    timeout: 1000,
+    coldStartTimeout: 5500
+  }, {
+    fetch: mockFetch,
+    timers: mockTimers,
+    clock: () => now
+  });
+
+  await router.evaluateRecall("An ambiguous first request");
+  assert.equal(receivedTimeout, 1000);
+  now += 10001;
+  await router.evaluateRecall("Another ambiguous request after idle");
+  assert.equal(receivedTimeout, 5500, "idle model reload must use coldStartTimeout");
+  assert.equal(healthCalls, 1, "long-lived router infers cold state without probing health every turn");
+  router.dispose();
+});
+
 test("Auth failures 401/403 log warn without reflecting token or raw response body", async () => {
   const warnLogs = [];
   const mockLogger = {
@@ -1111,6 +1163,7 @@ test("MemoryRouter detects daemon restart on same port and token via instance_id
     fs: mockFs,
     platform: "linux",
     getuid: () => 1000,
+    isPidRunning: () => true,
     fetch: mockFetch
   });
 
@@ -1190,6 +1243,7 @@ test("MemoryRouter _ensureHealthHandshake rejects health response if instance_id
     fs: mockFs,
     platform: "linux",
     getuid: () => 1000,
+    isPidRunning: () => true,
     fetch: mockFetch
   });
 
@@ -1407,4 +1461,3 @@ test("MemoryRouter prioritizes recallRecommended over captureRecommended", async
 
   router.dispose();
 });
-

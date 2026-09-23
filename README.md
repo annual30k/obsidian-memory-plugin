@@ -15,7 +15,7 @@
   → Obsidian CLI → Obsidian 应用（仅应用专属操作）
 ```
 
-当前包版本：`0.5.2`。本包仅包含一个 Skill：`skills/obsidian-memory/`，
+当前包版本：`0.6.0`。本包仅包含一个 Skill：`skills/obsidian-memory/`，
 及其流程参考和 14 个最小记忆模板。
 **不打包、不复制、不重写 obsidian-skills。**
 
@@ -94,7 +94,7 @@ cd obsidian-memory-plugin
 
 ```sh
 shasum -a 256 -c SHA256SUMS
-openclaw plugins install ./obsidian-memory-plugin-0.5.2.tgz
+openclaw plugins install ./obsidian-memory-plugin-0.6.0.tgz
 ```
 
 下例是从源码目录安装：
@@ -361,8 +361,8 @@ npm run check:codex
 npm run check:vault -- --vault /path/to/vault
 npm test
 npm pack
-node tests/openclaw-smoke.mjs obsidian-memory-plugin-0.5.2.tgz
-node tests/host-package-smoke.mjs obsidian-memory-plugin-0.5.2.tgz
+node tests/openclaw-smoke.mjs obsidian-memory-plugin-0.6.0.tgz
+node tests/host-package-smoke.mjs obsidian-memory-plugin-0.6.0.tgz
 openclaw plugins inspect obsidian-memory-plugin --runtime --json
 openclaw skills --agent main info obsidian-memory
 openclaw skills --agent main info obsidian-cli
@@ -405,7 +405,8 @@ openclaw skills --agent main info defuddle
 3. **环境隔离与安全性**：
    - 使用 `uv` 在 `~/.laya/venv` 维护独立的 Python >=3.10 环境，不污染系统 Python。
    - 严格落实安全边界：安装必须显式执行，绝不静默下载模型权重；支持 `--skip-model` 跳过下载。
-   - 服务严格仅允许 Loopback（`127.0.0.1` 或 `::1`）绑定；基于 `secrets.compare_digest` 常量时间校验 Bearer Token。
+   - macOS/Linux 默认经用户私有 UDS (`0600`) 提供本地 HTTP 语义；Windows 默认使用随机 Loopback（`127.0.0.1`）端口。两者都使用 `secrets.compare_digest` 常量时间校验 Bearer Token，TCP 不绑定局域网地址。
+   - 兼容旧版插件可用 `laya start --transport http` 显式切换到 Loopback HTTP；UDS 故障时不静默扩大为 TCP 监听。
    - 符号链接安全防护：对 `--token-file`、`--service-file` 及 `--pid-file` 在解析前先以 `lstat` 严格拦截符号链接，防止凭据窃取或跨目录文件篡改。
    - 元数据原子写入与实例标识：`service.json` 与 `daemon.pid` 均采用同目录临时文件与 `os.replace` 原子写入（POSIX `0600`，目录 `0700`），并维护唯一 `instance_id`；退出时严格核验实例身份，绝不误删其他实例凭据。
    - 停机安全闭环：服务停止与卸载必须通过带鉴权的本地 `POST /shutdown` 验证身份并等待进程退出；禁止凭不可靠的 PID 强杀，杜绝 PID 复用导致的误杀隐患。
@@ -422,7 +423,10 @@ node scripts/laya-service.mjs install --skip-model
 # 2. 启动本地后台服务（后台 daemon 运行，生成 ~/.laya/service.json）
 npm run laya:start
 
-# 3. 查看服务运行状态（进程 PID、监听端口、模型状态、脱敏 Token）
+# 可选：需要兼容旧版 HTTP-only 插件时显式使用 Loopback HTTP
+node scripts/laya-service.mjs start --transport http
+
+# 3. 查看服务运行状态（进程 PID、本地传输端点、模型状态、脱敏 Token）
 npm run laya:status
 
 # 4. 停止本地服务（调用本地已鉴权 POST /shutdown 优雅退出；核验进程真正退出与身份清理）
@@ -450,6 +454,9 @@ npm run laya:uninstall
 
 - 当服务未启动时，自动快速降级为安全模式（0 网络开销，后台低频本地探测）。
 - 当服务启动并就绪后，自动握手 `/health` 并承接 `/judge/recall` 裁决。
+- Laya 服务默认在 **15 分钟无推理请求后卸载内存中的模型**，服务进程继续运行；下一次 `/judge/recall` 会按需重新加载模型。可用 `laya start --idle-unload-seconds 0` 关闭空闲卸载，或传入秒数调整阈值。
+- 仅当此前健康的 Laya 服务进程**异常退出**时，`auto` 模式会在当前回合 fail-open 后后台尝试重启；不会在首次使用、未安装或未配置服务时自动安装/启动。
+- `laya stop` 会记录显式停止标记并保持服务停止；后续手动执行 `laya start` 会清除此标记并恢复异常退出自动重启。后台恢复采用跨进程锁和节流，Windows 使用同一 Node 启动路径，不经过 shell。
 - 支持独立命令行工具直接测试（兼容 PowerShell 与 POSIX 标准管道）：
   ```sh
   # POSIX (macOS / Linux bash / zsh)
@@ -458,6 +465,46 @@ npm run laya:uninstall
   # Windows PowerShell
   '{"text": "我们之前在项目中对于数据库连接池是怎么约定的？"}' | npx obsidian-memory-laya-judge --stdin --mode auto
   ```
+
+### 四大宿主原生前置 Hook 与优雅降级支持矩阵 (v0.6.0)
+
+为了实现彻底脱离“依赖大模型概率性遵循 Prompt”的确定性拦截，插件在四大宿主全面接入原生前置生命周期 Hook：
+
+1. **“100% 前置代码路由”的精确工程定义**：
+   - **能保证**：100% 的合格用户回合在调用主大模型前，**必然经过宿主底层原生代码 Hook 拦截与路由判定**（由宿主底层进程执行，而非提示词）。“合格用户回合”的前提是插件处于启用状态且其原生 Hook 已通过宿主信任与审核（在 Codex 中，未受信任的插件 Hook 会被宿主跳过）。
+   - **不承诺**：Laya 神经网络服务永远 100% 在线或推理永远成功。
+2. **三模式控制矩阵（`off` / `auto` / `strict`）**：
+   - `off`：彻底关闭路由与网络探测，零延迟放行。
+   - `auto`（默认）：原生 Hook 硬路由 + 优雅降级（Fail-Open）。先 Fast-Path（敏感词/问候/显式意图），必要时调用 Laya；Laya 服务未就绪、异常或超时时不卡死对话，安全降级放行。
+   - `strict`：强一致性硬阻断（Fail-Closed）。要求必须具备有效判定；但各宿主阻断能力受宿主原生架构严格限制：
+
+| 宿主 (Host) | 原生 Hook 事件 | 声明与加载位置 | `auto` 模式行为 | `strict` 模式阻断能力与降级机制 |
+|---|---|---|---|---|
+| **Codex** | `UserPromptSubmit` | `hooks/hooks.json` (由 `.codex-plugin/plugin.json` 的 `hooks` 字段显式指向) | Fast-Path + Laya 注入 `additionalContext`；Laya 异常时 fail-open 放行 | **真正硬阻断 (True Fail-Closed)**：返回 `{"decision": "block", "reason": "..."}`，宿主底层直接阻断 Prompt 提交给模型 |
+| **OpenClaw** | `before_prompt_build` + `before_agent_run` | `index.js` 原生插件注册 | Fast-Path + Laya 注入 `prependContext`；Laya 异常时 fail-open 放行 | **原生嵌入/CLI runner 真阻断**：在 OpenClaw `>=2026.9.2` 下通过 `before_agent_run` 返回 `{ outcome: "block", reason, message }` 阻断运行。真实顺序为 `before_prompt_build` 先计算/注入并写入单次判定缓存，`before_agent_run` 随后消费并清理；若前置缓存缺失则 gatekeeper 独立评估以保持 fail-closed。严格硬阻断仅在 OpenClaw 原生嵌入/CLI runner 生效，其它 runner（如 Codex/Copilot runner）仅能保证上下文注入或降级，不可虚假宣称全环境 hard block。不兼容宿主在 strict 模式下拒绝加载。 |
+| **Antigravity** | `PreInvocation` | `hooks.json` (或由安装器写入 `.gemini/hooks.json`) | Fast-Path + Laya 注入 `ephemeralMessage`；Laya 异常时 fail-open 放行 | **不支持阻断 (Strict Unsupported)**：宿主 `PreInvocation` 仅具备上下文注入能力，无模型调用中止契约；显式标记 `strict_unsupported` 并安全退化为 `auto` (fail-open)，严禁伪称阻断 |
+| **Hermes** | `pre_llm_call` | `__init__.py` 注册原生钩子 | Fast-Path + Laya 注入 `{"context": "..."}` 到用户消息；Laya 异常时 fail-open 放行 | **不支持阻断 (Strict Unsupported)**：宿主钩子调用循环捕获并吞没异常，无模型调用中止契约；显式标记 `strict_unsupported` 并安全退化为 `auto` (fail-open)，严禁伪称阻断 |
+
+3. **结构化审计 Trace 输出到 stderr**：
+   在 Codex 和 Antigravity 命令行 Hook 中，为保证标准输出（stdout）严格遵守宿主 JSON 协议，结构化审计日志（`trace`）通过 `stderr` 独立输出，并在输出前完成严格脱敏（严禁包含任何 Prompt 内容或 Token 凭证）：
+   ```json
+   {
+     "route": "laya | fast_path | fallback",
+     "decision": "recall | capture | none | block",
+     "reason": "explicit_recall_intent | circuit_breaker_open | ...",
+     "hookExecuted": true,
+     "layaAttempted": false,
+     "hostCapability": "codex_user_prompt_submit | openclaw_before_agent_run | antigravity_pre_invocation_strict_unsupported | hermes_pre_llm_call_strict_unsupported",
+     "strictDegraded": true
+   }
+   ```
+   > **审计准则**：`hookExecuted` 字段在底层通用 router 与 CLI 中默认为 `false`，必须且仅由真实宿主原生 Hook 适配层在实际拦截时置为 `true`，杜绝虚假审计标记。同时 stdout 保持单一合法宿主 JSON，绝不污染。
+
+4. **安装器防重复执行与 Hook 发现机制**：
+   - 插件内置的原生 Hook 声明（Codex 的 `hooks/hooks.json` 与 Antigravity 的 `hooks.json`）为宿主发现并加载的单一首要来源。
+   - `scripts/setup-codex.mjs` 与 `scripts/setup-antigravity.mjs` 安装脚本默认 `configureHooks: false`，避免在插件内置 Hook 之外向全局配置文件重复注册导致单次回合双重执行。
+   - 仅在用户显式传入 `--hooks` 命令行参数时，安装脚本才会向用户全局目录配置独立 Hook。
+
 
 ## 禁用与卸载
 

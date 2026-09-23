@@ -30,15 +30,117 @@ export function updateAgentsContent(content, vaultPath) {
   return updateContentWithBlock(content, vaultPath, "AGENTS.md");
 }
 
+export function defaultHooksPath(codexHome = resolve(homedir(), ".codex")) {
+  return resolve(codexHome, "hooks.json");
+}
+
+const UNSAFE_HOOK_PATH_CHARS = /[%!$`"\r\n\0\x00-\x1f\x7f]/;
+
+export function assertSafeHookScriptPath(scriptPath) {
+  if (!scriptPath || typeof scriptPath !== "string") {
+    throw new TypeError("Hook scriptPath must be a non-empty string");
+  }
+  if (UNSAFE_HOOK_PATH_CHARS.test(scriptPath)) {
+    throw new Error(
+      "Invalid hook scriptPath: path contains unsafe shell expansion, substitution, quote, or control characters"
+    );
+  }
+  return scriptPath;
+}
+
+export function formatWindowsSafePath(filePath) {
+  if (!filePath) return "";
+  let normalized = String(filePath).replace(/\\/g, "/");
+  if (/^\/[a-zA-Z]:\//.test(normalized)) {
+    normalized = normalized.slice(1);
+  }
+  return normalized;
+}
+
+export function buildCodexHookCommand(scriptPath) {
+  assertSafeHookScriptPath(scriptPath);
+  const safePath = formatWindowsSafePath(scriptPath);
+  return `node "${safePath}"`;
+}
+
+export function buildCodexHooksConfig(scriptPath) {
+  return {
+    hooks: {
+      UserPromptSubmit: [
+        {
+          hooks: [
+            {
+              type: "command",
+              command: buildCodexHookCommand(scriptPath),
+              timeout: 5
+            }
+          ]
+        }
+      ]
+    }
+  };
+}
+
+export function mergeCodexHooks(existingConfig = {}, pluginHooksConfig = {}) {
+  const merged = { ...existingConfig };
+  merged.hooks = { ...(merged.hooks || {}) };
+
+  for (const [event, newMatchers] of Object.entries(pluginHooksConfig.hooks || {})) {
+    if (!Array.isArray(newMatchers)) continue;
+    const existingMatchers = Array.isArray(merged.hooks[event]) ? [...merged.hooks[event]] : [];
+
+    for (const newMatcher of newMatchers) {
+      const newInnerHooks = Array.isArray(newMatcher.hooks) ? newMatcher.hooks : [];
+      let foundMatchingContainer = false;
+
+      for (const existingMatcher of existingMatchers) {
+        if (Array.isArray(existingMatcher.hooks)) {
+          const hasHook = existingMatcher.hooks.some(h =>
+            typeof h?.command === "string" && h.command.includes("codex-hook.mjs")
+          );
+          if (hasHook) {
+            existingMatcher.hooks = existingMatcher.hooks.map(h =>
+              typeof h?.command === "string" && h.command.includes("codex-hook.mjs")
+                ? newInnerHooks.find(nh => nh.command?.includes("codex-hook.mjs")) || h
+                : h
+            );
+            foundMatchingContainer = true;
+            break;
+          }
+        }
+      }
+
+      if (!foundMatchingContainer) {
+        existingMatchers.push(newMatcher);
+      }
+    }
+    merged.hooks[event] = existingMatchers;
+  }
+
+  return merged;
+}
+
 function parseArgs(args) {
-  const options = { agentsPath: defaultAgentsPath(), confirm: false, dryRun: false };
+  const options = {
+    agentsPath: defaultAgentsPath(),
+    hooksPath: defaultHooksPath(),
+    configureHooks: false, // Default: false (plugin-bundled hooks/hooks.json is the primary source; opt-in with --hooks)
+    confirm: false,
+    dryRun: false
+  };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
-    if (arg === "--vault" || arg === "--agents-file") {
+    if (arg === "--vault" || arg === "--agents-file" || arg === "--hooks-file") {
       const value = args[index + 1];
       if (!value || value.startsWith("--")) throw new TypeError(`${arg} requires a value`);
-      options[arg === "--vault" ? "vaultPath" : "agentsPath"] = value;
+      if (arg === "--vault") options.vaultPath = value;
+      else if (arg === "--agents-file") options.agentsPath = value;
+      else if (arg === "--hooks-file") options.hooksPath = value;
       index += 1;
+    } else if (arg === "--hooks") {
+      options.configureHooks = true;
+    } else if (arg === "--no-hooks") {
+      options.configureHooks = false;
     } else if (arg === "--yes") {
       options.confirm = true;
     } else if (arg === "--dry-run") {
@@ -53,12 +155,14 @@ function parseArgs(args) {
 }
 
 function help() {
-  console.log(`Usage: node scripts/setup-codex.mjs [--vault <absolute-path>] [--yes] [--dry-run]
+  console.log(`Usage: node scripts/setup-codex.mjs [--vault <absolute-path>] [--hooks] [--yes] [--dry-run]
 
 Prompts for an Obsidian Vault path, validates that it is readable, then safely
 adds this plugin's managed block to the active global AGENTS file (AGENTS.override.md
 when non-empty, otherwise AGENTS.md). --yes requires --vault.
-Use --agents-file <absolute-path> only to target a different AGENTS file.`);
+Use --agents-file <absolute-path> only to target a different AGENTS file.
+Use --hooks to explicitly configure standalone global hooks in ~/.codex/hooks.json
+(default is false; Codex plugin-bundled hooks/hooks.json is the primary source to prevent duplicate execution).`);
 }
 
 function validateAgentsPath(value) {
@@ -93,7 +197,25 @@ export async function runSetup(args, { input = process.stdin, output = process.s
     }
     mkdirSync(dirname(agentsPath), { recursive: true });
     writeFileSync(agentsPath, next, "utf8");
-    output.write(`Configured Obsidian Memory in ${agentsPath}. Start a new Codex task to use the updated instruction.\n`);
+    output.write(`Configured Obsidian Memory in ${agentsPath}.\n`);
+
+    if (options.configureHooks) {
+      const packageRoot = resolve(fileURLToPath(new URL("../", import.meta.url)));
+      const hookScript = resolve(packageRoot, "scripts", "codex-hook.mjs");
+      const hooksPath = options.hooksPath;
+      let existingHooks = {};
+      if (existsSync(hooksPath)) {
+        try {
+          existingHooks = JSON.parse(readFileSync(hooksPath, "utf8"));
+        } catch {}
+      }
+      const pluginHooks = buildCodexHooksConfig(hookScript);
+      const merged = mergeCodexHooks(existingHooks, pluginHooks);
+      mkdirSync(dirname(hooksPath), { recursive: true });
+      writeFileSync(hooksPath, JSON.stringify(merged, null, 2) + "\n", "utf8");
+      output.write(`Configured native pre-invocation hook in ${hooksPath}.\n`);
+    }
+    output.write("Start a new Codex task to use the updated instruction.\n");
   } finally {
     prompt.close();
   }

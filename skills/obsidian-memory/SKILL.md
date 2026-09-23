@@ -61,11 +61,12 @@ server, daemon, database, or second agent.
    before reading or writing memory. If the self-growing layout has not been
    initialized, ask whether to initialize it; only then read and follow
    [references/bootstrap.md](references/bootstrap.md).
-7. **Laya Judge (Self-Adaptive)**: The memory judge defaults to `auto` mode.
-   - In OpenClaw, the runtime hook automatically evaluates user turns and injects guidance when Laya service is running.
-   - In hosts without runtime prompt hooks (Antigravity, Codex, Hermes), if Laya service is running locally (`laya status` shows RUNNING or `~/.laya/service.json` exists), the agent may invoke `obsidian-memory-laya-judge --stdin` (or `node lib/memory-router/cli.js --stdin`) to assist recall and proactive capture decisions.
-   - If Laya is not running locally, or if the user explicitly configures `mode: "off"`, do not invoke it and proceed with standard memory workflow.
-   - When Laya detects a high-value pitfall or architectural decision, proactively stage a candidate card in `inbox/` with `status: pending-ingest` upon task conclusion. Laya provides advisory routing only and never writes directly to the Vault.
+7. **Native Pre-Invocation Hooks & Laya Memory Router (v0.6.0)**:
+   - All four supported hosts (Codex, OpenClaw, Antigravity, Hermes) execute native pre-invocation code hooks before the model runs (`UserPromptSubmit` in Codex, `before_agent_run` + `before_prompt_build` in OpenClaw, `PreInvocation` in Antigravity, `pre_llm_call` in Hermes).
+   - Modes: `off` (bypassed), `auto` (default: fast-path + Laya evaluation with fail-open graceful degradation), `strict` (fail-closed blocking in Codex and OpenClaw `>=2026.9.2` [embedded/CLI runner only; other runners degrade safely]; Antigravity and Hermes lack native blocking contracts and gracefully degrade to `auto` with `strict_unsupported` trace capability). Incompatible hosts reject loading on strict mode.
+   - "100% Pre-Invocation Code Routing" guarantees that qualified user turns pass through native host code routing before invoking the primary LLM (qualified turns require that the plugin is enabled and its hooks are reviewed and trusted; in Codex, untrusted plugin hooks are skipped by the host), but does not guarantee 100% Laya daemon availability. Plugin-bundled hooks are the primary source; setup scripts do not register duplicate global hooks by default.
+   - Laya Capture Judge is an optional end-of-task advisory, not a transcript hook guarantee. When a task establishes a durable, verified decision, pitfall, or reusable fact, send only a concise, nonsensitive task summary (never a raw transcript) to `obsidian-memory-laya-judge --capture --stdin`. If the response recommends capture, has confidence >= 0.60, and the evidence is verified, follow the normal scope/evidence policy and stage a `pending-ingest` Inbox draft. The Judge never writes to the Vault; skip capture on errors, uncertainty, sensitive content, or routine work.
+   - For duplicate/conflict/supersession review, compare only the bounded candidate and existing-note excerpts selected during normal Recall using `obsidian-memory-laya-judge --relation --stdin`. Treat the fixed relation label as a suggestion: never modify, merge, supersede, or delete an existing note without applying the normal evidence rules and explicit user authorization where required.
 
 The host's installed skills own CLI syntax, installation details, and Markdown
 formatting. This skill owns memory selection, scope, evidence and lifecycle
