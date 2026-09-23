@@ -66,3 +66,38 @@ test("Hermes setup validates a user-selected Vault and writes only this plugin s
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("Hermes without register_system_prompt_section still registers the skill and the hook, and reads config.yaml", () => {
+  const program = String.raw`
+import importlib.util, json, os, sys, tempfile
+from pathlib import Path
+root = Path(sys.argv[1])
+home = tempfile.mkdtemp()
+Path(home, "config.yaml").write_text("plugins:\n  entries:\n    obsidian-memory-plugin:\n      settings:\n        vault_path: " + sys.argv[2] + "\n", encoding="utf-8")
+os.environ["HERMES_HOME"] = home
+os.environ["OBSIDIAN_MEMORY_ROUTER_MODE"] = "off"
+spec = importlib.util.spec_from_file_location("omp_new_hermes", root / "__init__.py", submodule_search_locations=[str(root)])
+m = importlib.util.module_from_spec(spec); sys.modules[spec.name] = m; spec.loader.exec_module(m)
+class Ctx:
+    def __init__(self): self.skills, self.hooks = [], {}
+    def register_skill(self, name, path, description=""): self.skills.append(name)
+    def register_hook(self, name, cb): self.hooks[name] = cb
+ctx = Ctx(); m.register(ctx)
+os.environ["OBSIDIAN_MEMORY_ROUTER_MODE"] = "auto"
+orig = m._evaluate_router
+m._evaluate_router = lambda text, pid, mode: {"memoryAction": "default", "guidanceAppend": None, "trace": {}}
+default_ctx = ctx.hooks["pre_llm_call"](user_message="写个脚本", session_id="s")
+m._evaluate_router = lambda text, pid, mode: {"memoryAction": "skip", "guidanceAppend": "[Obsidian Memory: not needed for this turn]", "trace": {}}
+skip_ctx = ctx.hooks["pre_llm_call"](user_message="你好", session_id="s")
+print(json.dumps({"skills": ctx.skills, "hooks": sorted(ctx.hooks), "settings": m._settings(ctx), "default": default_ctx, "skip": skip_ctx}))
+`;
+  const python = findPython();
+  const vaultPath = join(root, "My Vault");
+  const r = JSON.parse(execFileSync(python.command, [...python.args, "-c", program, root, vaultPath], { encoding: "utf8" }));
+  assert.deepEqual(r.skills, ["obsidian-memory"]);
+  assert.deepEqual(r.hooks, ["pre_llm_call"]);
+  assert.equal(r.settings.vaultPath, vaultPath);
+  assert.match(r.default.context, /For code tasks, use the obsidian-memory skill/);
+  assert.ok(r.default.context.includes(vaultPath));
+  assert.equal(r.skip.context, "[Obsidian Memory: not needed for this turn]");
+});

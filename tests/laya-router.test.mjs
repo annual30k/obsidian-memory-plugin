@@ -1278,7 +1278,7 @@ test("MemoryRouter evaluates proactive capture when model detects high-confidenc
         status: 200,
         headers: new Map(),
         text: async () => JSON.stringify({
-          requires_memory: 0.15,
+          requires_memory: 0.42 /* uncertain band: capture allowed */,
           confidence: 0.88,
           scope: { project: 0.95 },
           categories: { pitfall: 0.92, decision: 0.05, knowledge: 0.03 }
@@ -1329,7 +1329,7 @@ test("MemoryRouter evaluates proactive capture when model detects high-confidenc
         status: 200,
         headers: new Map(),
         text: async () => JSON.stringify({
-          requires_memory: 0.20,
+          requires_memory: 0.42, /* uncertain band: capture allowed */
           confidence: 0.91,
           scope: { project: 0.90 },
           categories: { pitfall: 0.02, decision: 0.95, knowledge: 0.03 }
@@ -1460,4 +1460,19 @@ test("MemoryRouter prioritizes recallRecommended over captureRecommended", async
   assert.equal(res.reason, "laya_threshold_met");
 
   router.dispose();
+});
+
+test("Laya capture is suppressed when the memory-need score marks the turn self-contained", async () => {
+  const mockFetch = async (url) => {
+    const u = String(url);
+    const body = u.endsWith("/health")
+      ? { service: "laya-memory-judge", status: "ok", api_version: "1", model_status: "ready", capabilities: ["recall"] }
+      : { requires_memory: 0.05, confidence: 0.9, category_confidence: 0.95, scope: { project: 0.9 }, categories: { pitfall: 0.95, decision: 0.03, knowledge: 0.02 } };
+    return { ok: true, status: 200, headers: new Map(), text: async () => JSON.stringify(body) };
+  };
+  const router = new MemoryRouter({ mode: "manual", endpoint: "http://127.0.0.1:18791", proactiveCapture: true }, { fetch: mockFetch });
+  const res = await router.evaluateRecall("Python 里怎么读取一个 CSV 文件并按列求和");
+  router.dispose();
+  assert.equal(res.captureRecommended, false);
+  assert.equal(res.memoryAction, "skip");
 });

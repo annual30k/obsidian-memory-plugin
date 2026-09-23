@@ -39,11 +39,42 @@ def _clean_text(value: Any, *, max_length: int = 4096) -> str | None:
     return value
 
 
+_SECTION_REGISTERED = False
+
+
+def _hermes_home() -> Path:
+    return Path(os.environ.get("HERMES_HOME") or Path.home() / ".hermes")
+
+
+def _settings_from_config_file() -> dict[str, Any]:
+    """Current Hermes releases give plugins no get_config(); read our own entry from config.yaml."""
+    try:
+        import yaml  # Hermes ships PyYAML
+        data = yaml.safe_load((_hermes_home() / "config.yaml").read_text(encoding="utf-8")) or {}
+        entry = (((data.get("plugins") or {}).get("entries") or {}).get(PLUGIN_ID) or {})
+        settings = entry.get("settings") or entry.get("config") or {}
+        return settings if isinstance(settings, dict) else {}
+    except Exception:
+        return {}
+
+
+def _config_getter(ctx: Any):
+    get_config = getattr(ctx, "get_config", None) if ctx is not None else None
+    if callable(get_config):
+        return get_config
+    file_settings = _settings_from_config_file()
+    env_vault = os.environ.get("OBSIDIAN_MEMORY_VAULT", "")
+
+    def from_file(key: str, default: Any = "") -> Any:
+        if key == "vault_path" and not file_settings.get(key) and env_vault:
+            return env_vault
+        return file_settings.get(key, default)
+    return from_file
+
+
 def _settings(ctx: Any) -> dict[str, str]:
     """Read only valid, user-owned plugin settings for prompt serialization."""
-    get_config = getattr(ctx, "get_config", None)
-    if not callable(get_config):
-        return {}
+    get_config = _config_getter(ctx)
 
     def configured(key: str, default: str = "") -> Any:
         try:
@@ -189,10 +220,8 @@ def _evaluate_router(user_message: str, project_id: str | None, mode: str) -> di
 
 def on_pre_llm_call(ctx: Any = None, *, user_message: str = "", session_id: str = "", **kwargs: Any) -> dict[str, Any]:
     """Hermes pre_llm_call hook: run Fast-Path/Laya routing and inject guidance into user message."""
-    get_config = getattr(ctx, "get_config", None) if ctx else None
-    mode = "auto"
-    if callable(get_config):
-        mode = get_config("memory_router_mode", "auto") or "auto"
+    get_config = _config_getter(ctx)
+    mode = get_config("memory_router_mode", "auto") or "auto"
     if os.environ.get("OBSIDIAN_MEMORY_ROUTER_MODE"):
         mode = os.environ["OBSIDIAN_MEMORY_ROUTER_MODE"].strip()
 
@@ -202,7 +231,7 @@ def on_pre_llm_call(ctx: Any = None, *, user_message: str = "", session_id: str 
     if not isinstance(user_message, str) or not user_message.strip():
         return {}
 
-    settings = _settings(ctx) if ctx else {}
+    settings = _settings(ctx)
     project_id = settings.get("projectId")
 
     is_strict = mode == "strict"
@@ -231,35 +260,46 @@ def on_pre_llm_call(ctx: Any = None, *, user_message: str = "", session_id: str 
 
     LOGGER.debug("Laya Memory Router Trace: %s", json.dumps(trace))
 
-    guidance = result.get("guidanceAppend")
-    if guidance and isinstance(guidance, str) and guidance.strip():
-        return {"context": guidance.strip()}
-
-    return {}
+    hint = result.get("guidanceAppend")
+    hint = hint.strip() if isinstance(hint, str) and hint.strip() else ""
+    if _SECTION_REGISTERED:
+        # The always-on workflow lives in the system prompt; only the per-turn hint goes here.
+        return {"context": hint} if hint else {}
+    # Hosts without register_system_prompt_section(): carry the workflow in the turn context,
+    # except when Laya is confident the turn needs no memory (then only the short skip hint).
+    if result.get("memoryAction") == "skip" and hint:
+        return {"context": hint}
+    base = build_guidance(settings)
+    return {"context": base + ("\n" + hint if hint else "")}
 
 
 def register(ctx: Any) -> None:
     """Register only current Hermes capabilities; older hosts fail safely."""
+    global _SECTION_REGISTERED
     register_skill = getattr(ctx, "register_skill", None)
     register_section = getattr(ctx, "register_system_prompt_section", None)
-    if not callable(register_skill) or not callable(register_section):
-        LOGGER.warning(
-            "Obsidian Memory requires a Hermes release with register_skill() and "
-            "register_system_prompt_section(); update Hermes to enable proactive guidance."
-        )
-        return
 
-    register_skill(
-        SKILL_NAME,
-        SKILL_PATH,
-        description="Self-growing Obsidian memory workflow with explicit Inbox → Raw → Wiki lifecycle.",
-    )
-    register_section(
-        SECTION_ID,
-        lambda _session_info: build_guidance(_settings(ctx)),
-        position="after_memory",
-        max_chars=1800,
-    )
+    if callable(register_skill):
+        register_skill(
+            SKILL_NAME,
+            SKILL_PATH,
+            description="Self-growing Obsidian memory workflow with explicit Inbox → Raw → Wiki lifecycle.",
+        )
+    else:
+        LOGGER.warning("Host has no register_skill(); the obsidian-memory skill is not registered.")
+
+    if callable(register_section):
+        register_section(
+            SECTION_ID,
+            lambda _session_info: build_guidance(_settings(ctx)),
+            position="after_memory",
+            max_chars=1800,
+        )
+        _SECTION_REGISTERED = True
+    else:
+        # Current Hermes releases: the pre_llm_call hook carries the workflow text instead.
+        _SECTION_REGISTERED = False
+        LOGGER.info("Host has no register_system_prompt_section(); Obsidian Memory guidance goes through pre_llm_call.")
 
     register_hook = getattr(ctx, "register_hook", None)
     if callable(register_hook):

@@ -185,7 +185,7 @@ test("OpenClaw runtime maintains base guidance only when Laya fails", async () =
 test("OpenClaw runtime appends proactive capture recommendation when Laya detects high-value pitfall", async () => {
   const origFetch = globalThis.fetch;
   const CAPTURE_PITFALL_JSON = JSON.stringify({
-    requires_memory: 0.15,
+    requires_memory: 0.42 /* uncertain band: capture allowed */,
     confidence: 0.92,
     scope: { project: 0.90 },
     categories: { pitfall: 0.95, decision: 0.04, knowledge: 0.01 }
