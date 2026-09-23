@@ -3,6 +3,7 @@ import { dirname, resolve } from "node:path";
 import { homedir } from "node:os";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
+import { HOST_HOOK_TIMEOUT_SECONDS } from "../lib/config.js";
 import {
   assertSafePath,
   END_MARKER,
@@ -63,7 +64,7 @@ export function buildAntigravityHooksConfig(scriptPath) {
         {
           "type": "command",
           "command": buildAntigravityHookCommand(scriptPath),
-          "timeout": 5
+          "timeout": HOST_HOOK_TIMEOUT_SECONDS
         }
       ]
     }

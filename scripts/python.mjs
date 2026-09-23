@@ -11,7 +11,8 @@ export function findPython() {
     const result = spawnSync(candidate.command, [...candidate.args, "-c", "import sys; print(sys.version_info.major)"], {
       encoding: "utf8", timeout: 5000, windowsHide: true
     });
-    if (result.status === 0 && result.stdout.trim() === "3") return candidate;
+    // -B: never write __pycache__/*.pyc into the plugin tree (it would be packed by npm).
+    if (result.status === 0 && result.stdout.trim() === "3") return { command: candidate.command, args: [...candidate.args, "-B"] };
   }
   throw new Error("Python 3 is required (set PYTHON or install the python/py launcher)");
 }

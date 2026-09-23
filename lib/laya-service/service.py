@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import errno
 import gc
 import json
 import math
@@ -35,11 +36,26 @@ MAX_PAYLOAD_BYTES = 65536
 SERVICE_IDENTITY = "laya-memory-judge"
 API_VERSION = "1"
 ALLOWED_LOOPBACK_HOSTS = {"127.0.0.1", "::1"}
+BUSY_WAIT_SECONDS = 1.0
 PROJECT_ID_REGEX = re.compile(r"^[a-zA-Z0-9_-]+$")
 TASK_QUESTIONS = {
     "recall": ("requires_memory", "scope", "category"),
     "capture": ("capture", "scope", "category"),
     "relation": ("relation",)
+}
+
+# Recall judge. Chosen with scripts/tune-laya-questions.py on the real MLX model (variant v3_three_way):
+# on 40 unseen prompts it cut false "search the Vault" hints from 70% to 5% while keeping ~60% recall,
+# versus the old yes/no question. It must be asked ALONE: asking it together with scope/category, or
+# adding `task`/`project_id` to the state, measurably changed the scores during tuning.
+MEMORY_NEED_QUESTION = {
+    "type": "choice",
+    "instructions": "Classify `text` by what is needed to answer it.",
+    "criteria": {
+        "project_history": "needs this user's or team's earlier decisions, conventions, preferences, previous sessions, or past incidents",
+        "self_contained": "a general or self-contained coding, writing, or knowledge request answerable without any history",
+        "chitchat": "greeting, thanks, or small talk"
+    }
 }
 
 QUESTIONS = {
@@ -137,6 +153,55 @@ def check_no_symlink(path_str: str, label: str) -> Path:
     return Path(abs_path)
 
 
+def clean_project_id(project_context: Optional[Dict[str, Any]]) -> Optional[str]:
+    """Return a real project id or None. Never stringify null/None into "None" for the model."""
+    if not isinstance(project_context, dict):
+        return None
+    value = project_context.get("project_id")
+    if isinstance(value, str) and value.strip():
+        return value
+    return None
+
+
+def _answer(answers: Dict[str, Any], key: str) -> Tuple[Dict[str, Any], float]:
+    ans = answers.get(key, {}) or {}
+    return ans.get("probabilities", {}) or {}, sanitize_score(ans.get("confidence", 0.5))
+
+
+def run_judgement(agent: Any, text: str, project_context: Optional[Dict[str, Any]], task: str) -> Dict[str, Any]:
+    """Ask the model and map its answers to the service response shape (shared by MLX and PyTorch)."""
+    state: Dict[str, Any] = {"text": text, "task": task}
+    project_id = clean_project_id(project_context)
+    if project_id:
+        state["project_id"] = project_id
+
+    if task == "recall":
+        # 1) memory need, asked alone on the bare text (see MEMORY_NEED_QUESTION)
+        need = agent.predict({"text": text}, {"memory_need": MEMORY_NEED_QUESTION}).get("answers", {})
+        need_probs, confidence = _answer(need, "memory_need")
+        requires_memory = sanitize_score(need_probs.get("project_history", 0.0))
+        # 2) scope and category, only used to shape the hint text
+        answers = agent.predict(state, {key: QUESTIONS[key] for key in ("scope", "category")}).get("answers", {})
+    else:
+        answers = agent.predict(state, {key: QUESTIONS[key] for key in TASK_QUESTIONS.get(task, TASK_QUESTIONS["recall"])}).get("answers", {})
+        req_probs, confidence = _answer(answers, "requires_memory")
+        requires_memory = sanitize_score(req_probs.get("yes", 0.5))
+
+    scope_probs, _ = _answer(answers, "scope")
+    cat_probs, cat_confidence = _answer(answers, "category")
+    capture_probs, capture_confidence = _answer(answers, "capture")
+    relation_probs, relation_confidence = _answer(answers, "relation")
+    return {
+        "requires_memory": requires_memory,
+        "confidence": confidence,
+        "category_confidence": cat_confidence,
+        "scope": {k: sanitize_score(scope_probs.get(k, 0.0)) for k in ("project", "global", "unknown")},
+        "categories": {k: sanitize_score(cat_probs.get(k, 0.0)) for k in ("pitfall", "decision", "knowledge")},
+        "capture": {"yes": sanitize_score(capture_probs.get("yes", 0.0)), "confidence": capture_confidence if capture_probs else 0.0},
+        "relation": {"label": max(relation_probs, key=relation_probs.get) if relation_probs else "unrelated", "confidence": relation_confidence if relation_probs else 0.0}
+    }
+
+
 class BaseBackend:
     def __init__(self, model_name: str):
         self.model_name = model_name
@@ -151,6 +216,10 @@ class BaseBackend:
     def unload_if_idle(self, idle_seconds: int) -> bool:
         return False
 
+    def preload(self) -> None:
+        """Load model weights ahead of the first request (no-op for eager backends)."""
+        return None
+
     def predict(self, text: str, project_context: Optional[Dict[str, Any]] = None, task: str = "recall") -> Dict[str, Any]:
         raise NotImplementedError
 
@@ -158,17 +227,27 @@ class BaseBackend:
 class MockBackend(BaseBackend):
     def __init__(self, model_name: str = "mock-model"):
         super().__init__(model_name)
-        self.status = "ready"
+        # With a simulated load delay, behave like the lazy real backends (load on first request).
+        self.status = "unloaded" if float(os.environ.get("LAYA_MOCK_LOAD_DELAY", "0")) > 0 else "ready"
         self.backend_type = "mock"
+        self._mock_lock = threading.RLock()
         self.delay = float(os.environ.get("LAYA_MOCK_DELAY", "0"))
 
+    def _load_if_needed(self) -> None:
+        with self._mock_lock:
+            if self.status == "unloaded":
+                self.status = "loading"
+                load_delay = float(os.environ.get("LAYA_MOCK_LOAD_DELAY", "0"))
+                if load_delay > 0:
+                    time.sleep(load_delay)
+                self.status = "ready"
+            self.mark_used()
+
+    def preload(self) -> None:
+        self._load_if_needed()
+
     def predict(self, text: str, project_context: Optional[Dict[str, Any]] = None, task: str = "recall") -> Dict[str, Any]:
-        if self.status == "unloaded":
-            self.status = "loading"
-            load_delay = float(os.environ.get("LAYA_MOCK_LOAD_DELAY", "0"))
-            if load_delay > 0:
-                time.sleep(load_delay)
-            self.status = "ready"
+        self._load_if_needed()
 
         if self.delay > 0:
             time.sleep(self.delay)
@@ -247,6 +326,9 @@ class LazyModelBackend(BaseBackend):
             self.mark_used()
             return self.agent
 
+    def preload(self) -> None:
+        self.ensure_loaded()
+
     def unload_if_idle(self, idle_seconds: int) -> bool:
         if idle_seconds <= 0:
             return False
@@ -277,50 +359,7 @@ class MlxBackend(LazyModelBackend):
             pass
 
     def predict(self, text: str, project_context: Optional[Dict[str, Any]] = None, task: str = "recall") -> Dict[str, Any]:
-        agent = self.ensure_loaded()
-        state: Dict[str, Any] = {"text": text, "task": task}
-        if project_context and isinstance(project_context, dict):
-            if "project_id" in project_context:
-                state["project_id"] = str(project_context["project_id"])
-
-        res = agent.predict(state, {key: QUESTIONS[key] for key in TASK_QUESTIONS.get(task, TASK_QUESTIONS["recall"])})
-        answers = res.get("answers", {})
-
-        req_ans = answers.get("requires_memory", {})
-        req_probs = req_ans.get("probabilities", {})
-        requires_memory = sanitize_score(req_probs.get("yes", 0.5))
-        confidence = sanitize_score(req_ans.get("confidence", 0.5))
-
-        scope_ans = answers.get("scope", {})
-        scope_probs = scope_ans.get("probabilities", {})
-        scope = {
-            "project": sanitize_score(scope_probs.get("project", 0.0)),
-            "global": sanitize_score(scope_probs.get("global", 0.0)),
-            "unknown": sanitize_score(scope_probs.get("unknown", 0.0))
-        }
-
-        cat_ans = answers.get("category", {})
-        cat_probs = cat_ans.get("probabilities", {})
-        cat_confidence = sanitize_score(cat_ans.get("confidence", 0.5))
-        categories = {
-            "pitfall": sanitize_score(cat_probs.get("pitfall", 0.0)),
-            "decision": sanitize_score(cat_probs.get("decision", 0.0)),
-            "knowledge": sanitize_score(cat_probs.get("knowledge", 0.0))
-        }
-
-        capture_ans = answers.get("capture", {})
-        capture_probs = capture_ans.get("probabilities", {})
-        relation_ans = answers.get("relation", {})
-        relation_probs = relation_ans.get("probabilities", {})
-        return {
-            "requires_memory": requires_memory,
-            "confidence": confidence,
-            "category_confidence": cat_confidence,
-            "scope": scope,
-            "categories": categories,
-            "capture": {"yes": sanitize_score(capture_probs.get("yes", 0.0)), "confidence": sanitize_score(capture_ans.get("confidence", 0.0))},
-            "relation": {"label": max(relation_probs, key=relation_probs.get) if relation_probs else "unrelated", "confidence": sanitize_score(relation_ans.get("confidence", 0.0))}
-        }
+        return run_judgement(self.ensure_loaded(), text, project_context, task)
 
 
 class PyTorchBackend(LazyModelBackend):
@@ -345,55 +384,15 @@ class PyTorchBackend(LazyModelBackend):
             pass
 
     def predict(self, text: str, project_context: Optional[Dict[str, Any]] = None, task: str = "recall") -> Dict[str, Any]:
-        agent = self.ensure_loaded()
-        state: Dict[str, Any] = {"text": text, "task": task}
-        if project_context and isinstance(project_context, dict):
-            if "project_id" in project_context:
-                state["project_id"] = str(project_context["project_id"])
-
-        res = agent.predict(state, {key: QUESTIONS[key] for key in TASK_QUESTIONS.get(task, TASK_QUESTIONS["recall"])})
-        answers = res.get("answers", {})
-
-        req_ans = answers.get("requires_memory", {})
-        req_probs = req_ans.get("probabilities", {})
-        requires_memory = sanitize_score(req_probs.get("yes", 0.5))
-        confidence = sanitize_score(req_ans.get("confidence", 0.5))
-
-        scope_ans = answers.get("scope", {})
-        scope_probs = scope_ans.get("probabilities", {})
-        scope = {
-            "project": sanitize_score(scope_probs.get("project", 0.0)),
-            "global": sanitize_score(scope_probs.get("global", 0.0)),
-            "unknown": sanitize_score(scope_probs.get("unknown", 0.0))
-        }
-
-        cat_ans = answers.get("category", {})
-        cat_probs = cat_ans.get("probabilities", {})
-        cat_confidence = sanitize_score(cat_ans.get("confidence", 0.5))
-        categories = {
-            "pitfall": sanitize_score(cat_probs.get("pitfall", 0.0)),
-            "decision": sanitize_score(cat_probs.get("decision", 0.0)),
-            "knowledge": sanitize_score(cat_probs.get("knowledge", 0.0))
-        }
-
-        capture_ans = answers.get("capture", {})
-        capture_probs = capture_ans.get("probabilities", {})
-        relation_ans = answers.get("relation", {})
-        relation_probs = relation_ans.get("probabilities", {})
-        return {
-            "requires_memory": requires_memory,
-            "confidence": confidence,
-            "category_confidence": cat_confidence,
-            "scope": scope,
-            "categories": categories,
-            "capture": {"yes": sanitize_score(capture_probs.get("yes", 0.0)), "confidence": sanitize_score(capture_ans.get("confidence", 0.0))},
-            "relation": {"label": max(relation_probs, key=relation_probs.get) if relation_probs else "unrelated", "confidence": sanitize_score(relation_ans.get("confidence", 0.0))}
-        }
+        return run_judgement(self.ensure_loaded(), text, project_context, task)
 
 
 def create_backend(backend_type: str, model_name: Optional[str] = None, idle_unload_seconds: int = 900) -> BaseBackend:
     if backend_type == "mock" or os.environ.get("LAYA_MOCK_BACKEND") == "1":
-        return MockBackend(model_name or "mock-model")
+        backend = MockBackend(model_name or "mock-model")
+        # Report the real idle window so clients can predict cold starts like with real backends.
+        backend.idle_unload_seconds = idle_unload_seconds
+        return backend
 
     is_apple_silicon = sys.platform == "darwin" and os.uname().machine == "arm64"
 
@@ -611,8 +610,10 @@ class LayaRequestHandler(BaseHTTPRequestHandler):
                     self._send_json(400, {"error": "invalid_project_id"})
                     return
 
-        # Non-blocking concurrency check: immediately fail with 503 if inference is busy
-        acquired = self.server.inference_semaphore.acquire(blocking=False)
+        # Bounded wait: one inference takes ~40 ms, so a request that overlaps another (two host
+        # windows, or a duplicated hook) should queue briefly instead of failing. The cap keeps
+        # piled-up requests from hanging hooks; past it we still answer 503 quickly.
+        acquired = self.server.inference_semaphore.acquire(timeout=BUSY_WAIT_SECONDS)
         if not acquired:
             self._send_json(503, {"error": "service_busy"})
             return
@@ -811,6 +812,48 @@ def remove_pid_file_if_matched(pid_file_path: Path, pid: int, instance_id: str) 
         pass
 
 
+def acquire_instance_lock(service_file_path: Path) -> Optional[int]:
+    """Hold one OS lock per service-file until the daemon exits (POSIX/Windows)."""
+    parent = service_file_path.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    lock_path = check_no_symlink(str(parent / ".service.instance.lock"), "instance-lock")
+    flags = os.O_CREAT | os.O_RDWR
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    fd = os.open(lock_path, flags, 0o600)
+    try:
+        if os.name == "nt":
+            import msvcrt
+            # msvcrt locks one existing byte starting at the current offset.
+            if os.fstat(fd).st_size == 0:
+                os.write(fd, b"\0")
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            os.fchmod(fd, 0o600)
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return fd
+    except OSError as exc:
+        os.close(fd)
+        if exc.errno in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
+            return None
+        raise
+
+
+def release_instance_lock(fd: int) -> None:
+    try:
+        if os.name == "nt":
+            import msvcrt
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Laya Memory Judge local adapter service")
     parser.add_argument("--backend", choices=["auto", "mlx", "pytorch", "mock"], default="auto",
@@ -833,6 +876,8 @@ def main() -> None:
                         help="Secret Bearer token (deprecated; use --token-file or LAYA_AUTH_TOKEN)")
     parser.add_argument("--pid-file", type=str, default=None,
                         help="Path to write PID file")
+    parser.add_argument("--preload", action="store_true",
+                        help="Load model weights in the background right after the service starts listening")
     parser.add_argument("--idle-unload-seconds", type=int, default=900,
                         help="Unload model weights after this many idle seconds; 0 disables unloading (default: 900)")
 
@@ -856,6 +901,22 @@ def main() -> None:
         service_file_path = check_no_symlink(args.service_file, "service-file")
     else:
         service_file_path = check_no_symlink(os.path.join(os.path.expanduser("~"), ".laya", "service.json"), "service-file")
+
+    # The metadata files are registrations, not locks. Without an OS-held lock,
+    # two hosts can launch separate servers and overwrite each other's metadata.
+    # Keep this lock file (and its inode) for the lifetime of every instance.
+    lock_fd = acquire_instance_lock(service_file_path)
+    if lock_fd is None:
+        sys.stderr.write("Laya service is already owned by another process for this service-file.\n")
+        sys.exit(3)
+
+    def release_startup_lock() -> None:
+        nonlocal lock_fd
+        if lock_fd is not None:
+            release_instance_lock(lock_fd)
+            lock_fd = None
+
+    atexit.register(release_startup_lock)
 
     # Resolve token securely:
     # 1. Read from protected --token-file if provided, and delete immediately
@@ -957,11 +1018,11 @@ def main() -> None:
                 pass
         if pid_file_path:
             remove_pid_file_if_matched(pid_file_path, pid, instance_id)
+        release_startup_lock()
 
     atexit.register(cleanup)
 
     def sig_handler(signum: int, frame: Any) -> None:
-        cleanup()
         sys.exit(0)
 
     try:
@@ -974,6 +1035,24 @@ def main() -> None:
     sys.stdout.write(f"Laya service listening on {endpoint} (PID: {pid}, Backend: {backend.backend_type})\n")
     sys.stdout.flush()
 
+    # The Node launcher closes its startup pipes after the health check. Keep
+    # future lazy model-load output (for example MLX/tqdm progress) away from
+    # those pipes so a later write cannot raise BrokenPipeError and kill the
+    # service. This is portable across POSIX and Windows via os.devnull.
+    redirect_stdio_to_devnull()
+
+    if args.preload:
+        # Warm the model in the background so the first hook call does not pay the
+        # multi-second load. /health reports "loading" until it finishes; requests
+        # arriving meanwhile wait on the backend's model lock instead of loading twice.
+        def preload_model() -> None:
+            try:
+                backend.preload()
+            except Exception:
+                pass  # the next request retries the lazy load and reports the error
+
+        threading.Thread(target=preload_model, name="laya-preload", daemon=True).start()
+
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -984,6 +1063,21 @@ def main() -> None:
             idle_thread.join(timeout=1)
         server.server_close()
         cleanup()
+
+
+def redirect_stdio_to_devnull() -> None:
+    """Detach service stdout/stderr from short-lived launcher pipes."""
+    sys.stdout.flush()
+    sys.stderr.flush()
+    devnull_fd = os.open(os.devnull, os.O_WRONLY)
+    stdout_fd = sys.stdout.fileno()
+    stderr_fd = sys.stderr.fileno()
+    try:
+        os.dup2(devnull_fd, stdout_fd)
+        os.dup2(devnull_fd, stderr_fd)
+    finally:
+        if devnull_fd not in (stdout_fd, stderr_fd):
+            os.close(devnull_fd)
 
 
 if __name__ == "__main__":

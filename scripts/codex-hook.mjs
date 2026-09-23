@@ -15,6 +15,12 @@ import { DEFAULT_MEMORY_JUDGE, parseMemoryJudgeConfig } from "../lib/config.js";
 import { createMemoryRouter } from "../lib/memory-router/router.js";
 import { buildLayaNotice } from "../lib/prompt.js";
 
+// Fixed, user-facing block text; only the sanitized reason category is appended (never raw errors).
+export function strictBlockReason(category) {
+  const safe = typeof category === "string" && /^[a-z_]{1,64}$/.test(category) ? category : "strict_mode_evaluation_error";
+  return `Laya memory judge unavailable in strict mode (${safe}).`;
+}
+
 async function readStdin() {
   const chunks = [];
   for await (const chunk of process.stdin) {
@@ -109,7 +115,7 @@ async function main() {
       });
       console.log(JSON.stringify({
         decision: "block",
-        reason: decision.reason || "Laya Memory Judge strict mode: evaluation failed or service unavailable."
+        reason: strictBlockReason(decision.reason)
       }));
       return;
     }
@@ -136,13 +142,13 @@ async function main() {
     emitAuditTrace({
       route: "fallback",
       decision: mode === "strict" ? "block" : "none",
-      reason: "strict_mode_evaluation_error",
+      reason: mode === "strict" ? "strict_mode_evaluation_error" : "evaluation_error",
       layaAttempted: false
     });
     if (mode === "strict") {
       console.log(JSON.stringify({
         decision: "block",
-        reason: "Laya Memory Judge strict mode: memory evaluation failed."
+        reason: strictBlockReason("strict_mode_evaluation_error")
       }));
     } else {
       console.log(JSON.stringify({
@@ -177,13 +183,13 @@ if (isEntrypoint) {
     emitAuditTrace({
       route: "fallback",
       decision: mode === "strict" ? "block" : "none",
-      reason: "strict_mode_top_level_error",
+      reason: mode === "strict" ? "strict_mode_top_level_error" : "top_level_error",
       layaAttempted: false
     });
     if (mode === "strict") {
       console.log(JSON.stringify({
         decision: "block",
-        reason: "Laya Memory Judge strict mode: top-level process failure."
+        reason: strictBlockReason("strict_mode_top_level_error")
       }));
     } else {
       console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: "UserPromptSubmit" } }));

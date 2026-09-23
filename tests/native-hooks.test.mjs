@@ -18,10 +18,11 @@ import {
   buildAntigravityHooksConfig,
   mergeAntigravityHooks
 } from "../scripts/setup-antigravity.mjs";
-import { extractPromptText } from "../scripts/codex-hook.mjs";
+import { extractPromptText, strictBlockReason } from "../scripts/codex-hook.mjs";
+import { buildLayaActionNotice, buildLayaNotice } from "../lib/prompt.js";
 import { extractLastUserPrompt } from "../scripts/antigravity-hook.mjs";
 import { MemoryRouter } from "../lib/memory-router/router.js";
-import { parseMemoryJudgeConfig } from "../lib/config.js";
+import { DEFAULT_MEMORY_JUDGE, HOST_HOOK_TIMEOUT_SECONDS, parseMemoryJudgeConfig } from "../lib/config.js";
 import openclawPlugin, { createOpenClawPlugin } from "../index.js";
 import { findPython } from "../scripts/python.mjs";
 
@@ -53,7 +54,19 @@ test("Codex hooks.json conforms to official discovery structure and nested schem
   const innerHook = container.hooks[0];
   assert.equal(innerHook.type, "command");
   assert.match(innerHook.command, /\$\{PLUGIN_ROOT\}\/scripts\/codex-hook\.mjs/, "Must prioritize official PLUGIN_ROOT");
-  assert.equal(innerHook.timeout, 5);
+  assert.equal(innerHook.timeout, HOST_HOOK_TIMEOUT_SECONDS);
+});
+
+test("host hook timeouts leave room for a Laya cold start", () => {
+  // Node startup + health handshake + cold-start inference must finish before the host kills the hook.
+  const budgetMs = DEFAULT_MEMORY_JUDGE.healthTimeout + DEFAULT_MEMORY_JUDGE.coldStartTimeout + 2000;
+  assert.ok(HOST_HOOK_TIMEOUT_SECONDS * 1000 > budgetMs, "HOST_HOOK_TIMEOUT_SECONDS too small for cold start");
+  const codex = JSON.parse(readFileSync(join(root, "hooks", "hooks.json"), "utf8"));
+  const antigravity = JSON.parse(readFileSync(join(root, "hooks.json"), "utf8"));
+  assert.equal(codex.hooks.UserPromptSubmit[0].hooks[0].timeout, HOST_HOOK_TIMEOUT_SECONDS);
+  assert.equal(antigravity["obsidian-memory-router"].PreInvocation[0].timeout, HOST_HOOK_TIMEOUT_SECONDS);
+  const hermes = readFileSync(join(root, "__init__.py"), "utf8");
+  assert.match(hermes, new RegExp(`^HOST_HOOK_TIMEOUT_SECONDS = ${HOST_HOOK_TIMEOUT_SECONDS}$`, "m"));
 });
 
 test("Windows/cross-shell command safety: normal paths pass round-trip, dangerous expansions (%VAR%, !VAR!, $VAR, $(cmd), `cmd`, quotes, CRLF/NUL) strictly rejected", () => {
@@ -715,6 +728,18 @@ test("openclaw.plugin.json manifest consistency: schema default and uiHints matc
   );
 });
 
+test("openclaw.plugin.json memoryJudge schema accepts every field lib/config.js accepts, with matching defaults", () => {
+  const manifest = JSON.parse(readFileSync(join(root, "openclaw.plugin.json"), "utf8"));
+  const props = manifest.configSchema.properties.memoryJudge.properties;
+  assert.deepEqual(Object.keys(props).sort(), Object.keys(DEFAULT_MEMORY_JUDGE).sort());
+  for (const [key, value] of Object.entries(DEFAULT_MEMORY_JUDGE)) {
+    if (key === "endpoint" || key === "serviceFile") continue; // null / home-dependent defaults
+    assert.equal(props[key].default, value, `schema default for ${key} must match DEFAULT_MEMORY_JUDGE`);
+  }
+  // Every accepted value must also parse successfully.
+  assert.doesNotThrow(() => parseMemoryJudgeConfig({ proactiveCapture: false, captureThreshold: 0.8 }));
+});
+
 test("npm pack dry run excludes __pycache__ and *.pyc files", () => {
   const cleanEnv = Object.fromEntries(
     Object.entries(process.env).filter(([k]) => !k.startsWith("npm_"))
@@ -784,7 +809,8 @@ print(json.dumps({
   );
   const res = JSON.parse(output.trim().split("\n").pop());
   assert.match(res.recall_context, /recall recommended/);
-  assert.deepEqual(res.greeting, {});
+  // Greetings are confidently self-contained: Hermes now gets an explicit "memory not needed" hint.
+  assert.match(res.greeting.context, /not needed for this turn/);
   assert.deepEqual(res.strict_result, {}, "Hermes strict mode must gracefully degrade to auto fail-open when offline");
 });
 
@@ -800,4 +826,62 @@ test("hookExecuted is false in core router/CLI, and set to true only by host hoo
   } finally {
     router.dispose();
   }
+});
+
+test("Codex strict block reason is fixed text plus a sanitized category only", () => {
+  assert.equal(strictBlockReason("strict_mode_laya_unavailable"), "Laya memory judge unavailable in strict mode (strict_mode_laya_unavailable).");
+  assert.equal(strictBlockReason("connect ECONNREFUSED 127.0.0.1:1"), "Laya memory judge unavailable in strict mode (strict_mode_evaluation_error).");
+  assert.equal(strictBlockReason(undefined), "Laya memory judge unavailable in strict mode (strict_mode_evaluation_error).");
+});
+
+test("action notice is shared and fallbacks are never injected", () => {
+  const recall = { recallRecommended: true, scope: "global" };
+  assert.equal(buildLayaActionNotice(recall), buildLayaNotice(recall));
+  const fallback = { recallRecommended: false, captureRecommended: false, trace: { route: "fallback", reason: "laya_fallback" } };
+  assert.equal(buildLayaActionNotice(fallback), null);
+  assert.equal(buildLayaNotice(fallback), null, "fallbacks are not injected into the prompt");
+});
+
+test("router fallback results keep hookExecuted false and block only in strict mode", async () => {
+  const missing = join(tmpdir(), "obsidian-memory-missing-service.json");
+  for (const mode of ["auto", "strict"]) {
+    const router = new MemoryRouter(parseMemoryJudgeConfig({ mode, serviceFile: missing }), { timers: { setInterval: null, clearInterval() {}, setTimeout, clearTimeout } });
+    const res = await router.evaluateRecall("这个接口的分页参数应该怎么设计比较好");
+    router.dispose();
+    assert.equal(res.trace.hookExecuted, false);
+    assert.equal(res.trace.route, "fallback");
+    assert.equal(res.blocked, mode === "strict");
+    assert.equal(res.reason, mode === "strict" ? "strict_mode_laya_unavailable" : "no_trusted_service");
+    assert.equal(res.trace.reason, res.reason);
+  }
+});
+
+test("memoryActionFor: only confident verdicts skip; uncertain, fallback and blocked keep the default workflow", async () => {
+  const { memoryActionFor } = await import("../lib/prompt.js");
+  const laya = (score, extra = {}) => ({ score, trace: { route: "laya" }, ...extra });
+  assert.equal(memoryActionFor(laya(0.1), 0.35), "skip");
+  assert.equal(memoryActionFor(laya(0.4), 0.35), "default");
+  assert.equal(memoryActionFor(laya(0.9, { recallRecommended: true }), 0.35), "recall");
+  assert.equal(memoryActionFor({ reason: "trivial_greeting", trace: { route: "fast_path" } }), "skip");
+  assert.equal(memoryActionFor({ reason: "no_trusted_service", trace: { route: "fallback" } }), "default");
+  assert.equal(memoryActionFor({ blocked: true, score: 0.01, trace: { route: "laya" } }), "default");
+  assert.equal(memoryActionFor(null), "default");
+});
+
+test("OpenClaw replaces the full workflow with a compact skip block only when Laya is confident", async () => {
+  const { buildGuidance, SKIP_NOTICE } = await import("../lib/prompt.js");
+  const cfg = { vaultPath: "/v", cliPath: "obsidian" };
+  const full = buildGuidance(cfg);
+  const skip = buildGuidance(cfg, { score: 0.05, trace: { route: "laya" } });
+  const uncertain = buildGuidance(cfg, { score: 0.45, trace: { route: "laya" } });
+  assert.ok(skip.includes(SKIP_NOTICE) && skip.includes("[End Obsidian Memory]") && skip.includes("/v"));
+  assert.ok(!skip.includes("SKILL.md") && !skip.includes("For code tasks"));
+  assert.ok(skip.length < full.length / 2, `skip block should be much shorter (${skip.length} vs ${full.length})`);
+  assert.equal(uncertain, full);
+});
+
+test("skipThreshold is configurable and never exceeds recallThreshold", () => {
+  assert.equal(parseMemoryJudgeConfig({}).skipThreshold, 0.35);
+  assert.equal(parseMemoryJudgeConfig({ skipThreshold: 0.2 }).skipThreshold, 0.2);
+  assert.equal(parseMemoryJudgeConfig({ recallThreshold: 0.3, skipThreshold: 0.4 }).skipThreshold, 0.3);
 });

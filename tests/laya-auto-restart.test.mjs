@@ -14,6 +14,10 @@ import {
 import { MemoryRouter } from "../lib/memory-router/router.js";
 import { writeStateCache } from "../lib/memory-router/cache.js";
 
+const testPythonPath = (layaDir) => process.platform === "win32"
+  ? path.join(layaDir, "venv", "Scripts", "python.exe")
+  : path.join(layaDir, "venv", "bin", "python");
+
 test("auto-restart state paths support Windows service layouts", () => {
   assert.deepEqual(
     getRestartStatePaths("C:\\Users\\Ada\\.laya\\service.json", { platform: "win32" }),
@@ -30,7 +34,7 @@ test("automatic restart is locked, detached, throttled, and suppressed by explic
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "laya-auto-restart-"));
   const layaDir = path.join(tmpDir, ".laya");
   const serviceFile = path.join(layaDir, "service.json");
-  const pythonPath = path.join(layaDir, "venv", "bin", "python");
+  const pythonPath = testPythonPath(layaDir);
   fs.mkdirSync(path.dirname(pythonPath), { recursive: true });
   fs.writeFileSync(pythonPath, "");
 
@@ -59,6 +63,75 @@ test("automatic restart is locked, detached, throttled, and suppressed by explic
     assert.equal(requestServiceAutoRestart(serviceFile, { spawn: fakeSpawn, processApi, now: 1002 }).reason, "user_stopped");
     assert.equal(clearServiceStoppedMarker(serviceFile), true);
     assert.equal(fs.existsSync(path.join(layaDir, ".autostart-disabled")), false);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("automatic restart lock does not stay stuck to a long-lived host process", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "laya-auto-restart-owner-pid-"));
+  const layaDir = path.join(tmpDir, ".laya");
+  const serviceFile = path.join(layaDir, "service.json");
+  const pythonPath = testPythonPath(layaDir);
+  fs.mkdirSync(path.dirname(pythonPath), { recursive: true });
+  fs.writeFileSync(pythonPath, "");
+
+  let childPid = 70001;
+  const processApi = {
+    pid: 5151,
+    execPath: process.execPath,
+    env: {},
+    kill(pid) {
+      if (pid === 5151) return;
+      const error = new Error("process is gone");
+      error.code = "ESRCH";
+      throw error;
+    }
+  };
+  const fakeSpawn = () => {
+    const child = Object.assign(new EventEmitter(), { pid: childPid++, unref() {} });
+    setImmediate(() => child.emit("exit", 0, null));
+    return child;
+  };
+
+  try {
+    assert.equal(requestServiceAutoRestart(serviceFile, { spawn: fakeSpawn, processApi }).scheduled, true);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    // The requesting host is still alive, but the recovery child has exited
+    // and the normal retry throttle has elapsed.
+    const retryAt = Date.now() + 31000;
+    assert.equal(requestServiceAutoRestart(serviceFile, { spawn: fakeSpawn, processApi, now: retryAt }).scheduled, true);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("expired legacy auto-restart lock is not kept alive by its requester PID", () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "laya-auto-restart-legacy-lock-"));
+  const layaDir = path.join(tmpDir, ".laya");
+  const serviceFile = path.join(layaDir, "service.json");
+  const pythonPath = testPythonPath(layaDir);
+  fs.mkdirSync(path.dirname(pythonPath), { recursive: true });
+  fs.writeFileSync(pythonPath, "");
+  const now = Date.now();
+  const lockFile = path.join(layaDir, ".autostart.lock");
+  fs.writeFileSync(lockFile, JSON.stringify({ pid: 5151, startedAt: now - 45000, finishedAt: now - 45000 }));
+  const processApi = {
+    pid: 5151,
+    execPath: process.execPath,
+    env: {},
+    kill() { return; }
+  };
+
+  try {
+    const result = requestServiceAutoRestart(serviceFile, {
+      processApi,
+      spawn: () => Object.assign(new EventEmitter(), { pid: 70002, unref() {} }),
+      now
+    });
+    assert.equal(result.scheduled, true);
+    assert.equal(JSON.parse(fs.readFileSync(lockFile, "utf8")).version, 2);
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }

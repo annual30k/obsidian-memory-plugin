@@ -4,7 +4,7 @@
       {
         "type": "command",
         "command": "node ./scripts/antigravity-hook.mjs",
-        "timeout": 5
+        "timeout": 10
       }
     ]
   }

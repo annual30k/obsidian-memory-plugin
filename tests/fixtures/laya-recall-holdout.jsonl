@@ -1,0 +1,40 @@
+{"text": "咱们定的日志格式是哪种来着，新模块也照那个来", "recall": true}
+{"text": "上周讨论的缓存失效策略最后选了哪个方案", "recall": true}
+{"text": "这个仓库的发版流程是什么，我忘了", "recall": true}
+{"text": "和上次一样，把 changelog 按我们的模板补上", "recall": true}
+{"text": "我之前说过不喜欢哪种代码风格？这次别再那样写", "recall": true}
+{"text": "那个 macOS 签名失败的问题我们当时绕过去的办法是什么", "recall": true}
+{"text": "延续前面的重构思路，把 service 层也拆一下", "recall": true}
+{"text": "订单模块当初为什么要拆成两个服务", "recall": true}
+{"text": "按照团队约定，这个 PR 需要哪些检查项", "recall": true}
+{"text": "我们这个项目里时间统一用什么时区存", "recall": true}
+{"text": "What was the reason we dropped GraphQL in this project?", "recall": true}
+{"text": "Remind me which env vars our staging deploy needs", "recall": true}
+{"text": "Continue the refactor we started on the plugin loader yesterday", "recall": true}
+{"text": "Did we already hit this flaky test before? What fixed it?", "recall": true}
+{"text": "Write the migration the way we agreed for backward compatibility", "recall": true}
+{"text": "Which Python version did we standardise on for the Laya venv?", "recall": true}
+{"text": "Format the release notes like the last few releases", "recall": true}
+{"text": "What's my preferred commit message style again?", "recall": true}
+{"text": "Is there anything we noted about Obsidian vault paths with spaces?", "recall": true}
+{"text": "Apply the same fix we used for the Windows path bug to this function", "recall": true}
+{"text": "用 Go 写一个并发安全的计数器", "recall": false}
+{"text": "Docker 的 COPY 和 ADD 有什么区别", "recall": false}
+{"text": "把这段 SQL 改写成使用 JOIN 的形式", "recall": false}
+{"text": "Python 里怎么读取一个 CSV 文件并按列求和", "recall": false}
+{"text": "这段报错 TypeError: undefined is not a function 一般是什么原因", "recall": false}
+{"text": "帮我把这个函数的时间复杂度从 O(n^2) 优化一下", "recall": false}
+{"text": "git rebase 和 merge 该怎么选", "recall": false}
+{"text": "写一个判断回文字符串的函数并附上测试", "recall": false}
+{"text": "React 的 useEffect 依赖数组为空时会执行几次", "recall": false}
+{"text": "给这个 README 段落改一下语病", "recall": false}
+{"text": "How do I parse ISO 8601 dates in JavaScript?", "recall": false}
+{"text": "Write a regex that matches email addresses", "recall": false}
+{"text": "What's the difference between let and const?", "recall": false}
+{"text": "Translate this paragraph into English", "recall": false}
+{"text": "Add type hints to this Python function", "recall": false}
+{"text": "Explain big-O notation with an example", "recall": false}
+{"text": "Create a Dockerfile for a simple Flask app", "recall": false}
+{"text": "Why does 0.1 + 0.2 not equal 0.3 in floating point?", "recall": false}
+{"text": "Refactor this function to remove the nested if statements", "recall": false}
+{"text": "Thanks, that worked!", "recall": false}

@@ -99,3 +99,13 @@ test("evaluateFastPath detects scope accurately (project vs global)", () => {
   assert.equal(projectCapture.action, "force_capture");
   assert.equal(projectCapture.scope, "project");
 });
+
+test("fast path recognises explicit 'as before / as agreed' requests without over-matching", async () => {
+  const { evaluateFastPath } = await import("../lib/memory-router/fast-path.js");
+  for (const text of ["照老规矩写 commit message", "按我们项目的惯例，新接口的错误码应该怎么定义", "和上次一样，把 changelog 补上", "延续前面的重构思路", "咱们定的日志格式是哪种", "Write the migration the way we agreed", "Pick up where we left off", "What did we decide about retries?", "Use the retry strategy we settled on", "Follow our usual naming conventions"]) {
+    assert.equal(evaluateFastPath(text).recallRecommended, true, text);
+  }
+  for (const text of ["写一个 Python 函数，把列表按指定大小分块", "Python 里怎么读取一个 CSV 文件并按列求和", "按下回车键没反应怎么办", "Write a SQL query that returns the top 5 customers", "How do I center a div with flexbox?", "Explain big-O notation with an example"]) {
+    assert.notEqual(evaluateFastPath(text).recallRecommended, true, text);
+  }
+});

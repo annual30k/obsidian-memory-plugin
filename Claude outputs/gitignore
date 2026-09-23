@@ -9,4 +9,3 @@ __pycache__/
 *.pyc
 bench-result.json
 laya-tune-result.json
-_to_delete/

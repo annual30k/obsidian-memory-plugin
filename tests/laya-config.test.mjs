@@ -16,9 +16,9 @@ test("DEFAULT_MEMORY_JUDGE has expected safe defaults", () => {
   assert.equal(DEFAULT_MEMORY_JUDGE.discoveryInterval, 300000);
   assert.equal(DEFAULT_MEMORY_JUDGE.serviceFile, join(homedir(), ".laya", "service.json"));
   assert.equal(DEFAULT_MEMORY_JUDGE.timeout, 1000);
-  assert.equal(DEFAULT_MEMORY_JUDGE.coldStartTimeout, 5000);
+  assert.equal(DEFAULT_MEMORY_JUDGE.coldStartTimeout, 7500);
   assert.equal(DEFAULT_MEMORY_JUDGE.healthTimeout, 200);
-  assert.equal(DEFAULT_MEMORY_JUDGE.recallThreshold, 0.70);
+  assert.equal(DEFAULT_MEMORY_JUDGE.recallThreshold, 0.50);
   assert.equal(DEFAULT_MEMORY_JUDGE.captureThreshold, 0.75);
   assert.equal(DEFAULT_MEMORY_JUDGE.proactiveCapture, true);
   assert.equal(DEFAULT_MEMORY_JUDGE.consecutiveFailures, 2);

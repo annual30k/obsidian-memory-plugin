@@ -178,7 +178,8 @@ test("native manifest and entry agree without claiming a memory slot", () => {
   for (const path of [...pkg.openclaw.extensions, ...pkg.openclaw.runtimeExtensions]) {
     assert.ok(existsSync(new URL(path, root)));
   }
-  for (const path of pkg.files) assert.ok(existsSync(new URL(path, root)), path);
+  // "!pattern" entries are npm exclusions, not paths that must exist.
+  for (const path of pkg.files.filter((entry) => !entry.startsWith("!"))) assert.ok(existsSync(new URL(path, root)), path);
 });
 
 test("the only packaged skill is obsidian-memory, not external Obsidian skills", () => {

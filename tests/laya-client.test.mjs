@@ -224,3 +224,19 @@ test("truncateForInference preserves head and tail for inputs exceeding maxChars
   assert.ok(truncated.endsWith(tail), "Truncated text must retain tail");
   assert.ok(truncated.includes("\n...\n"), "Truncated text must include truncation marker");
 });
+
+test("judgeRecall sends project_context only with a real project id", async () => {
+  const { LayaClient: Client } = await import("../lib/memory-router/client.js");
+  const bodies = [];
+  const fetchStub = async (_url, init) => {
+    bodies.push(JSON.parse(init.body));
+    return new Response(JSON.stringify({ requires_memory: 0.5, confidence: 0.5, scope: { project: 0.3, global: 0.3, unknown: 0.4 }, categories: { pitfall: 0.3, decision: 0.3, knowledge: 0.4 } }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  const client = new Client("http://127.0.0.1:9", { fetch: fetchStub });
+  for (const ctx of [null, { project_id: null }, { project_id: "" }, { project_id: "  " }]) {
+    await client.judgeRecall({ text: "hello world", projectContext: ctx });
+  }
+  await client.judgeRecall({ text: "hello world", projectContext: { project_id: "demo-app" } });
+  assert.ok(bodies.slice(0, 4).every((b) => !("project_context" in b)), JSON.stringify(bodies));
+  assert.deepEqual(bodies[4].project_context, { project_id: "demo-app" });
+});

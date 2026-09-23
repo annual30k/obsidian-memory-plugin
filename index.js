@@ -1,5 +1,5 @@
 import { DEFAULT_MEMORY_JUDGE, parseConfigs } from "./lib/config.js";
-import { buildGuidance } from "./lib/prompt.js";
+import { buildGuidance, memoryActionFor } from "./lib/prompt.js";
 import { createMemoryRouter } from "./lib/memory-router/router.js";
 import { evaluateFastPath } from "./lib/memory-router/fast-path.js";
 
@@ -144,143 +144,144 @@ export function createOpenClawPlugin(options = {}) {
             return { prependContext: baseGuidance };
           }
 
-        const text = extractUserPrompt(event);
-
-        if (!text || text.trim().length === 0) {
-          return { prependContext: baseGuidance };
-        }
-
-        const turnKey = getTurnKey(event, context, text);
-
-        const fast = evaluateFastPath(text);
-        if (fast.action !== "consult_laya") {
-          const decision = {
-            recallRecommended: fast.recallRecommended ?? false,
-            captureRecommended: (fast.captureRecommended && memoryJudge.proactiveCapture !== false) ? true : false,
-            captureCategory: fast.captureCategory ?? null,
-            scope: fast.scope ?? "project",
-            blocked: false,
-            reason: fast.reason,
-            trace: {
-              route: "fast_path",
-              decision: fast.recallRecommended ? "recall" : (fast.captureRecommended ? "capture" : "none"),
-              reason: fast.reason,
-              hookExecuted: true,
-              layaAttempted: false
-            }
-          };
-          setTurnDecision(turnKey, decision);
-          api.logger?.debug?.(`[Laya Memory Router] before_prompt_build Fast-Path Trace: ${JSON.stringify(decision.trace)}`);
-          if (fast.recallRecommended) {
-            return { prependContext: buildGuidance(agentConfig, { recallRecommended: true, scope: fast.scope ?? "project" }) };
-          }
-          if (fast.captureRecommended && memoryJudge.proactiveCapture !== false) {
-            return { prependContext: buildGuidance(agentConfig, { captureRecommended: true, captureCategory: fast.captureCategory, scope: fast.scope ?? "project" }) };
-          }
-          return { prependContext: baseGuidance };
-        }
-
-        return (async () => {
-          try {
-            const decision = await router.evaluateRecall(text, {
-              project_id: agentConfig.projectId ?? null
-            });
-            if (decision.trace) {
-              decision.trace.hookExecuted = true;
-              api.logger?.debug?.(`[Laya Memory Router] before_prompt_build Trace: ${JSON.stringify(decision.trace)}`);
-            }
-            setTurnDecision(turnKey, decision);
-            if (decision.recallRecommended || decision.captureRecommended) {
-              return { prependContext: buildGuidance(agentConfig, decision) };
-            }
-          } catch (err) {
-            api.logger?.debug?.(`[Laya Memory Router] Evaluation failed: ${err.message}`);
-            if (memoryJudge.mode === "strict") {
-              setTurnDecision(turnKey, {
-                blocked: true,
-                reason: "strict_mode_evaluation_error",
-                trace: {
-                  route: "fallback",
-                  decision: "none",
-                  reason: "strict_mode_evaluation_error",
-                  hookExecuted: true,
-                  layaAttempted: true
-                }
-              });
-            }
-          }
-          return { prependContext: baseGuidance };
-        })();
-      });
-
-      // 2. Strict mode official gatekeeper: before_agent_run runs SECOND in OpenClaw lifecycle.
-      // Consumes and deletes the cached turn decision, or re-evaluates independently on cache miss (fail-closed).
-      if (router && memoryJudge.mode === "strict") {
-        api.on("before_agent_run", async (event, context) => {
-          const agentConfig = configs.get(context?.agentId);
-          if (!agentConfig) return;
-          if (isExplicitNonUserInput(context)) return;
-
           const text = extractUserPrompt(event);
 
-          if (!text || text.trim().length === 0) return;
+          if (!text || text.trim().length === 0) {
+            return { prependContext: baseGuidance };
+          }
 
           const turnKey = getTurnKey(event, context, text);
-          const cachedDecision = getAndConsumeDecision(turnKey);
 
-          if (cachedDecision) {
-            if (cachedDecision.blocked) {
-              return {
-                outcome: "block",
-                reason: cachedDecision.reason || "strict_mode_blocked",
-                message: "Laya Memory Router strict mode: request blocked by memory policy."
-              };
-            }
-            return;
-          }
-
-          // Cache miss: Gatekeeper independently re-evaluates to guarantee fail-closed
           const fast = evaluateFastPath(text);
           if (fast.action !== "consult_laya") {
-            return;
+            const decision = {
+              recallRecommended: fast.recallRecommended ?? false,
+              captureRecommended: (fast.captureRecommended && memoryJudge.proactiveCapture !== false) ? true : false,
+              captureCategory: fast.captureCategory ?? null,
+              scope: fast.scope ?? "project",
+              blocked: false,
+              reason: fast.reason,
+              trace: {
+                route: "fast_path",
+                decision: fast.recallRecommended ? "recall" : (fast.captureRecommended ? "capture" : "none"),
+                reason: fast.reason,
+                hookExecuted: true,
+                layaAttempted: false
+              }
+            };
+            decision.memoryAction = memoryActionFor(decision, memoryJudge.skipThreshold);
+            setTurnDecision(turnKey, decision);
+            api.logger?.debug?.(`[Laya Memory Router] before_prompt_build Fast-Path Trace: ${JSON.stringify(decision.trace)}`);
+            if (decision.memoryAction === "skip") {
+              return { prependContext: buildGuidance(agentConfig, decision) };
+            }
+            if (fast.recallRecommended) {
+              return { prependContext: buildGuidance(agentConfig, { recallRecommended: true, scope: fast.scope ?? "project" }) };
+            }
+            if (fast.captureRecommended && memoryJudge.proactiveCapture !== false) {
+              return { prependContext: buildGuidance(agentConfig, { captureRecommended: true, captureCategory: fast.captureCategory, scope: fast.scope ?? "project" }) };
+            }
+            return { prependContext: baseGuidance };
           }
 
-          try {
-            const decision = await router.evaluateRecall(text, {
-              project_id: agentConfig.projectId ?? null
-            });
-            if (decision.trace) {
-              decision.trace.hookExecuted = true;
-              api.logger?.debug?.(`[Laya Memory Router] before_agent_run Trace: ${JSON.stringify(decision.trace)}`);
+          return (async () => {
+            try {
+              const decision = await router.evaluateRecall(text, agentConfig.projectId ? { project_id: agentConfig.projectId } : null);
+              if (decision.trace) {
+                decision.trace.hookExecuted = true;
+                api.logger?.debug?.(`[Laya Memory Router] before_prompt_build Trace: ${JSON.stringify(decision.trace)}`);
+              }
+              setTurnDecision(turnKey, decision);
+              // recall/capture add a hint; a confident "skip" replaces the workflow with a short notice.
+              if (decision.memoryAction === "skip" || decision.recallRecommended || decision.captureRecommended) {
+                return { prependContext: buildGuidance(agentConfig, decision) };
+              }
+            } catch (err) {
+              api.logger?.debug?.(`[Laya Memory Router] Evaluation failed: ${err.message}`);
+              if (memoryJudge.mode === "strict") {
+                setTurnDecision(turnKey, {
+                  blocked: true,
+                  reason: "strict_mode_evaluation_error",
+                  trace: {
+                    route: "fallback",
+                    decision: "none",
+                    reason: "strict_mode_evaluation_error",
+                    hookExecuted: true,
+                    layaAttempted: true
+                  }
+                });
+              }
+            }
+            return { prependContext: baseGuidance };
+          })();
+        });
+
+        // 2. Strict mode official gatekeeper: before_agent_run runs SECOND in OpenClaw lifecycle.
+        // Consumes and deletes the cached turn decision, or re-evaluates independently on cache miss (fail-closed).
+        if (router && memoryJudge.mode === "strict") {
+          api.on("before_agent_run", async (event, context) => {
+            const agentConfig = configs.get(context?.agentId);
+            if (!agentConfig) return;
+            if (isExplicitNonUserInput(context)) return;
+
+            const text = extractUserPrompt(event);
+
+            if (!text || text.trim().length === 0) return;
+
+            const turnKey = getTurnKey(event, context, text);
+            const cachedDecision = getAndConsumeDecision(turnKey);
+
+            if (cachedDecision) {
+              if (cachedDecision.blocked) {
+                return {
+                  outcome: "block",
+                  reason: cachedDecision.reason || "strict_mode_blocked",
+                  message: "Laya Memory Router strict mode: request blocked by memory policy."
+                };
+              }
+              return;
             }
 
-            if (decision.blocked) {
+            // Cache miss: Gatekeeper independently re-evaluates to guarantee fail-closed
+            const fast = evaluateFastPath(text);
+            if (fast.action !== "consult_laya") {
+              return;
+            }
+
+            try {
+              const decision = await router.evaluateRecall(text, agentConfig.projectId ? { project_id: agentConfig.projectId } : null);
+              if (decision.trace) {
+                decision.trace.hookExecuted = true;
+                api.logger?.debug?.(`[Laya Memory Router] before_agent_run Trace: ${JSON.stringify(decision.trace)}`);
+              }
+
+              if (decision.blocked) {
+                return {
+                  outcome: "block",
+                  reason: decision.reason || "strict_mode_service_unavailable",
+                  message: "Laya Memory Router strict mode: memory service unavailable or blocked."
+                };
+              }
+            } catch (err) {
+              api.logger?.debug?.(`[Laya Memory Router] before_agent_run evaluation error: ${err.message}`);
               return {
                 outcome: "block",
-                reason: decision.reason || "strict_mode_service_unavailable",
-                message: "Laya Memory Router strict mode: memory service unavailable or blocked."
+                reason: "strict_mode_evaluation_error",
+                message: "Laya Memory Router strict mode: memory evaluation failed."
               };
             }
-          } catch (err) {
-            api.logger?.debug?.(`[Laya Memory Router] before_agent_run evaluation error: ${err.message}`);
-            return {
-              outcome: "block",
-              reason: "strict_mode_evaluation_error",
-              message: "Laya Memory Router strict mode: memory evaluation failed."
-            };
-          }
+          });
+        }
+      }
+
+      if (router && typeof api.onDispose === "function") {
+        api.onDispose(() => {
+          turnDecisionCache.clear();
+          router.dispose();
         });
       }
     }
-
-    if (router && typeof api.onDispose === "function") {
-      api.onDispose(() => {
-        turnDecisionCache.clear();
-        router.dispose();
-      });
-    }
-  }
-};
+  };
 }
 
 const defaultPlugin = createOpenClawPlugin();

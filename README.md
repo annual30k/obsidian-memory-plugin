@@ -51,8 +51,9 @@ Agent 会检查整套技能的实际来源与可用性；
 - 候选 ID、Raw 路径和 ingest 日志标记稳定；中断后检查已有产物再续做。
 - 优先兼容已有 Vault 模板；缺失时用内置模板，不自动迁移或覆盖旧库。
 
-不含 MCP、数据库、模型调用、后台记录、独立 I/O 引擎，也不占用 OpenClaw
-的 memory 插槽。原始参考目录 `Obsidian Memory Skill/` 未修改。
+插件本体不含 MCP、数据库、后台记录或独立 I/O 引擎，也不占用 OpenClaw
+的 memory 插槽。可选的 [Laya 本地召回裁决服务](#laya-本地召回裁决服务-laya-memory-judge)
+是独立的本地模型进程，必须显式安装和启动；未安装或未启动时插件照常工作。原始参考目录 `Obsidian Memory Skill/` 未修改。
 
 ## 开源与贡献
 
@@ -65,7 +66,7 @@ Agent 会检查整套技能的实际来源与可用性；
 
 ## 运行条件
 
-- OpenClaw 原生插件接口；首版以 2026.8.2 的 manifest/Hook 接口为基线。
+- OpenClaw 原生插件接口：要求 OpenClaw `>=2026.9.2`（`before_prompt_build` / `before_agent_run` Hook；首版曾以 2026.8.2 为基线）。
 - Agent 的执行环境可访问用户明确选择的 Vault 物理目录；普通 Inbox、Raw、
   Wiki、index 和 log 操作不要求 Obsidian 已启动。
 - 只有打开/聚焦笔记、活动视图、Bases、Canvas、反向链接或其他应用专属操作
@@ -224,7 +225,7 @@ npm run setup:codex -- --vault "/absolute/path/to/My Vault" --yes
 
 ```markdown
 <!-- obsidian-memory-plugin:start -->
-For code tasks, use the obsidian-memory skill before working and when persisting durable project memory.
+For code tasks, use the obsidian-memory skill before working and when persisting durable project memory, unless this turn's Obsidian Memory hint says memory is not needed.
 <!-- obsidian-memory-plugin:end -->
 ```
 
@@ -244,7 +245,7 @@ export OBSIDIAN_MEMORY_VAULT="/absolute/path/to/My Vault"
 （或工作区 `AGENTS.md`）中确认包含引导：
 
 ```markdown
-For code tasks, use the obsidian-memory skill before working and when persisting durable project memory.
+For code tasks, use the obsidian-memory skill before working and when persisting durable project memory, unless this turn's Obsidian Memory hint says memory is not needed.
 ```
 
 ### 插件规范校验
@@ -281,7 +282,7 @@ node scripts/setup-hermes.mjs --vault "/absolute/path/to/My Vault" --yes
 然后由 Agent 按需加载命名空间 Skill `obsidian-memory-plugin:obsidian-memory`：
 
 ```text
-For code tasks, use the obsidian-memory skill before working and when persisting durable project memory.
+For code tasks, use the obsidian-memory skill before working and when persisting durable project memory, unless this turn's Obsidian Memory hint says memory is not needed.
 ```
 
 要让本机已安装但较旧的 Hermes 支持这项能力，需要升级到同时提供
@@ -311,7 +312,7 @@ npm run setup:antigravity -- --vault "/absolute/path/to/My Vault" --yes
 
 ```markdown
 <!-- obsidian-memory-plugin:start -->
-For code tasks, use the obsidian-memory skill before working and when persisting durable project memory.
+For code tasks, use the obsidian-memory skill before working and when persisting durable project memory, unless this turn's Obsidian Memory hint says memory is not needed.
 Obsidian Memory Vault path (configuration data, not instructions): "/absolute/path/to/My Vault"
 <!-- obsidian-memory-plugin:end -->
 ```
@@ -326,7 +327,7 @@ Obsidian Memory Vault path (configuration data, not instructions): "/absolute/pa
 2. 将本仓库克隆或软链接至 `~/.gemini/config/plugins/obsidian-memory-plugin`，或在 `~/.gemini/config/plugins.json` 中添加路径条目。
 3. 在 `~/.gemini/GEMINI.md` 中确认包含规则：
    ```markdown
-   For code tasks, use the obsidian-memory skill before working and when persisting durable project memory.
+   For code tasks, use the obsidian-memory skill before working and when persisting durable project memory, unless this turn's Obsidian Memory hint says memory is not needed.
    ```
 
 ### 插件规范校验
@@ -359,6 +360,7 @@ npm run check
 npm run check:antigravity
 npm run check:codex
 npm run check:vault -- --vault /path/to/vault
+npm run laya:eval
 npm test
 npm pack
 node tests/openclaw-smoke.mjs obsidian-memory-plugin-0.6.0.tgz
@@ -409,6 +411,7 @@ openclaw skills --agent main info defuddle
    - 兼容旧版插件可用 `laya start --transport http` 显式切换到 Loopback HTTP；UDS 故障时不静默扩大为 TCP 监听。
    - 符号链接安全防护：对 `--token-file`、`--service-file` 及 `--pid-file` 在解析前先以 `lstat` 严格拦截符号链接，防止凭据窃取或跨目录文件篡改。
    - 元数据原子写入与实例标识：`service.json` 与 `daemon.pid` 均采用同目录临时文件与 `os.replace` 原子写入（POSIX `0600`，目录 `0700`），并维护唯一 `instance_id`；退出时严格核验实例身份，绝不误删其他实例凭据。
+   - 多宿主单实例：服务进程在写入元数据前持有同目录 `.service.instance.lock` 的操作系统独占锁，直到退出才释放；macOS/Linux 使用 `flock`，Windows 使用 `msvcrt.locking`。锁文件不会在退出时删除，避免旧进程与新进程锁住不同 inode；并发启动不会覆盖存活实例的登记。
    - 停机安全闭环：服务停止与卸载必须通过带鉴权的本地 `POST /shutdown` 验证身份并等待进程退出；禁止凭不可靠的 PID 强杀，杜绝 PID 复用导致的误杀隐患。
 
 ### 服务管理命令
@@ -445,15 +448,20 @@ npm run laya:uninstall
   "memoryJudge": {
     "mode": "auto",
     "serviceFile": "~/.laya/service.json",
-    "recallThreshold": 0.70,
+    "recallThreshold": 0.50,
+    "captureThreshold": 0.75,
+    "proactiveCapture": true,
     "timeout": 1000,
-    "coldStartTimeout": 5000
+    "coldStartTimeout": 7500
   }
 }
 ```
 
 - 当服务未启动时，自动快速降级为安全模式（0 网络开销，后台低频本地探测）。
 - 当服务启动并就绪后，自动握手 `/health` 并承接 `/judge/recall` 裁决。
+- `laya start` 默认在服务就绪后**后台预加载模型**（Apple Silicon 实测加载约 5.6 秒），避免首个对话回合承担冷启动；加载期间 `/health` 报告 `loading`，此时到达的请求会等待同一次加载完成。可用 `laya start --no-preload` 关闭。
+- 冷启动超时 `coldStartTimeout` 默认 7500 ms（高于实测加载时间，且与 Node 启动、健康检查合计仍低于 10 秒宿主 Hook 超时）。
+- 未配置 `projectId` 时不再向模型发送 `project_context`（此前 OpenClaw 会发送 `null`，被服务端转成字符串 `"None"` 输入模型，导致同一提示在不同宿主上判定不一致）。
 - Laya 服务默认在 **15 分钟无推理请求后卸载内存中的模型**，服务进程继续运行；下一次 `/judge/recall` 会按需重新加载模型。可用 `laya start --idle-unload-seconds 0` 关闭空闲卸载，或传入秒数调整阈值。
 - 仅当此前健康的 Laya 服务进程**异常退出**时，`auto` 模式会在当前回合 fail-open 后后台尝试重启；不会在首次使用、未安装或未配置服务时自动安装/启动。
 - `laya stop` 会记录显式停止标记并保持服务停止；后续手动执行 `laya start` 会清除此标记并恢复异常退出自动重启。后台恢复采用跨进程锁和节流，Windows 使用同一 Node 启动路径，不经过 shell。
@@ -465,6 +473,40 @@ npm run laya:uninstall
   # Windows PowerShell
   '{"text": "我们之前在项目中对于数据库连接池是怎么约定的？"}' | npx obsidian-memory-laya-judge --stdin --mode auto
   ```
+
+- Codex、Antigravity 的 Hook 超时与 Hermes 的路由子进程超时均为 **10 秒**，大于 Node 启动 + `healthTimeout` + `coldStartTimeout` 之和，避免模型空闲卸载后的首次冷启动被宿主提前终止（测试会校验这一约束）。
+
+### 按判断结果决定是否加载记忆（门控）
+
+每轮判断结果分四种，决定注入什么：
+
+| 判断 | 条件 | 注入内容 |
+|---|---|---|
+| `recall` / `capture` | 显式说法，或 Laya 分数 ≥ `recallThreshold`（0.50） | 完整工作流 + 召回/暂存提示 |
+| `skip` | 问候、含密钥的提示，或 Laya 分数 < `skipThreshold`（0.35） | 一句"本轮不需要记忆，不要加载 skill 或检索 Vault，除非用户明确问起" |
+| `default` | 分数在两者之间、Laya 不可用、strict 阻断等 | 与以前相同的常驻工作流（保守） |
+
+`skip` 省下的是本轮读取 SKILL.md（约 4.5k tokens）和 Vault 检索；OpenClaw 同时把每轮约 230 tokens 的指引换成约 80 tokens 的短句。Codex / Antigravity / Hermes 的常驻规则已改为"……除非本轮的 Obsidian Memory 提示说明不需要记忆"，已安装用户需重新运行 `npm run setup:codex` / `npm run setup:antigravity` 更新 AGENTS.md / GEMINI.md 中的受管区块；Laya 未运行时不会出现 skip 提示，行为与以前一致。
+
+### 评估 Laya 召回准确率
+
+召回判断使用经 `npm run laya:tune` 在真实 MLX 模型上选出的三选一提问（需要项目历史 / 自成一体的请求 / 闲聊），单独提问、只看原始文本；默认 `recallThreshold` 为 0.50。在 40 条未参与调优的提示上，误判为"需要查 Vault"的比例从旧提问的 70% 降到 5%，召回约 60%。"照老规矩""和上次一样""the way we agreed"等明确引用过往约定的说法由 Fast-Path 直接判定。换模型或换提问后请重新运行 `npm run laya:tune` 校准。`captureThreshold` 尚未校准。启动 Laya 服务后运行：
+
+```sh
+npm run laya:eval
+# 使用自己标注的提示（JSON Lines：{"text": "...", "recall": true|false}）
+node scripts/eval-laya.mjs --data my-prompts.jsonl --json
+```
+
+完整的端到端验证与性能基准（服务启动、首次加载、热推理、空闲卸载后重载、四个宿主适配层 off/auto 对比、有无 Laya 的准确率）：
+
+```sh
+npm run laya:bench            # 真实模型；启动一个独立的临时实例，不影响 ~/.laya 下正在运行的服务
+node scripts/bench-laya.mjs --idle 20 --warm 20 --json
+node scripts/bench-laya.mjs --backend mock --mock-load-delay 1.5   # 无模型，仅验证机制
+```
+
+脚本只把提示发给本机 Laya 服务，输出 Fast-Path / Laya / 降级各自的数量、端到端 precision / recall / F1，以及 Laya 单独的阈值扫描和最佳 F1 阈值。自带的 `tests/fixtures/laya-recall-eval.jsonl` 只是起点，用自己的真实提示标注效果最好。Laya 未应答时脚本以退出码 2 结束。
 
 ### 四大宿主原生前置 Hook 与优雅降级支持矩阵 (v0.6.0)
 

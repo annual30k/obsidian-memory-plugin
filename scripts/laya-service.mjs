@@ -410,6 +410,8 @@ export async function startCommand(args = {}) {
   const venvDir = args.venv || getDefaultVenvPath(customHome);
   const backend = detectBackend(args.backend);
   const idleUnloadSeconds = args.idleUnloadSeconds ?? 900;
+  // Warm the model right after start so the first hook call is not a multi-second cold load.
+  const preload = args.preload ?? true;
   const transport = args.transport ?? "auto";
   if (!["auto", "http", "uds"].includes(transport)) throw new TypeError("--transport must be auto, http, or uds");
   if (process.platform === "win32" && transport === "uds") throw new TypeError("UDS is not supported on Windows; use auto or http");
@@ -475,6 +477,7 @@ export async function startCommand(args = {}) {
     SERVICE_PY,
     "--backend", backend,
     "--idle-unload-seconds", String(idleUnloadSeconds),
+    ...(preload ? ["--preload"] : []),
     "--service-file", serviceFile,
     "--pid-file", pidFile,
     "--token-file", tokenFilePath,
@@ -502,7 +505,8 @@ export async function startCommand(args = {}) {
     detached: true,
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
-    env: { ...process.env, ...(args.env || {}) }
+    // Keep the installed plugin directory free of __pycache__/*.pyc.
+    env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1", ...(args.env || {}) }
   });
 
   child.unref();
@@ -815,6 +819,10 @@ export function parseArgs(argv) {
       options.transport = argv[++i];
     } else if (arg === "--idle-unload-seconds" && i + 1 < argv.length) {
       options.idleUnloadSeconds = parseInt(argv[++i], 10);
+    } else if (arg === "--preload") {
+      options.preload = true;
+    } else if (arg === "--no-preload") {
+      options.preload = false;
     } else if (arg === "--recovery") {
       options.recovery = true;
     } else if (arg === "--force") {

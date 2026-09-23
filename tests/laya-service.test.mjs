@@ -149,6 +149,7 @@ test("service.py strictly rejects symlinks for token-file, service-file, and pid
       ...python.args,
       SERVICE_PY,
       "--token-file", symlinkToken,
+      "--service-file", path.join(tmpDir, "token-test-service.json"),
       "--backend", "mock",
       "--port", "0"
     ], { encoding: "utf8", windowsHide: true });
@@ -187,6 +188,7 @@ test("service.py strictly rejects symlinks for token-file, service-file, and pid
       ...python.args,
       SERVICE_PY,
       "--pid-file", symlinkPid,
+      "--service-file", path.join(tmpDir, "pid-test-service.json"),
       "--backend", "mock",
       "--port", "0"
     ], { encoding: "utf8", windowsHide: true });
@@ -250,6 +252,50 @@ test("daemon.pid is written atomically with 0600 and only unlinked when identity
 
   } finally {
     try { pyProc.kill("SIGKILL"); } catch {}
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("service-file OS lock prevents concurrent daemons and releases after exit", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "laya-singleton-test-"));
+  const serviceFile = path.join(tmpDir, "service.json");
+  const pyArgs = [...python.args, SERVICE_PY, "--backend", "mock", "--transport", "http", "--service-file", serviceFile];
+  const first = spawn(python.command, pyArgs, { windowsHide: true, stdio: "ignore" });
+  let third;
+  try {
+    const deadline = Date.now() + 10000;
+    while (!fs.existsSync(serviceFile) && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    assert.ok(fs.existsSync(serviceFile), "first daemon should register");
+    const original = JSON.parse(fs.readFileSync(serviceFile, "utf8"));
+    assert.equal(original.pid, first.pid);
+
+    const second = spawnSync(python.command, pyArgs, { windowsHide: true, encoding: "utf8", timeout: 5000 });
+    assert.equal(second.status, 3, second.stderr);
+    assert.match(second.stderr, /already owned by another process/);
+    assert.deepEqual(JSON.parse(fs.readFileSync(serviceFile, "utf8")), original);
+
+    first.kill("SIGTERM");
+    const exitDeadline = Date.now() + 10000;
+    while (first.exitCode === null && first.signalCode === null && Date.now() < exitDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    assert.ok(first.exitCode !== null || first.signalCode !== null, "first daemon should exit");
+
+    third = spawn(python.command, pyArgs, { windowsHide: true, stdio: "ignore" });
+    const nextDeadline = Date.now() + 10000;
+    while ((!fs.existsSync(serviceFile) || JSON.parse(fs.readFileSync(serviceFile, "utf8")).pid !== third.pid) && Date.now() < nextDeadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    assert.equal(JSON.parse(fs.readFileSync(serviceFile, "utf8")).pid, third.pid, "lock should be reusable after exit");
+  } finally {
+    if (third) third.kill("SIGTERM");
+    first.kill("SIGTERM");
+    const deadline = Date.now() + 5000;
+    while ((first.exitCode === null && first.signalCode === null || third && third.exitCode === null && third.signalCode === null) && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });
@@ -677,6 +723,54 @@ test("Secure token delivery via --token-file deletes temporary file on startup",
   }
 });
 
+test("service detaches output pipes before post-start model logging", async () => {
+  const script = [
+    "import sys, time",
+    `sys.path.insert(0, ${JSON.stringify(path.dirname(SERVICE_PY))})`,
+    "from service import redirect_stdio_to_devnull",
+    "print('startup-ready', flush=True)",
+    "redirect_stdio_to_devnull()",
+    "time.sleep(0.05)",
+    "print('late-stdout', flush=True)",
+    "print('late-stderr', file=sys.stderr, flush=True)"
+  ].join("\n");
+  const child = spawn(python.command, [...python.args, "-c", script], {
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+    env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" }
+  });
+  let output = "";
+  let detached = false;
+  const result = await new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      child.kill();
+      reject(new Error("Python output-detach test timed out"));
+    }, 10000);
+    child.stdout.on("data", (chunk) => {
+      output += chunk.toString();
+      if (!detached && output.includes("startup-ready")) {
+        detached = true;
+        // Mirror laya-service.mjs closing its startup readers after health.
+        child.stdout.destroy();
+        child.stderr.destroy();
+      }
+    });
+    child.stderr.on("data", (chunk) => { output += chunk.toString(); });
+    child.once("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.once("exit", (code, signal) => {
+      clearTimeout(timeout);
+      resolve({ code, signal });
+    });
+  });
+
+  assert.equal(detached, true, `startup output was not received: ${output}`);
+  assert.deepEqual(result, { code: 0, signal: null });
+  assert.doesNotMatch(output, /late-(?:stdout|stderr)/);
+});
+
 test("Node management CLI start, status, and stop workflow with mock backend", async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "laya-cli-test-"));
   const serviceFile = path.join(tmpDir, ".laya", "service.json");
@@ -1026,7 +1120,7 @@ test("uninstallCommand with --purge-cache only purges Laya model directories, pr
   }
 });
 
-test("inference semaphore is non-blocking and concurrent overlapping requests immediately receive 503 (P1-5)", async () => {
+test("inference semaphore queues briefly, then answers 503 quickly under a pile-up (P1-5)", async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "laya-conc-test-"));
   const serviceFile = path.join(tmpDir, "service.json");
   const pidFile = path.join(tmpDir, "daemon.pid");
@@ -1071,8 +1165,9 @@ test("inference semaphore is non-blocking and concurrent overlapping requests im
 
     assert.ok(okCount >= 1, "At least one request should succeed");
     assert.equal(statuses.every((s) => s === 200 || s === 503), true, "All responses must be 200 or 503");
-    // All requests must return quickly without waiting 3s per request
-    assert.ok(durationMs < 2000, `Requests must finish rapidly, took ${durationMs}ms`);
+    // Bounded wait (1 s cap per request): the pile-up still resolves quickly
+    assert.ok(durationMs < 2500, `Requests must finish rapidly, took ${durationMs}ms`);
+    assert.ok(okCount >= 5, `Overlapping requests should mostly queue and succeed, got ${okCount}/10`);
 
   } finally {
     try { pyProc.kill("SIGKILL"); } catch {}
@@ -1324,4 +1419,100 @@ test("laya-service parseArgs parses all CLI arguments including --port", () => {
   assert.equal(res.options.recovery, true);
   assert.equal(res.options.force, true);
   assert.equal(res.options.purgeCache, true);
+});
+
+test("MLX backend never passes a null/empty project_id to the model as the string \"None\"", () => {
+  const script = String.raw`
+import runpy, sys, types
+states = []
+class FakeAgent:
+    def predict(self, state, questions):
+        states.append(dict(state))
+        return {"answers": {"requires_memory": {"probabilities": {"yes": 0.5}, "confidence": 0.5}}}
+sys.modules["laya_mlx"] = types.SimpleNamespace(load=lambda name: FakeAgent())
+ns = runpy.run_path(sys.argv[1])
+backend = ns["MlxBackend"]("test-model")
+for ctx in (None, {}, {"project_id": None}, {"project_id": ""}, {"project_id": "   "}):
+    backend.predict("t", ctx)
+backend.predict("t", {"project_id": "demo-app"})
+need_calls = [s for s in states if "task" not in s]
+detail_calls = [s for s in states if "task" in s]
+# The memory-need question is always asked on the bare text only.
+assert all(set(s) == {"text"} for s in need_calls) and len(need_calls) == 6, states
+assert all("project_id" not in s for s in detail_calls[:5]), states
+assert detail_calls[5]["project_id"] == "demo-app", states
+print("project_id sanitization passed")
+`;
+  const result = spawnSync(python.command, [...python.args, "-c", script, SERVICE_PY], { encoding: "utf8", windowsHide: true });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /project_id sanitization passed/);
+});
+
+test("--preload warms the model in the background right after the service starts", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "laya-preload-test-"));
+  const serviceFile = path.join(tmpDir, "service.json");
+  const token = "preload-test-token-1234567890";
+  const pyProc = spawn(python.command, [
+    ...python.args, SERVICE_PY, "--backend", "mock", "--preload", "--idle-unload-seconds", "0",
+    "--service-file", serviceFile, "--token", token, "--port", "0"
+  ], { windowsHide: true, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, LAYA_MOCK_LOAD_DELAY: "0.5" } });
+  let stderrData = "";
+  pyProc.stderr.on("data", (d) => { stderrData += d.toString(); });
+  try {
+    const started = Date.now();
+    while (!fs.existsSync(serviceFile) && Date.now() - started < 10000) await new Promise((r) => setTimeout(r, 50));
+    const { endpoint } = JSON.parse(fs.readFileSync(serviceFile, "utf8"));
+    const seen = new Set();
+    let ready = false;
+    while (Date.now() - started < 10000) {
+      const health = await (await fetch(`${endpoint}/health`, { headers: { Authorization: `Bearer ${token}` } })).json();
+      seen.add(health.model_status);
+      if (health.model_status === "ready") { ready = true; break; }
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    assert.ok(ready, `model never became ready without a request; saw ${[...seen]} ${stderrData}`);
+    // No inference request was sent: readiness came from the preload thread.
+    const t = Date.now();
+    const res = await fetch(`${endpoint}/judge/recall`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ text: "hello there friend" }) });
+    assert.equal(res.status, 200);
+    assert.ok(Date.now() - t < 400, "first request after preload must not pay the load delay");
+  } finally {
+    try { pyProc.kill("SIGTERM"); } catch {}
+    await new Promise((r) => { if (pyProc.exitCode !== null) return r(); const timer = setTimeout(r, 1500); pyProc.once("exit", () => { clearTimeout(timer); r(); }); });
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("laya start preloads by default and --no-preload opts out", () => {
+  assert.equal(parseArgs(["start"]).options.preload, undefined);
+  assert.equal(parseArgs(["start", "--no-preload"]).options.preload, false);
+  assert.equal(parseArgs(["start", "--preload"]).options.preload, true);
+  const src = fs.readFileSync(fileURLToPath(new URL("../scripts/laya-service.mjs", import.meta.url)), "utf8");
+  assert.match(src, /const preload = args\.preload \?\? true;/);
+  assert.match(src, /\.\.\.\(preload \? \["--preload"\] : \[\]\)/);
+});
+
+test("recall asks the tuned three-way memory-need question alone and maps project_history to requires_memory", () => {
+  const script = String.raw`
+import runpy, sys, types
+calls = []
+class FakeAgent:
+    def predict(self, state, questions):
+        calls.append((dict(state), sorted(questions)))
+        if "memory_need" in questions:
+            return {"answers": {"memory_need": {"probabilities": {"project_history": 0.83, "self_contained": 0.15, "chitchat": 0.02}, "confidence": 0.8}}}
+        return {"answers": {"scope": {"probabilities": {"project": 0.7, "global": 0.2, "unknown": 0.1}},
+                            "category": {"probabilities": {"pitfall": 0.1, "decision": 0.8, "knowledge": 0.1}, "confidence": 0.9}}}
+sys.modules["laya_mlx"] = types.SimpleNamespace(load=lambda name: FakeAgent())
+ns = runpy.run_path(sys.argv[1])
+out = ns["MlxBackend"]("m").predict("what did we decide about retries?", {"project_id": "demo"})
+assert calls[0] == ({"text": "what did we decide about retries?"}, ["memory_need"]), calls
+assert calls[1][1] == ["category", "scope"] and calls[1][0]["project_id"] == "demo", calls
+assert abs(out["requires_memory"] - 0.83) < 1e-9 and abs(out["confidence"] - 0.8) < 1e-9, out
+assert out["scope"]["project"] == 0.7 and out["categories"]["decision"] == 0.8, out
+print("three-way recall mapping passed")
+`;
+  const result = spawnSync(python.command, [...python.args, "-c", script, SERVICE_PY], { encoding: "utf8", windowsHide: true });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /three-way recall mapping passed/);
 });

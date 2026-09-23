@@ -22,8 +22,12 @@ SKILL_PATH = Path(__file__).parent / "skills" / SKILL_NAME / "SKILL.md"
 SECTION_ID = "obsidian-memory-plugin.workflow"
 TRIGGER_INSTRUCTION = (
     "For code tasks, use the obsidian-memory skill before working and when "
-    "persisting durable project memory."
+    "persisting durable project memory, unless this turn's Obsidian Memory hint "
+    "says memory is not needed."
 )
+# Keep in sync with HOST_HOOK_TIMEOUT_SECONDS in lib/config.js: must exceed
+# Node startup + healthTimeout + coldStartTimeout of the router.
+HOST_HOOK_TIMEOUT_SECONDS = 10
 _PROJECT_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 
 
@@ -130,7 +134,7 @@ def _evaluate_router(user_message: str, project_id: str | None, mode: str) -> di
             input=payload,
             text=True,
             capture_output=True,
-            timeout=5
+            timeout=HOST_HOOK_TIMEOUT_SECONDS
         )
         if proc.returncode != 0:
             LOGGER.warning("Memory router CLI exited with code %d: %s", proc.returncode, proc.stderr)
@@ -150,7 +154,7 @@ def _evaluate_router(user_message: str, project_id: str | None, mode: str) -> di
             }
         return json.loads(proc.stdout)
     except subprocess.TimeoutExpired:
-        LOGGER.warning("Memory router evaluation timed out after 5s")
+        LOGGER.warning("Memory router evaluation timed out after %ss", HOST_HOOK_TIMEOUT_SECONDS)
         return {
             "recallRecommended": False,
             "captureRecommended": False,
