@@ -861,7 +861,43 @@ export function parseArgs(argv) {
   return { command, options };
 }
 
+// Everyday loop: `laya label` -> `laya train` (retrains and restarts the service). The rest are for
+// measuring or tuning. Each forwards its arguments to the script that `npm run laya:<name>` also runs.
+export const TOOL_COMMANDS = Object.freeze({
+  label: "label-laya.mjs",
+  train: "train-laya.mjs",
+  eval: "eval-laya.mjs",
+  bench: "bench-laya.mjs",
+  tune: "tune-laya.mjs",
+  "calibrate-vault": "calibrate-vault-hints.mjs",
+  doctor: "doctor.mjs"
+});
+
+const TOOL_HELP = `Service:   laya install | start | stop | status | uninstall
+Everyday:  laya label            label logged prompts (y look up / c save / n none / x can't tell)
+           laya train            retrain the recall head from your labels, then restart the service
+Check:     laya doctor           where each host is installed and which Vault it uses
+           laya eval             accuracy on a labelled set (--data file --vault dir --errors)
+Advanced:  laya tune             compare Laya question wordings
+           laya calibrate-vault  calibrate Vault-hint thresholds
+           laya bench            end-to-end latency benchmark
+`;
+
+function runTool(name, rest) {
+  const script = fileURLToPath(new URL(`./${TOOL_COMMANDS[name]}`, import.meta.url));
+  const result = spawnSync(process.execPath, [script, ...rest], { stdio: "inherit", env: process.env });
+  return result.status ?? 1;
+}
+
 export async function run() {
+  const [first, ...rest] = process.argv.slice(2);
+  if (first === "help" || first === "--help" || first === "-h") {
+    process.stdout.write(TOOL_HELP);
+    return;
+  }
+  if (Object.hasOwn(TOOL_COMMANDS, first)) {
+    process.exit(runTool(first, rest));
+  }
   const { command, options } = parseArgs(process.argv.slice(2));
 
   try {
@@ -876,7 +912,7 @@ export async function run() {
     } else if (command === "uninstall") {
       await uninstallCommand(options);
     } else {
-      process.stderr.write(`Unknown command: ${command}. Use install, start, stop, status, or uninstall.\n`);
+      process.stderr.write(`Unknown command: ${command}.\n${TOOL_HELP}`);
       process.exit(1);
     }
   } catch (err) {

@@ -100,8 +100,8 @@ test("OpenClaw runtime appends recall recommendation on user trigger when Laya t
     assert.ok(res.prependContext.includes("/my/test/vault"));
 
     // 3. Recall recommendation is appended before [End Obsidian Memory]
-    assert.ok(res.prependContext.includes("[Laya Memory Judge: recall recommended (scope: project). Read the obsidian-memory skill, then search the Vault before proceeding.]"));
-    const judgeIdx = res.prependContext.indexOf("[Laya Memory Judge");
+    assert.ok(res.prependContext.includes("[Obsidian Memory hint: look up memory first (scope: project). Read the obsidian-memory skill and follow its Recall steps before proceeding.]"));
+    const judgeIdx = res.prependContext.indexOf("[Obsidian Memory hint");
     const endIdx = res.prependContext.indexOf("[End Obsidian Memory]");
     assert.ok(judgeIdx < endIdx, "Laya suggestion must be placed before [End Obsidian Memory]");
 
@@ -182,7 +182,7 @@ test("OpenClaw runtime maintains base guidance only when Laya fails", async () =
   }
 });
 
-test("OpenClaw runtime appends proactive capture recommendation when Laya detects high-value pitfall", async () => {
+test("OpenClaw runtime: a pitfall-looking model answer adds no save hint; an explicit remember request does", async () => {
   const origFetch = globalThis.fetch;
   const CAPTURE_PITFALL_JSON = JSON.stringify({
     requires_memory: 0.42 /* uncertain band: capture allowed */,
@@ -225,18 +225,15 @@ test("OpenClaw runtime appends proactive capture recommendation when Laya detect
       }
     });
 
-    const promise = hook(
+    const res = await hook(
       { prompt: "排查发现在 macOS 下不能通过 PID 强杀，因为 PID 复用会导致误杀，必须通过 /shutdown 停机。" },
       { agentId: "owner", trigger: "user" }
     );
-    const res = await promise;
-
     assert.ok(res.prependContext.includes("[Obsidian Memory]"));
-    assert.ok(res.prependContext.includes("[End Obsidian Memory]"));
-    assert.ok(
-      res.prependContext.includes("[Laya Memory Judge: high-value pitfall detected (scope: project). Proactively stage candidate note to project inbox/ with status: pending-ingest upon concluding task.]"),
-      "Must include pitfall proactive capture instruction"
-    );
+    assert.ok(!res.prependContext.includes("asked to save"), "the model's category answer must not produce a save hint");
+
+    const explicit = await hook({ prompt: "记住：发布前必须先跑 npm test" }, { agentId: "owner", trigger: "user" });
+    assert.ok(explicit.prependContext.includes("[Obsidian Memory hint: the user asked to save something (scope: project). Read the obsidian-memory skill and follow its capture rules: stage a pending-ingest candidate in the project inbox/; do not ingest.]"));
 
     if (dispose) dispose();
   } finally {

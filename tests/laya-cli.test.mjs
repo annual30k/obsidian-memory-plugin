@@ -54,7 +54,7 @@ test("CLI tool with --stdin reads plain text from Readable stream", async () => 
   const parsed = JSON.parse(output);
   assert.equal(parsed.recallRecommended, true);
   assert.equal(parsed.reason, "explicit_recall_intent");
-  assert.ok(parsed.guidanceAppend.includes("recall recommended"));
+  assert.ok(parsed.guidanceAppend.includes("look up memory first"));
 });
 
 test("CLI tool with --stdin reads structured JSON from Readable stream", async () => {
@@ -281,7 +281,7 @@ test("CLI tool outputs proactive capture recommendation on explicit remember dir
   assert.equal(parsed.recallRecommended, false);
   assert.equal(parsed.captureRecommended, true);
   assert.equal(parsed.captureCategory, "decision");
-  assert.ok(parsed.guidanceAppend.includes("high-value decision detected"));
+  assert.ok(parsed.guidanceAppend.includes("the user asked to save something"));
   assert.ok(parsed.guidanceAppend.includes("pending-ingest"));
 });
 

@@ -223,7 +223,7 @@ test("Codex hook execution with isolated offline mock: Fast-path recall, auto fa
   assert.equal(res1.status, 0);
   const parsed1 = JSON.parse(res1.stdout);
   assert.equal(parsed1.hookSpecificOutput?.hookEventName, "UserPromptSubmit");
-  assert.match(parsed1.hookSpecificOutput?.additionalContext, /recall recommended/);
+  assert.match(parsed1.hookSpecificOutput?.additionalContext, /look up memory first/);
   const stderrTrace1 = JSON.parse(res1.stderr.trim().split("\n").pop());
   assert.equal(stderrTrace1.hookExecuted, true);
   assert.equal(stderrTrace1.route, "fast_path");
@@ -335,7 +335,7 @@ test("Antigravity hook: JSONL parsing, invocation idempotency, atomic cache, and
   assert.equal(res1.status, 0);
   const parsed1 = JSON.parse(res1.stdout);
   assert.ok(parsed1.injectSteps, "First call must inject steps");
-  assert.match(parsed1.injectSteps[0].ephemeralMessage, /recall recommended/);
+  assert.match(parsed1.injectSteps[0].ephemeralMessage, /look up memory first/);
   const stderrTrace1 = JSON.parse(res1.stderr.trim().split("\n").pop());
   assert.equal(stderrTrace1.hookExecuted, true);
   assert.doesNotMatch(res1.stderr, /回忆一下上次/, "stderr audit trace must be sanitized without prompt text");
@@ -485,7 +485,7 @@ test("OpenClaw v2026.9.2: real lifecycle order with official event shapes ({prom
 
   // Step A: before_prompt_build runs first
   const promptBuildResult = await registeredHandlers.before_prompt_build(promptBuildEvent1, turn1Context);
-  assert.match(promptBuildResult.prependContext, /recall recommended/);
+  assert.match(promptBuildResult.prependContext, /look up memory first/);
   assert.equal(layaCalls, 1, "before_prompt_build calls Laya evaluation once");
   assert.equal(inspect.turnDecisionCache.size, 1, "Decision must be stored in cache for before_agent_run");
 
@@ -585,7 +585,7 @@ test("OpenClaw non-user triggers (heartbeat, cron, system) bypass Laya, while mi
     { prompt: "periodic health ping" },
     { agentId: "agent-1", trigger: "heartbeat", runId: "hb-1" }
   );
-  assert.doesNotMatch(hbBuild.prependContext, /recall recommended/, "Heartbeat must not inject recall guidance");
+  assert.doesNotMatch(hbBuild.prependContext, /look up memory first/, "Heartbeat must not inject recall guidance");
   assert.equal(layaCalls, 0, "Heartbeat must not call Laya in before_prompt_build");
 
   const hbRun = await registeredHandlers.before_agent_run(
@@ -614,7 +614,7 @@ test("OpenClaw non-user triggers (heartbeat, cron, system) bypass Laya, while mi
     { prompt: "How do we configure database pooling?" },
     { agentId: "agent-1", runId: "user-run-1" } // Note: trigger field is omitted
   );
-  assert.match(normalBuild.prependContext, /recall recommended/, "Missing trigger must route normally");
+  assert.match(normalBuild.prependContext, /look up memory first/, "Missing trigger must route normally");
   assert.equal(layaCalls, 1, "Missing trigger must evaluate via Laya");
 });
 
@@ -646,7 +646,7 @@ test("OpenClaw currentUserMessage optional enhancement and empty-string preceden
     { currentUserMessage: "", prompt: "historical prompt that should NOT be used" },
     { agentId: "agent-1", runId: "run-empty" }
   );
-  assert.doesNotMatch(emptyRes.prependContext, /recall recommended/, "Explicit empty currentUserMessage must not trigger recall");
+  assert.doesNotMatch(emptyRes.prependContext, /look up memory first/, "Explicit empty currentUserMessage must not trigger recall");
 
   // 2. currentUserMessage with string text is prioritized
   await registeredHandlers.before_prompt_build(
@@ -701,7 +701,7 @@ test("OpenClaw strictly ignores historical event.messages and does not trigger L
   assert.equal(layaCalls, 0, "Laya must NOT be triggered by historical messages when prompt is absent");
   assert.ok(res.prependContext.includes("[Obsidian Memory]"));
   assert.ok(!res.prependContext.includes("[Laya Memory Judge]"));
-  assert.doesNotMatch(res.prependContext, /recall recommended/);
+  assert.doesNotMatch(res.prependContext, /look up memory first/);
 
   // Similarly in before_agent_run, must pass without blocking or calling Laya
   const runRes = await registeredHandlers.before_agent_run(
@@ -808,7 +808,7 @@ print(json.dumps({
     { encoding: "utf8" }
   );
   const res = JSON.parse(output.trim().split("\n").pop());
-  assert.match(res.recall_context, /recall recommended/);
+  assert.match(res.recall_context, /look up memory first/);
   // Greetings are confidently self-contained: Hermes now gets an explicit "memory not needed" hint.
   assert.match(res.greeting.context, /not needed for this turn/);
   assert.deepEqual(res.strict_result, {}, "Hermes strict mode must gracefully degrade to auto fail-open when offline");

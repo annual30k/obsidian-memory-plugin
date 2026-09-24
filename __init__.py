@@ -20,11 +20,8 @@ PLUGIN_ID = "obsidian-memory-plugin"
 SKILL_NAME = "obsidian-memory"
 SKILL_PATH = Path(__file__).parent / "skills" / SKILL_NAME / "SKILL.md"
 SECTION_ID = "obsidian-memory-plugin.workflow"
-TRIGGER_INSTRUCTION = (
-    "For code tasks, use the obsidian-memory skill before working and when "
-    "persisting durable project memory, unless this turn's Obsidian Memory hint "
-    "says memory is not needed."
-)
+# The always-on rule shared with the Node adapters; single source: lib/guidance.json.
+TRIGGER_INSTRUCTION = json.loads((Path(__file__).parent / "lib" / "guidance.json").read_text(encoding="utf-8"))["trigger"]
 # Keep in sync with HOST_HOOK_TIMEOUT_SECONDS in lib/config.js: must exceed
 # Node startup + healthTimeout + coldStartTimeout of the router.
 HOST_HOOK_TIMEOUT_SECONDS = 10

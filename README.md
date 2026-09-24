@@ -4,6 +4,7 @@
 
 将已有的 **obsidian-memory Skill 内置到 Antigravity、OpenClaw、Codex 与 Hermes 插件**。
 插件负责加载入口与元数据配置；当前 Agent 按内置 Skill 建设与维护自生长知识库。
+整体分层、名词表（"查记忆提示 / 召回 / 记忆需求分"各指什么）和"写入由谁决定"见 [ARCHITECTURE.md](ARCHITECTURE.md)。
 
 ## 包含与依赖
 
@@ -459,7 +460,6 @@ npm run laya:uninstall
     "recallThreshold": 0.50,
     "captureThreshold": 0.75,
     "proactiveCapture": true,
-    "layaCapture": false,
     "timeout": 1000,
     "coldStartTimeout": 7500
   }
@@ -488,13 +488,14 @@ npm run laya:uninstall
 
 ### 按判断结果决定是否加载记忆（门控）
 
-每轮判断结果分四种，决定注入什么：
+每轮判断结果分四种，决定注入哪一行 `[Obsidian Memory hint: …]`（它只是本轮的建议，读写什么仍由 Skill 的规则决定）：
 
-| 判断 | 条件 | 注入内容 |
+| 判断 | 条件 | 注入的提示 |
 |---|---|---|
-| `recall` / `capture` | 显式说法，或 Laya 分数 ≥ `recallThreshold`（0.50） | 完整工作流 + 召回/暂存提示 |
-| `skip` | 问候、含密钥的提示，或 Laya 分数 < `skipThreshold`（0.35） | 一句"本轮不需要记忆，不要加载 skill 或检索 Vault，除非用户明确问起" |
-| `default` | 分数在两者之间、Laya 不可用、strict 阻断等 | 与以前相同的常驻工作流（保守） |
+| `recall` | 明确说法（"还记得""去 obsidian 查"），或记忆需求分 ≥ `recallThreshold`（0.50） | 先查记忆：读 Skill，按其召回步骤检索 |
+| `capture` | 只来自用户明确要求保存（"记住……""写到 agent.md""记录一下这个坑"） | 用户要求保存：按 Skill 的暂存规则写 inbox 候选，不入库 |
+| `skip` | 问候、含密钥的提示，或记忆需求分 < `skipThreshold`（0.35） | 本轮不需要记忆：不加载 Skill、不检索 Vault，除非用户明确问起 |
+| `default` | 分数在两者之间、Laya 不可用、strict 阻断等 | 不加提示，按常驻工作流自行判断（保守） |
 
 `skip` 省下的是本轮读取 SKILL.md（约 4.5k tokens）和 Vault 检索；OpenClaw 同时把每轮约 230 tokens 的指引换成约 80 tokens 的短句。Codex / Antigravity / Hermes 的常驻规则已改为"……除非本轮的 Obsidian Memory 提示说明不需要记忆"，已安装用户需重新运行 `npm run setup:codex` / `npm run setup:antigravity` 更新 AGENTS.md / GEMINI.md 中的受管区块；Laya 未运行时不会出现 skip 提示，行为与以前一致。
 
@@ -515,6 +516,8 @@ Laya 只看提示文本，不知道 Vault 里已经有哪些笔记。插件会�
 ### 判断记录与标注（decisionLog）
 
 各宿主的每轮判断会追加到本机 `~/.laya/decisions.jsonl`（权限 0600，只在本机，超过 5 MB 轮转；含密钥的提示不记录原文）。某轮被跳过后用户紧接着问"之前/上次……"时，会把那一轮标记为疑似漏判。设 `OBSIDIAN_MEMORY_DECISION_LOG=off` 或 `decisionLog: false` 关闭。
+
+日常只需两步：`laya label` 标注新积累的提示，`laya train` 重新训练并自动重启服务（`laya help` 列出全部子命令；对应的 `npm run laya:*` 仍可用）。`laya doctor`（或 `npm run doctor`）只读地列出四个宿主各自的插件版本、安装方式和 Vault 路径，路径不一致、插件落后、软链接到开发目录、Codex 钩子重复注册都会标出来。
 
 ```sh
 npm run laya:label -- --stats   # 统计：各判断数量、补判断次数、疑似漏判
@@ -560,7 +563,7 @@ npm run laya:train -- --test blind.jsonl            # 另附一份从未参与�
 
 ### 评估 Laya 召回准确率
 
-召回判断使用经 `npm run laya:tune` 在真实 MLX 模型上选出的三选一提问（需要项目历史 / 自成一体的请求 / 闲聊），单独提问、只看原始文本；默认 `recallThreshold` 为 0.50。在 40 条未参与调优的提示上，误判为"需要查 Vault"的比例从旧提问的 70% 降到 5%，召回约 60%。"照老规矩""和上次一样""the way we agreed"等明确引用过往约定的说法由 Fast-Path 直接判定。换模型或换提问后请重新运行 `npm run laya:tune` 校准。明确的"记住……""写到 agent.md"由 Fast-Path 判定为 capture；Laya 按分类自行建议 capture 默认关闭（`layaCapture: false`）：在 735 条未见过的真实提示上它触发 40 次，没有一次是真的要保存内容。`captureThreshold` 只在 `layaCapture: true` 时生效，尚未校准。启动 Laya 服务后运行：
+召回判断使用经 `npm run laya:tune` 在真实 MLX 模型上选出的三选一提问（需要项目历史 / 自成一体的请求 / 闲聊），单独提问、只看原始文本；默认 `recallThreshold` 为 0.50。在 40 条未参与调优的提示上，误判为"需要查 Vault"的比例从旧提问的 70% 降到 5%，召回约 60%。"照老规矩""和上次一样""the way we agreed"等明确引用过往约定的说法由 Fast-Path 直接判定。换模型或换提问后请重新运行 `npm run laya:tune` 校准。每轮的 capture 提示只来自用户明确要求（Fast-Path）；模型按分类自行建议 capture 已移除：在 735 条未见过的真实提示上它触发 40 次，没有一次是真的要保存内容（旧配置里的 `layaCapture` 仍被接受但不起作用）。`captureThreshold` 只用于 Skill 在任务结束时可选调用的 `obsidian-memory-laya-judge --capture`，尚未校准。启动 Laya 服务后运行：
 
 ```sh
 npm run laya:eval

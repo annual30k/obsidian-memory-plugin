@@ -1256,107 +1256,6 @@ test("MemoryRouter _ensureHealthHandshake rejects health response if instance_id
   router.dispose();
 });
 
-test("MemoryRouter evaluates proactive capture when model detects high-confidence pitfall", async () => {
-  const mockFetch = async (url) => {
-    const u = String(url);
-    if (u.endsWith("/health")) {
-      return {
-        ok: true,
-        status: 200,
-        headers: new Map(),
-        text: async () => JSON.stringify({
-          service: "laya-memory-judge",
-          status: "ok",
-          api_version: "1",
-          model_status: "ready",
-          capabilities: ["recall"]
-        })
-      };
-    }
-    if (u.endsWith("/judge/recall")) {
-      return {
-        ok: true,
-        status: 200,
-        headers: new Map(),
-        text: async () => JSON.stringify({
-          requires_memory: 0.42 /* uncertain band: capture allowed */,
-          confidence: 0.88,
-          scope: { project: 0.95 },
-          categories: { pitfall: 0.92, decision: 0.05, knowledge: 0.03 }
-        })
-      };
-    }
-    throw new Error("Unexpected request: " + u);
-  };
-
-  const router = new MemoryRouter({
-    mode: "manual",
-    endpoint: "http://127.0.0.1:18791",
-    recallThreshold: 0.70,
-    captureThreshold: 0.75,
-    proactiveCapture: true, layaCapture: true
-  }, { fetch: mockFetch });
-
-  const res = await router.evaluateRecall("Some complex bug workaround discussion");
-  assert.equal(res.recallRecommended, false);
-  assert.equal(res.captureRecommended, true);
-  assert.equal(res.captureCategory, "pitfall");
-  assert.equal(res.reason, "laya_capture_recommended");
-  assert.equal(res.scope, "project");
-
-  router.dispose();
-});
-
-test("MemoryRouter evaluates proactive capture when model detects high-confidence decision", async () => {
-  const mockFetch = async (url) => {
-    const u = String(url);
-    if (u.endsWith("/health")) {
-      return {
-        ok: true,
-        status: 200,
-        headers: new Map(),
-        text: async () => JSON.stringify({
-          service: "laya-memory-judge",
-          status: "ok",
-          api_version: "1",
-          model_status: "ready",
-          capabilities: ["recall"]
-        })
-      };
-    }
-    if (u.endsWith("/judge/recall")) {
-      return {
-        ok: true,
-        status: 200,
-        headers: new Map(),
-        text: async () => JSON.stringify({
-          requires_memory: 0.42, /* uncertain band: capture allowed */
-          confidence: 0.91,
-          scope: { project: 0.90 },
-          categories: { pitfall: 0.02, decision: 0.95, knowledge: 0.03 }
-        })
-      };
-    }
-    throw new Error("Unexpected request: " + u);
-  };
-
-  const router = new MemoryRouter({
-    mode: "manual",
-    endpoint: "http://127.0.0.1:18791",
-    recallThreshold: 0.70,
-    captureThreshold: 0.75,
-    proactiveCapture: true, layaCapture: true
-  }, { fetch: mockFetch });
-
-  const res = await router.evaluateRecall("Architectural decision on backend implementation");
-  assert.equal(res.recallRecommended, false);
-  assert.equal(res.captureRecommended, true);
-  assert.equal(res.captureCategory, "decision");
-  assert.equal(res.reason, "laya_capture_recommended");
-
-  router.dispose();
-});
-
 test("MemoryRouter disables proactive capture when proactiveCapture is false", async () => {
   const mockFetch = async (url) => {
     const u = String(url);
@@ -1523,7 +1422,7 @@ test("a high Laya score on a general knowledge question does not recommend recal
   router.dispose?.();
 });
 
-test("by default the model's category answer does not suggest capture; explicit 'remember this' still does", async () => {
+test("the model's category answer never suggests capture (even with the deprecated layaCapture); explicit 'remember this' does", async () => {
   const mockFetch = async (url) => ({
     ok: true,
     status: 200,
@@ -1533,7 +1432,7 @@ test("by default the model's category answer does not suggest capture; explicit 
       scope: { project: 0.9 }, categories: { pitfall: 0.9, decision: 0.05, knowledge: 0.05 }
     }))
   });
-  const router = new MemoryRouter({ mode: "manual", endpoint: "http://127.0.0.1:18791" }, { fetch: mockFetch });
+  const router = new MemoryRouter({ mode: "manual", endpoint: "http://127.0.0.1:18791", layaCapture: true }, { fetch: mockFetch });
   const task = await router.evaluateRecall("帮我提交这两份有修改的文件夹到git远程仓库");
   assert.equal(task.captureRecommended, false);
   assert.equal(task.memoryAction, "default");
