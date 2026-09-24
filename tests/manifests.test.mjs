@@ -50,3 +50,29 @@ test("every `laya <tool>` subcommand forwards to an existing script that npm run
     assert.ok(Object.values(scripts).some((cmd) => cmd.includes(`scripts/${file}`)), `npm script for ${file}`);
   }
 });
+
+test("the OpenClaw config schema only uses keywords the OpenClaw settings form can render", async () => {
+  // Mirrors the keyword allow-list of OpenClaw's control-ui schema normalizer (config-form). Anything
+  // else (a root anyOf of required-combinations, minProperties/maxProperties, ...) turns the whole
+  // plugin config into "Unsupported schema node. Use Raw mode." The rules those keywords expressed are
+  // enforced at load time by lib/config.js parseConfigs instead.
+  const allowed = new Set(["$id", "$schema", "title", "description", "default", "deprecated", "nullable", "examples",
+    "readOnly", "writeOnly", "tags", "const", "required", "additionalProperties", "minimum", "maximum",
+    "exclusiveMinimum", "exclusiveMaximum", "multipleOf", "minLength", "maxLength", "pattern", "format",
+    "minItems", "maxItems", "uniqueItems", "type", "properties", "items", "enum"]);
+  const bad = [];
+  (function walk(node, at) {
+    if (!node || typeof node !== "object") return;
+    for (const key of Object.keys(node)) if (!allowed.has(key)) bad.push(`${at}.${key}`);
+    for (const [k, v] of Object.entries(node.properties ?? {})) walk(v, `${at}.${k}`);
+    if (typeof node.additionalProperties === "object") walk(node.additionalProperties, `${at}.*`);
+    if (node.items) walk(node.items, `${at}[]`);
+  })(JSON.parse(read("openclaw.plugin.json")).configSchema, "configSchema");
+  assert.deepEqual(bad, []);
+
+  const { parseConfigs } = await import("../lib/config.js");
+  assert.throws(() => parseConfigs({ agentConfigs: {} }), /must not be empty/u);
+  assert.throws(() => parseConfigs({ agentConfigs: { main: { vaultPath: "/v" } }, vaultPath: "/v" }), /only connection config field/u);
+  assert.throws(() => parseConfigs({ vaultPath: "/v" }), /agentId/u);
+  assert.equal(parseConfigs({}).size, 0);
+});

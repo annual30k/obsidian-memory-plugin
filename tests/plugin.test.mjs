@@ -171,7 +171,10 @@ test("native manifest and entry agree without claiming a memory slot", () => {
   assert.match(hermesManifest, new RegExp(`^version: ${pkg.version.replaceAll(".", "\\.")}$`, "m"));
   assert.match(hermesManifest, /^  vault_path:$/m);
   assert.match(read("skills/obsidian-memory/SKILL.md"), /^metadata:\n  icon: "💎"$/m);
-  assert.deepEqual(manifest.configSchema.anyOf[1].required, ["agentId", "vaultPath"]);
+  // agentId + vaultPath / agentConfigs exclusivity is enforced by parseConfigs at load, not by a root
+  // anyOf the OpenClaw settings form cannot render (see tests/manifests.test.mjs).
+  assert.equal(manifest.configSchema.anyOf, undefined);
+  assert.ok(manifest.configSchema.properties.agentId && manifest.configSchema.properties.vaultPath && manifest.configSchema.properties.agentConfigs);
   assert.deepEqual(manifest.skills, ["./skills"]);
   assert.equal(pkg.dependencies, undefined);
   assert.equal(pkg.peerDependencies, undefined);

@@ -8,12 +8,6 @@
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
-    "anyOf": [
-      { "maxProperties": 0 },
-      { "required": ["agentId", "vaultPath"] },
-      { "required": ["agentConfigs"] },
-      { "required": ["memoryJudge"] }
-    ],
     "properties": {
       "agentId": { "type": "string", "minLength": 1, "maxLength": 128 },
       "vault": { "type": "string", "minLength": 1, "maxLength": 256 },
@@ -25,7 +19,8 @@
       },
       "projectRoot": { "type": "string", "minLength": 1, "maxLength": 4096 },
       "agentConfigs": {
-        "type": "object", "minProperties": 1,
+        "type": "object",
+        "description": "Per-agent connection keyed by OpenClaw agent id. Use either this (non-empty) or top-level agentId + vaultPath; the plugin rejects an empty map or a mix when it loads.",
         "additionalProperties": {
           "type": "object", "additionalProperties": false,
           "required": ["vaultPath"],
