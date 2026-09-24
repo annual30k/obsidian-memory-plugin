@@ -564,7 +564,8 @@ test("long-lived router uses coldStartTimeout after the server idle-unload windo
     mode: "manual",
     endpoint: "http://127.0.0.1:18792",
     timeout: 1000,
-    coldStartTimeout: 5500
+    coldStartTimeout: 5500,
+    coldStart: "wait"
   }, {
     fetch: mockFetch,
     timers: mockTimers,
@@ -1293,7 +1294,7 @@ test("MemoryRouter evaluates proactive capture when model detects high-confidenc
     endpoint: "http://127.0.0.1:18791",
     recallThreshold: 0.70,
     captureThreshold: 0.75,
-    proactiveCapture: true
+    proactiveCapture: true, layaCapture: true
   }, { fetch: mockFetch });
 
   const res = await router.evaluateRecall("Some complex bug workaround discussion");
@@ -1344,7 +1345,7 @@ test("MemoryRouter evaluates proactive capture when model detects high-confidenc
     endpoint: "http://127.0.0.1:18791",
     recallThreshold: 0.70,
     captureThreshold: 0.75,
-    proactiveCapture: true
+    proactiveCapture: true, layaCapture: true
   }, { fetch: mockFetch });
 
   const res = await router.evaluateRecall("Architectural decision on backend implementation");
@@ -1451,7 +1452,7 @@ test("MemoryRouter prioritizes recallRecommended over captureRecommended", async
     endpoint: "http://127.0.0.1:18791",
     recallThreshold: 0.70,
     captureThreshold: 0.75,
-    proactiveCapture: true
+    proactiveCapture: true, layaCapture: true
   }, { fetch: mockFetch });
 
   const res = await router.evaluateRecall("User asking about previous architectural decision");
@@ -1470,9 +1471,73 @@ test("Laya capture is suppressed when the memory-need score marks the turn self-
       : { requires_memory: 0.05, confidence: 0.9, category_confidence: 0.95, scope: { project: 0.9 }, categories: { pitfall: 0.95, decision: 0.03, knowledge: 0.02 } };
     return { ok: true, status: 200, headers: new Map(), text: async () => JSON.stringify(body) };
   };
-  const router = new MemoryRouter({ mode: "manual", endpoint: "http://127.0.0.1:18791", proactiveCapture: true }, { fetch: mockFetch });
+  const router = new MemoryRouter({ mode: "manual", endpoint: "http://127.0.0.1:18791", proactiveCapture: true, layaCapture: true }, { fetch: mockFetch });
   const res = await router.evaluateRecall("Python 里怎么读取一个 CSV 文件并按列求和");
   router.dispose();
   assert.equal(res.captureRecommended, false);
   assert.equal(res.memoryAction, "skip");
+});
+
+test("a fast-path turn starts reloading an idle-unloaded model in the background", async () => {
+  let now = 100000;
+  const calls = [];
+  const mockFetch = async (url) => {
+    const u = String(url);
+    calls.push(u.replace(/^.*\//u, "/"));
+    const health = { service: "laya-memory-judge", status: "ok", api_version: "1", model_status: "ready", idle_unload_seconds: 10, capabilities: ["recall", "warmup"] };
+    if (u.endsWith("/health")) return { ok: true, status: 200, headers: new Map(), text: async () => JSON.stringify(health) };
+    if (u.endsWith("/warmup")) return { ok: true, status: 200, headers: new Map(), text: async () => JSON.stringify({ ...health, model_status: "loading", warming: true }) };
+    if (u.endsWith("/judge/recall")) return { ok: true, status: 200, headers: new Map(), text: async () => VALID_RECALL_JSON };
+    throw new Error("404");
+  };
+  const router = new MemoryRouter({ mode: "manual", endpoint: "http://127.0.0.1:18793" }, {
+    fetch: mockFetch, clock: () => now,
+    timers: { setTimeout: () => ({ id: 1 }), clearTimeout: () => {}, setInterval: () => ({ unref() {} }), clearInterval: () => {} }
+  });
+  await router.evaluateRecall("An ambiguous first request");
+  assert.deepEqual(calls, ["/health", "/recall"]);
+  calls.length = 0;
+  await router.evaluateRecall("你好");
+  assert.deepEqual(calls, [], "a warm model is left alone");
+  now += 10001;
+  await router.evaluateRecall("你好");
+  assert.deepEqual(calls, ["/warmup"]);
+  router.dispose();
+});
+
+test("a high Laya score on a general knowledge question does not recommend recall", async () => {
+  const mockFetch = async (url) => ({
+    ok: true,
+    status: 200,
+    headers: new Map(),
+    text: async () => (String(url).endsWith("/health") ? VALID_HEALTH_JSON : VALID_RECALL_JSON)
+  });
+  const router = new MemoryRouter({ mode: "manual", endpoint: "http://127.0.0.1:18791", recallThreshold: 0.7 }, { fetch: mockFetch });
+  const generic = await router.evaluateRecall("Android 的 versionName 和 versionCode 有什么区别");
+  assert.equal(generic.recallRecommended, false);
+  assert.equal(generic.captureRecommended, false);
+  assert.equal(generic.reason, "generic_question");
+  assert.equal(generic.memoryAction, "default");
+  const own = await router.evaluateRecall("Android 发版时 versionCode 按我们的流程要怎么改");
+  assert.equal(own.recallRecommended, true);
+  router.dispose?.();
+});
+
+test("by default the model's category answer does not suggest capture; explicit 'remember this' still does", async () => {
+  const mockFetch = async (url) => ({
+    ok: true,
+    status: 200,
+    headers: new Map(),
+    text: async () => (String(url).endsWith("/health") ? VALID_HEALTH_JSON : JSON.stringify({
+      requires_memory: 0.45, confidence: 0.9, category_confidence: 0.95,
+      scope: { project: 0.9 }, categories: { pitfall: 0.9, decision: 0.05, knowledge: 0.05 }
+    }))
+  });
+  const router = new MemoryRouter({ mode: "manual", endpoint: "http://127.0.0.1:18791" }, { fetch: mockFetch });
+  const task = await router.evaluateRecall("帮我提交这两份有修改的文件夹到git远程仓库");
+  assert.equal(task.captureRecommended, false);
+  assert.equal(task.memoryAction, "default");
+  const explicit = await router.evaluateRecall("记住：这个项目的日志统一用 JSON 格式");
+  assert.equal(explicit.captureRecommended, true);
+  router.dispose?.();
 });

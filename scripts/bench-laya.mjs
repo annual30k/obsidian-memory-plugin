@@ -60,11 +60,13 @@ function parseArgs(argv) {
     else if (a === "--json") args.json = true;
     else if (a === "--keep") args.keep = true;
     else if (a === "--no-preload") args.preload = false;
+    else if (a === "--vault" && argv[i + 1]) args.vault = path.resolve(argv[++i]);
   }
   return args;
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+let BENCH_VAULT = null;
 const round = (n) => (n === null || n === undefined ? null : Math.round(n * 10) / 10);
 function stats(values) {
   if (!values.length) return null;
@@ -127,6 +129,10 @@ function hostEnv(home, mode, extra = {}) {
   const env = { ...process.env, HOME: home, USERPROFILE: home, PYTHONDONTWRITEBYTECODE: "1", ...extra };
   delete env.XDG_CACHE_HOME;
   delete env.LAYA_HOME;
+  delete env.CODEX_HOME;
+  delete env.OBSIDIAN_MEMORY_VAULT;
+  // --vault: host hooks also run the Vault-hint layer (read-only), so its cost is measured too.
+  if (BENCH_VAULT) env.OBSIDIAN_MEMORY_VAULT = BENCH_VAULT;
   env.OBSIDIAN_MEMORY_JUDGE_MODE = mode;
   env.OBSIDIAN_MEMORY_ROUTER_MODE = mode;
   env.OBSIDIAN_MEMORY_SERVICE_FILE = path.join(home, ".laya", "service.json");
@@ -212,6 +218,7 @@ async function waitForUnload(client, idleSeconds) {
 
 export async function runBench(argv = process.argv.slice(2)) {
   const args = parseArgs(argv);
+  BENCH_VAULT = args.vault ?? null;
   const log = (s) => { if (!args.json) process.stdout.write(s + "\n"); };
   const home = mkdtempSync(path.join(process.platform === "win32" ? os.tmpdir() : "/tmp", "laya-bench-"));
   const py = resolvePython(args);
@@ -303,12 +310,25 @@ export async function runBench(argv = process.argv.slice(2)) {
     const unload = await waitForUnload(svc.client, args.idle);
     report.idleUnload = { unloaded: unload.unloaded, observedAfterMs: round(unload.afterMs) };
     if (unload.unloaded) {
-      const codexCold = runCodex(home, "auto", HOST_PROMPTS[2].text);
-      const afterReload = await svc.client.healthCheck({ timeout: 1000 });
+      // Background cold start (default): the cold turn must return at once and trigger a reload.
+      // Use a prompt that needs Laya (not a fast-path one) so the cold path is exercised.
+      const codexCold = runCodex(home, "auto", HOST_PROMPTS[3].text);
+      const tReload = performance.now();
+      let afterReload = await svc.client.healthCheck({ timeout: 1000 });
+      while (afterReload.modelStatus !== "ready" && performance.now() - tReload < 60000) {
+        await sleep(100);
+        afterReload = await svc.client.healthCheck({ timeout: 1000 });
+      }
+      const reloadReadyMs = performance.now() - tReload + codexCold.ms;
+      const codexNext = runCodex(home, "auto", "把这段 SQL 改写成使用 JOIN 的形式");
       const warmAgain = await timedJudge(svc.client, HOST_PROMPTS[3].text);
-      report.reload = { codexHookColdMs: round(codexCold.ms), codexRoute: codexCold.route, codexDecision: codexCold.injected, modelStatusAfter: afterReload.modelStatus, nextWarmInferenceMs: round(warmAgain.ms) };
-      log(`  unloaded after ${round(unload.afterMs)} ms idle; Codex hook on cold model ${round(codexCold.ms)} ms (route=${codexCold.route}, decision=${codexCold.injected}), model_status=${afterReload.modelStatus}, next warm ${round(warmAgain.ms)} ms`);
-      if (codexCold.route !== "laya") log("  NOTE: Laya gave no verdict on the cold turn (reload slower than coldStartTimeout or breaker open); that turn failed open.");
+      report.reload = {
+        codexHookColdMs: round(codexCold.ms), codexRoute: codexCold.route, codexDecision: codexCold.injected,
+        backgroundReloadReadyMs: round(reloadReadyMs), modelStatusAfter: afterReload.modelStatus,
+        codexNextTurnMs: round(codexNext.ms), codexNextRoute: codexNext.route, nextWarmInferenceMs: round(warmAgain.ms)
+      };
+      log(`  unloaded after ${round(unload.afterMs)} ms idle; cold Codex turn ${round(codexCold.ms)} ms (route=${codexCold.route}), background reload ready after ${round(reloadReadyMs)} ms, next Codex turn ${round(codexNext.ms)} ms (route=${codexNext.route}), next warm ${round(warmAgain.ms)} ms`);
+      if (codexNext.route !== "laya") log("  NOTE: the turn after the background reload still got no Laya verdict.");
     } else {
       log("  model was NOT unloaded within the expected window");
     }

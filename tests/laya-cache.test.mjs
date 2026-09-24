@@ -463,7 +463,7 @@ test("Polluted cache with status='evil' or modelStatus='evil' is discarded, cann
   assert.equal(router.healthChecked, false, "Polluted cache must not set healthChecked=true");
 
   // First business call
-  const res = await router.evaluateRecall("How to optimize SQL query?");
+  const res = await router.evaluateRecall("Optimize the slow SQL query in the orders report");
   assert.equal(res.recallRecommended, true);
 
   // MUST have called /health first before /judge/recall

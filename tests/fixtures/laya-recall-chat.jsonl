@@ -1,0 +1,102 @@
+{"text": "回忆一下之前这个项目有哪些决策", "recall": true, "label": "recall", "category": "chat-history", "projectId": "obsidian-memory-plugin-1f6a88a6"}
+{"text": "那还有没做完的继续吧", "recall": false, "label": "context", "category": "chat-continue", "projectId": "obsidian-memory-plugin-1f6a88a6"}
+{"text": "你再继续由antigravity开发，你审核，上一轮的审核还没完成继续。", "recall": false, "label": "context", "category": "chat-continue", "projectId": "obsidian-memory-plugin-1f6a88a6"}
+{"text": "这个提示还是用之前登录不成功的那种提示框", "recall": false, "label": "none", "category": "chat-revert", "projectId": "PocketClaw-d65c3b67"}
+{"text": "还是和上次一样", "recall": false, "label": "context", "category": "chat-revert", "projectId": "PocketClaw-d65c3b67"}
+{"text": "撤销上次的提交", "recall": false, "label": "none", "category": "chat-revert", "projectId": "PocketClaw-d65c3b67"}
+{"text": "还是改成之前的猫", "recall": false, "label": "context", "category": "chat-revert", "projectId": "PocketClaw-d65c3b67"}
+{"text": "还是按照之前的那种系统级的吧", "recall": false, "label": "context", "category": "chat-revert", "projectId": "PocketClaw-d65c3b67"}
+{"text": "是不是上次改代码时候改坏了", "recall": false, "label": "none", "category": "chat-history", "projectId": "PocketClaw-d65c3b67"}
+{"text": "继续做你未完成的验证", "recall": false, "label": "context", "category": "chat-continue", "projectId": "PocketClaw-d65c3b67"}
+{"text": "继续做完没做，之前没执行完的", "recall": false, "label": "context", "category": "chat-continue", "projectId": "PocketClaw-d65c3b67"}
+{"text": "继续上面的规划", "recall": false, "label": "none", "category": "chat-continue", "projectId": "PocketClaw-d65c3b67"}
+{"text": "继续拆剩下的 chat 主链路", "recall": false, "label": "context", "category": "chat-continue", "projectId": "PocketClaw-d65c3b67"}
+{"text": "继续微调静态首屏的 Option B 视觉", "recall": false, "label": "context", "category": "chat-continue", "projectId": "PocketClaw-d65c3b67"}
+{"text": "我看之前不是还有显示工具调用这些提示吗，现在还有吗", "recall": false, "label": "none", "category": "chat-history", "projectId": "PocketClaw-d65c3b67"}
+{"text": "这个样式不要变还是没改之前的那个版本好", "recall": false, "label": "context", "category": "chat-revert", "projectId": "PocketClaw-d65c3b67"}
+{"text": "我还是想那种悬浮的，我喜欢你改之前的那种风格，然后也要解决最后一个无法点击的问题", "recall": false, "label": "context", "category": "chat-revert", "projectId": "PocketClaw-d65c3b67"}
+{"text": "再排查一遍，我要达到和未拆分之前一样的效果。", "recall": false, "label": "none", "category": "chat-regression", "projectId": "PocketClaw-d65c3b67"}
+{"text": "还是报错了，如果搞不定的话还是用之前的chat方案吧，至少那个是消息能正常接受与输出", "recall": false, "label": "context", "category": "chat-revert", "projectId": "PocketClaw-d65c3b67"}
+{"text": "现在iosapp中的重启网关没用了，你连调三端一下看看什么原因，并修复，在重构之前是有用的", "recall": false, "label": "none", "category": "chat-regression", "projectId": "PocketClaw-d65c3b67"}
+{"text": "为什么之前的不会出现这情况，还有会影响mac版本的显示吗", "recall": false, "label": "none", "category": "chat-regression", "projectId": "PocketClaw-d65c3b67"}
+{"text": "为什么windows下的openclaw配对会显示未连接，这个之前windows下的hermes也出现过你排查清楚", "recall": true, "label": "recall", "category": "chat-regression", "projectId": "PocketClaw-d65c3b67"}
+{"text": "自从升级了最新的clawconnect，为什么这个hermes的回复变成这样了不像之前的对话一样了。看什么原因", "recall": false, "label": "none", "category": "chat-regression", "projectId": "PocketClaw-d65c3b67"}
+{"text": "我开启了tools但是在聊天界面在回答的时候tool怎么没有输出，这个和以前的显示方式不同。需要以前那种展示方式", "recall": false, "label": "none", "category": "chat-regression", "projectId": "PocketClaw-d65c3b67"}
+{"text": "现在复刻ios端的复刻率有多少了，就消息这一块的功能，解决了我之前发现的和提出的问题吗。现在只分析", "recall": false, "label": "context", "category": "chat-history", "projectId": "PocketClaw-d65c3b67"}
+{"text": "ios现在为什么在等待消息回复的时候不按顺序显示，之前我的要求是哪个先输出就先展示吗", "recall": true, "label": "recall", "category": "chat-preference", "projectId": "PocketClaw-d65c3b67"}
+{"text": "你结合clawconnect-agent和relayserver这个把之前这个提示词提示的不正确的给改了", "recall": false, "label": "context", "category": "chat-history", "projectId": "PocketClaw-d65c3b67"}
+{"text": "全局安装的这个包是之前打包的吧", "recall": false, "label": "none", "category": "chat-history", "projectId": "PocketClaw-d65c3b67"}
+{"text": "按钮需要同步之前的静态设计的玻璃质感的", "recall": false, "label": "none", "category": "chat-revert", "projectId": "PocketClaw-d65c3b67"}
+{"text": "那继续未闭环的问题攻克", "recall": false, "label": "context", "category": "chat-continue"}
+{"text": "撤回你上次的修改", "recall": false, "label": "none", "category": "chat-revert"}
+{"text": "统一后端文件命名风格，按照原来框架的风格，人家叫entity 你为啥叫dto啊，使用中文注释吧", "recall": false, "label": "none", "category": "chat-convention"}
+{"text": "还是要inbox吧不然未ingest的东西都放哪里啊，再确认一遍现在要记住的东西先放在哪里", "recall": true, "label": "recall", "category": "chat-history"}
+{"text": "你把之前的修改都还原除了data的", "recall": false, "label": "none", "category": "chat-revert", "projectId": "Cyber-Health-Agent-83e9d7c1"}
+{"text": "那现在还有问题吗，还有之前gemini的设计有问题吗，有问题的话让他改", "recall": false, "label": "context", "category": "chat-history", "projectId": "Cyber-Health-Agent-83e9d7c1"}
+{"text": "继续没做完的", "recall": false, "label": "context", "category": "chat-continue", "projectId": "Cyber-Health-Agent-83e9d7c1"}
+{"text": "都写到长期记忆了吗", "recall": true, "label": "recall", "category": "chat-history", "projectId": "Cyber-Health-Agent-83e9d7c1"}
+{"text": "你现在有点设计错了，还要按照之前系统设计的格式，要和之前的标题一样有多个级别标题划分", "recall": false, "label": "none", "category": "chat-convention"}
+{"text": "你新增的文字的格式要和之前的保持一致啊，字体大小，以及使用的哪些字体 字号", "recall": false, "label": "none", "category": "chat-convention"}
+{"text": "立项审批是不是就是采购前事项走集团的审批的，你可以去obsidian中验证一下再重新设计", "recall": true, "label": "recall", "category": "chat-history"}
+{"text": "之前的样式是写在哪里的", "recall": false, "label": "none", "category": "chat-history"}
+{"text": "帮我查一下obsidian中供应链那个项目某个客户的定价", "recall": true, "label": "recall", "category": "chat-history"}
+{"text": "帮我看看codex今天做了哪些任务", "recall": false, "label": "none", "category": "chat-history"}
+{"text": "你搞错了我本地的clawconnect指的是clawconnect-agent", "recall": false, "label": "none", "category": "chat-correction"}
+{"text": "记住：这个项目的日志统一用 JSON 格式", "recall": true, "label": "capture", "category": "chat-capture", "projectId": "obsidian-memory-plugin-1f6a88a6"}
+{"text": "这次踩坑的原因是 Windows 路径大小写不一致，记录一下", "recall": true, "label": "capture", "category": "chat-capture"}
+{"text": "你不可以修改openclaw的源码，你只有可读权限。这一条你要记住，这条是一定要遵守的原则", "recall": true, "label": "capture", "category": "chat-capture", "projectId": "PocketClaw-d65c3b67"}
+{"text": "给你定一条规则你不能改openclaw安装包的任何东西，所有的bug只能在我们自己代码中去实现", "recall": true, "label": "capture", "category": "chat-capture", "projectId": "PocketClaw-d65c3b67"}
+{"text": "codex的东西你只能读不能改。这个规则你一定要记住", "recall": true, "label": "capture", "category": "chat-capture", "projectId": "PocketClaw-d65c3b67"}
+{"text": "你要记住要和openclaw拆开减少耦合", "recall": true, "label": "capture", "category": "chat-capture", "projectId": "PocketClaw-d65c3b67"}
+{"text": "把apk放在真机的download文件夹内用shell安装，其他安装会被miui拦截。如果行得通就把这个方法写在agent.md中记下来", "recall": true, "label": "capture", "category": "chat-capture", "projectId": "PocketClaw-d65c3b67"}
+{"text": "你把你的改动都写在一个文档中吧，以便后面的agent能够继续在这个基础上看你改了哪些", "recall": true, "label": "capture", "category": "chat-capture", "projectId": "PocketClaw-d65c3b67"}
+{"text": "你看这些有需要沉淀成长期记忆的吗", "recall": true, "label": "capture", "category": "chat-capture", "projectId": "PocketClaw-d65c3b67"}
+{"text": "这个需要你记下来在这项目使用这种方式，之后在我不说的情况下安装到真机你也要知道", "recall": true, "label": "capture", "category": "chat-capture"}
+{"text": "连上了，你要记住你怎么开启的设备热点，这次成功了", "recall": true, "label": "capture", "category": "chat-capture"}
+{"text": "把这些规则也要写到agent.md省的之后的修改改错", "recall": true, "label": "capture", "category": "chat-capture"}
+{"text": "把需要长期记忆的写入到obsidian中", "recall": true, "label": "capture", "category": "chat-capture", "projectId": "Cyber-Health-Agent-83e9d7c1"}
+{"text": "用 Python 写一个把列表按指定大小分块的函数，只回答代码，不要动仓库文件", "recall": false, "label": "none", "category": "chat-generic", "projectId": "obsidian-memory-plugin-1f6a88a6"}
+{"text": "微信这种是如何实现的消息永远正确的", "recall": false, "label": "none", "category": "chat-generic", "projectId": "PocketClaw-d65c3b67"}
+{"text": "那我如何给我的服务器搞成https", "recall": false, "label": "none", "category": "chat-generic", "projectId": "PocketClaw-d65c3b67"}
+{"text": "那语音输入是iphone原生支持的功能吗", "recall": false, "label": "none", "category": "chat-generic", "projectId": "PocketClaw-d65c3b67"}
+{"text": "在 Xcode 里 Shift+Cmd+K 清一次构建。停掉模拟器里的 app，重新 Run。", "recall": false, "label": "none", "category": "chat-command", "projectId": "PocketClaw-d65c3b67"}
+{"text": "帮我启动relayserver服务", "recall": false, "label": "none", "category": "chat-command", "projectId": "PocketClaw-d65c3b67"}
+{"text": "帮我review一下clawconnect-agent的代码", "recall": false, "label": "none", "category": "chat-task", "projectId": "PocketClaw-d65c3b67"}
+{"text": "重新扫描一遍看看还有没有漏洞", "recall": false, "label": "none", "category": "chat-task", "projectId": "PocketClaw-d65c3b67"}
+{"text": "查ios端有没有闪退或卡住风险", "recall": false, "label": "none", "category": "chat-task", "projectId": "PocketClaw-d65c3b67"}
+{"text": "为什么没有留安全区", "recall": false, "label": "none", "category": "chat-task", "projectId": "PocketClaw-d65c3b67"}
+{"text": "像这种图片在加载中能不能做个加载中的动画", "recall": false, "label": "none", "category": "chat-task", "projectId": "PocketClaw-d65c3b67"}
+{"text": "如果是超长图可以进行滚动，如果一屏能够放下的就不用滚动", "recall": false, "label": "none", "category": "chat-task", "projectId": "PocketClaw-d65c3b67"}
+{"text": "在语音输入框中字要垂直居中，以及在语音确认界面文字也要居中，而且这两个框的高度也要一致", "recall": false, "label": "none", "category": "chat-task", "projectId": "PocketClaw-d65c3b67"}
+{"text": "刷新的时候只要刷新消息列表，并不需要刷新模型列表，在每个模型前面加个模型的icon，好看些", "recall": false, "label": "none", "category": "chat-task", "projectId": "PocketClaw-d65c3b67"}
+{"text": "先帮我排查一下为什么docker启动数据库一直在重启", "recall": false, "label": "none", "category": "chat-task", "projectId": "PocketClaw-d65c3b67"}
+{"text": "生成的release包在哪里", "recall": false, "label": "none", "category": "chat-task", "projectId": "PocketClaw-d65c3b67"}
+{"text": "relayserver的readme中英文的内容更新一下最新增加的内容", "recall": false, "label": "none", "category": "chat-task", "projectId": "PocketClaw-d65c3b67"}
+{"text": "你现在看看ios还有哪些隐藏的bug，你先检查不要修改", "recall": false, "label": "none", "category": "chat-task", "projectId": "PocketClaw-d65c3b67"}
+{"text": "安卓整个项目app跑一遍测试，看看还有没有逻辑错误这些，要认真排查每一个功能点", "recall": false, "label": "none", "category": "chat-task", "projectId": "PocketClaw-d65c3b67"}
+{"text": "安卓和后台进行联调的冒烟测试", "recall": false, "label": "none", "category": "chat-task"}
+{"text": "整个app进行检查一下看看有没有没有适配颜色更换和字体更换的一起改了", "recall": false, "label": "none", "category": "chat-task"}
+{"text": "需要在模拟器中更新app吗", "recall": false, "label": "none", "category": "chat-generic"}
+{"text": "在哪个git文件中被忽略了", "recall": false, "label": "none", "category": "chat-generic"}
+{"text": "给我写一个写字楼中秋活动方案内含游戏互动和手作课堂，预算在8000元以内", "recall": false, "label": "none", "category": "chat-generic"}
+{"text": "帮我设计一个地图大屏，展示所有的点位信息，地图要以科技蓝为主，使用高德地图", "recall": false, "label": "none", "category": "chat-task"}
+{"text": "增加一个记住密码的", "recall": false, "label": "none", "category": "chat-task"}
+{"text": "这种字体是不是太小了", "recall": false, "label": "none", "category": "chat-task"}
+{"text": "介绍一下咖啡的历史，300 字左右", "recall": false, "label": "none", "category": "chat-generic"}
+{"text": "用 200 字介绍一下茶叶的历史", "recall": false, "label": "none", "category": "chat-generic"}
+{"text": "写一篇关于灯塔历史的短文", "recall": false, "label": "none", "category": "chat-generic"}
+{"text": "帮忙看看周末福州的天气适合爬山吗", "recall": false, "label": "none", "category": "chat-generic"}
+{"text": "看看明天厦门天气如何", "recall": false, "label": "none", "category": "chat-generic"}
+{"text": "截图现在的桌面发过来", "recall": false, "label": "none", "category": "chat-command"}
+{"text": "连续写一篇 1500 字中文文章，不使用工具", "recall": false, "label": "none", "category": "chat-generic"}
+{"text": "你可以生成图片吗", "recall": false, "label": "none", "category": "chat-generic"}
+{"text": "帮我看看桌面有哪些文件", "recall": false, "label": "none", "category": "chat-command"}
+{"text": "你现在是最新的版本吗，不是的话更新到最新的版本", "recall": false, "label": "none", "category": "chat-command"}
+{"text": "写一篇1200字关于如何工作的作文", "recall": false, "label": "none", "category": "chat-generic"}
+{"text": "你现在的版本是什么", "recall": false, "label": "none", "category": "chat-generic"}
+{"text": "把桌面的两个微信图片发过来", "recall": false, "label": "none", "category": "chat-command"}
+{"text": "现在我有几个可用的模型", "recall": false, "label": "none", "category": "chat-generic"}
+{"text": "那你推荐我用哪个", "recall": false, "label": "context", "category": "chat-generic"}
+{"text": "再执行一次 npm test 2>&1 | tail -8，把结果原样贴给我；如果有失败，把失败用例的名字和断言信息也贴出来。不要改代码。", "recall": false, "label": "none", "category": "chat-command", "projectId": "obsidian-memory-plugin-1f6a88a6"}
+{"text": "换个话题：解释一下 JavaScript 里的事件循环，三句话以内", "recall": false, "label": "none", "category": "chat-generic", "projectId": "obsidian-memory-plugin-1f6a88a6"}
+{"text": "我是本地的claude", "recall": false, "label": "none", "category": "chat-generic", "projectId": "obsidian-memory-plugin-1f6a88a6"}

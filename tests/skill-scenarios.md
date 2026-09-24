@@ -4,9 +4,11 @@
 文件/字段契约，隔离 smoke 验证 OpenClaw 加载；二者不证明模型遵守工作流。
 前三个召回用例可在本地运行 `node tests/behavior-smoke.mjs codex` 或
 `node tests/behavior-smoke.mjs openclaw`。脚本读取当前版本的本地压缩包，
-使用一次性合成 Vault，并在每轮前后核对文件摘要；OpenClaw 模式需要本机
-已配置 Xiaomi 模型及通过 `BEHAVIOR_OPENCLAW_AUTH_BACKUP` 指定可迁移的
-本地静态认证配置。它会实际调用模型并产生费用，不在 CI 中自动运行。
+使用一次性合成 Vault，并在每轮前后核对文件摘要。OpenClaw 模式默认使用本机
+已配置的 `stepfun/step-5-preview`（可用 `BEHAVIOR_OPENCLAW_MODEL` 覆盖；若该
+provider 的 key 不在配置里，用 `BEHAVIOR_OPENCLAW_AUTH_BACKUP` 指定可迁移的本地
+静态认证配置）。Codex 模式默认使用 ChatGPT.app 自带的 `codex`，可用 `CODEX_BIN`
+覆盖。它会实际调用模型并产生费用，不在 CI 中自动运行。
 
 使用用户授权的独立测试 Agent 和一次性测试 Vault，只填合成材料。先记录
 Vault 文件清单与内容摘要；每步对比实际路径、内容、来源和写入次数。测试

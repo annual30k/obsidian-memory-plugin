@@ -129,7 +129,7 @@ def build_guidance(settings: Mapping[str, str]) -> str:
     return "\n".join(lines)
 
 
-def _evaluate_router(user_message: str, project_id: str | None, mode: str) -> dict[str, Any]:
+def _evaluate_router(user_message: str, project_id: str | None, mode: str, turn: dict[str, Any] | None = None) -> dict[str, Any]:
     """Execute memory router CLI synchronously with input JSON on stdin."""
     import shutil
     import subprocess
@@ -153,11 +153,14 @@ def _evaluate_router(user_message: str, project_id: str | None, mode: str) -> di
         }
 
     cli_path = Path(__file__).parent / "lib" / "memory-router" / "cli.js"
-    payload = json.dumps({
+    request: dict[str, Any] = {
         "text": user_message,
         "projectId": project_id,
         "config": {"mode": mode}
-    })
+    }
+    if turn:
+        request["turn"] = turn
+    payload = json.dumps(request)
 
     try:
         proc = subprocess.run(
@@ -245,7 +248,12 @@ def on_pre_llm_call(ctx: Any = None, *, user_message: str = "", session_id: str 
         )
         effective_mode = "auto"
 
-    result = _evaluate_router(user_message, project_id, effective_mode)
+    turn = {"host": "hermes", "cwd": os.getcwd()}
+    if isinstance(session_id, str) and session_id:
+        turn["sessionKey"] = session_id
+    if isinstance(settings.get("vaultPath"), str):
+        turn["vaultPath"] = settings["vaultPath"]
+    result = _evaluate_router(user_message, project_id, effective_mode, turn)
     trace = result.get("trace") or {
         "route": "fallback",
         "decision": "none",

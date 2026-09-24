@@ -63,6 +63,10 @@ function run(command, args, options = {}) {
   return result;
 }
 
+const codexBin = process.env.CODEX_BIN
+  ?? ["/Applications/ChatGPT.app/Contents/Resources/codex", join(homedir(), "Applications", "ChatGPT.app", "Contents", "Resources", "codex")].find(c => existsSync(c))
+  ?? "codex";
+
 function codexSetup() {
   mkdirSync(codexHome);
   const auth = join(homedir(), ".codex", "auth.json");
@@ -85,14 +89,14 @@ function codexSetup() {
   writeFileSync(join(marketplaceRoot, ".agents", "plugins", "marketplace.json"), JSON.stringify({
     name: "synthetic-memory-test", plugins: [{ name: "obsidian-memory", source: { source: "local", path: "./codex-package" }, policy: { installation: "AVAILABLE", authentication: "ON_INSTALL" } }]
   }));
-  const addMarketplace = run("codex", ["plugin", "marketplace", "add", marketplaceRoot, "--json"], { env });
+  const addMarketplace = run(codexBin, ["plugin", "marketplace", "add", marketplaceRoot, "--json"], { env });
   if (addMarketplace.status !== 0) throw new Error(`Isolated marketplace add failed: ${addMarketplace.stderr}`);
-  const install = run("codex", ["plugin", "add", "obsidian-memory@synthetic-memory-test", "--json"], { env });
-  if (install.status !== 0) throw new Error(`Isolated Codex plugin install failed: ${install.stdout} ${install.stderr}; marketplace: ${run("codex", ["plugin", "marketplace", "list", "--json"], { env }).stdout}`);
+  const install = run(codexBin, ["plugin", "add", "obsidian-memory@synthetic-memory-test", "--json"], { env });
+  if (install.status !== 0) throw new Error(`Isolated Codex plugin install failed: ${install.stdout} ${install.stderr}; marketplace: ${run(codexBin, ["plugin", "marketplace", "list", "--json"], { env }).stdout}`);
   const details = JSON.parse(install.stdout);
   assert.equal(details.version, version);
   return { env, model: "configured ChatGPT model", execute(scenario) {
-    const result = run("codex", ["exec", "--ephemeral", "--sandbox", "read-only", "--skip-git-repo-check", "--json", "-C", projectA, scenario.prompt], { env });
+    const result = run(codexBin, ["exec", "--ephemeral", "--sandbox", "read-only", "--skip-git-repo-check", "--json", "-C", projectA, scenario.prompt], { env });
     const events = result.stdout.split("\n").filter(Boolean).flatMap(line => {
       try { return [JSON.parse(line)]; } catch { return []; }
     });
@@ -101,16 +105,19 @@ function codexSetup() {
   }};
 }
 
+const openclawModel = process.env.BEHAVIOR_OPENCLAW_MODEL ?? "stepfun/step-5-preview";
+const openclawProvider = openclawModel.split("/")[0];
+
 function openclawSetup() {
   mkdirSync(openclawState);
   if (process.env.BEHAVIOR_OPENCLAW_AUTH_BACKUP) {
     const stored = JSON.parse(readFileSync(process.env.BEHAVIOR_OPENCLAW_AUTH_BACKUP, "utf8"));
-    const profile = stored.profiles?.["xiaomi-token-plan:default"];
-    if (!profile || profile.type !== "api_key") throw new Error("No portable Xiaomi static auth profile found");
+    const profile = stored.profiles?.[`${openclawProvider}:default`];
+    if (!profile || profile.type !== "api_key") throw new Error(`No portable ${openclawProvider} static auth profile found`);
     const agentDir = join(openclawState, "agents", "main", "agent");
     mkdirSync(agentDir, { recursive: true });
     const authPath = join(agentDir, "auth-profiles.json");
-    writeFileSync(authPath, JSON.stringify({ version: 1, profiles: { "xiaomi-token-plan:default": profile } }));
+    writeFileSync(authPath, JSON.stringify({ version: 1, profiles: { [`${openclawProvider}:default`]: profile } }));
     chmodSync(authPath, 0o600);
   }
   const pluginRoot = join(temp, "package");
@@ -119,19 +126,19 @@ function openclawSetup() {
   if (unpack.status !== 0) throw new Error(`Cannot unpack test archive: ${unpack.stderr}`);
   const entryPath = join(pluginRoot, "index.js");
   const source = readFileSync(entryPath, "utf8");
-  const marker = "const guidance = guidanceByAgent.get(context?.agentId);";
+  const marker = "const baseGuidance = guidanceByAgent.get(context?.agentId);";
   assert.ok(source.includes(marker));
   writeFileSync(entryPath, source.replace(marker,
     'process.stderr.write("OBSIDIAN_MEMORY_HOOK " + JSON.stringify({agentId: context?.agentId, configuredAgents: [...guidanceByAgent.keys()], guidanceLength: guidanceByAgent.get(context?.agentId)?.length}) + "\\n");\n      ' + marker));
   const ambientPath = join(homedir(), ".openclaw", "openclaw.json");
   const ambient = JSON.parse(readFileSync(ambientPath, "utf8"));
-  const provider = ambient.models?.providers?.["xiaomi-token-plan"];
-  if (!provider) throw new Error("Configured Xiaomi token-plan model not available");
+  const provider = ambient.models?.providers?.[openclawProvider];
+  if (!provider) throw new Error(`Configured ${openclawProvider} model provider not available`);
   const configPath = join(openclawState, "openclaw.json");
   writeFileSync(configPath, JSON.stringify({
-    models: { providers: { "xiaomi-token-plan": provider } },
-    auth: { profiles: { "xiaomi-token-plan:default": ambient.auth?.profiles?.["xiaomi-token-plan:default"] } },
-    agents: { defaults: { model: { primary: "xiaomi-token-plan/mimo-v2.5-pro" }, workspace: projectA } },
+    models: { providers: { [openclawProvider]: provider } },
+    auth: { profiles: { [`${openclawProvider}:default`]: ambient.auth?.profiles?.[`${openclawProvider}:default`] } },
+    agents: { defaults: { model: { primary: openclawModel }, workspace: projectA } },
     plugins: { allow: ["obsidian-memory-plugin"], load: { paths: [pluginRoot] }, entries: {
       "obsidian-memory-plugin": { enabled: true, hooks: { allowPromptInjection: true, allowConversationAccess: true },
         config: { agentConfigs: { main: { vaultPath: vault, projectId: "project-a" } } } }
@@ -148,8 +155,8 @@ function openclawSetup() {
   const inspected = JSON.parse(inspection.stdout.slice(inspection.stdout.indexOf("{")));
   assert.equal(inspected.plugin?.version, version);
   assert.deepEqual(inspected.typedHooks?.map(hook => hook.name), ["before_prompt_build"]);
-  return { env, model: "xiaomi-token-plan/mimo-v2.5-pro", execute(scenario) {
-    const args = ["agent", "--local", "--agent", "main", "--session-id", randomUUID(), "--model", "xiaomi-token-plan/mimo-v2.5-pro", "--timeout", "180", "--json", "--message", scenario.prompt];
+  return { env, model: openclawModel, execute(scenario) {
+    const args = ["agent", "--local", "--agent", "main", "--session-id", randomUUID(), "--model", openclawModel, "--timeout", "180", "--json", "--message", scenario.prompt];
     const result = run("openclaw", args, { env });
     let report;
     try { report = JSON.parse(result.stdout.slice(result.stdout.indexOf("{"))); } catch { report = {}; }

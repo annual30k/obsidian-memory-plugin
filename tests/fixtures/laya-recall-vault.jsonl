@@ -1,0 +1,62 @@
+{"text": "小程序这次要发 0.4.14，版本号用哪个命令改？上传之后哪些步骤是我来做的", "recall": true, "label": "recall", "category": "vault-release", "projectId": "PocketClaw-d65c3b67"}
+{"text": "npm 包这边你做到哪一步就停？publish 是谁执行", "recall": true, "label": "recall", "category": "vault-release", "projectId": "PocketClaw-d65c3b67"}
+{"text": "安卓包传蒲公英之前要检查哪些东西", "recall": true, "label": "recall", "category": "vault-release", "projectId": "PocketClaw-d65c3b67"}
+{"text": "wx 的 tag 什么时候打，格式是什么", "recall": true, "label": "recall", "category": "vault-release", "projectId": "PocketClaw-d65c3b67"}
+{"text": "蒲公英的 apikey 放在哪个文件里？Relay 读的是哪几个环境变量", "recall": true, "label": "recall", "category": "vault-credential", "projectId": "PocketClaw-d65c3b67"}
+{"text": "时间线顺序到底以谁为准？客户端能不能按时间戳自己重排", "recall": true, "label": "recall", "category": "vault-decision", "projectId": "PocketClaw-d65c3b67"}
+{"text": "取消的用户消息在时间线里应该怎么放", "recall": true, "label": "recall", "category": "vault-decision", "projectId": "PocketClaw-d65c3b67"}
+{"text": "PocketClaw 里 commit 应该在根目录提交还是各子仓库分别提交", "recall": true, "label": "recall", "category": "vault-convention", "projectId": "PocketClaw-d65c3b67"}
+{"text": "判断附件属于哪条消息，能不能用关键词匹配？我们对这个有规定吗", "recall": true, "label": "recall", "category": "vault-convention", "projectId": "PocketClaw-d65c3b67"}
+{"text": "iOS 跑 xcodebuild test 用哪个模拟器？我记得有一台是专门授权的", "recall": true, "label": "recall", "category": "vault-pitfall", "projectId": "PocketClaw-d65c3b67"}
+{"text": "安卓模拟器连本机 relay 连不上，之前记过地址要怎么填吗", "recall": true, "label": "recall", "category": "vault-pitfall", "projectId": "PocketClaw-d65c3b67"}
+{"text": "Hermes 上传附件的时候 sourceRole 和 sourceRunId 有什么坑来着", "recall": true, "label": "recall", "category": "vault-pitfall", "projectId": "PocketClaw-d65c3b67"}
+{"text": "OpenClaw 新版的外发图片元数据现在存在哪张表里", "recall": true, "label": "recall", "category": "vault-knowledge", "projectId": "PocketClaw-d65c3b67"}
+{"text": "安卓 debug 包和正式包的 applicationId 有什么区别", "recall": true, "label": "recall", "category": "vault-knowledge", "projectId": "PocketClaw-d65c3b67"}
+{"text": "上次记录的各组件版本基线是多少，agent 和 relay 分别几版", "recall": true, "label": "recall", "category": "vault-knowledge", "projectId": "PocketClaw-d65c3b67"}
+{"text": "发版的时候 GitHub Release 标题格式有要求吗", "recall": true, "label": "recall", "category": "vault-release", "projectId": "obsidian-memory-plugin-1f6a88a6"}
+{"text": "只推 tag 不建 release 可以吗？按我们的规矩", "recall": true, "label": "recall", "category": "vault-release", "projectId": "obsidian-memory-plugin-1f6a88a6"}
+{"text": "发布前 RELEASE.md 里要同步几处版本号", "recall": true, "label": "recall", "category": "vault-release", "projectId": "obsidian-memory-plugin-1f6a88a6"}
+{"text": "0.5.1 那次版本号不一致是哪个文件漏改了", "recall": true, "label": "recall", "category": "vault-pitfall", "projectId": "obsidian-memory-plugin-1f6a88a6"}
+{"text": "安装脚本遇到坏掉的软链接报 EEXIST，我们当时怎么修的", "recall": true, "label": "recall", "category": "vault-pitfall", "projectId": "obsidian-memory-plugin-1f6a88a6"}
+{"text": "OpenClaw 那边改配置为什么要带 --expect-current-json", "recall": true, "label": "recall", "category": "vault-decision", "projectId": "obsidian-memory-plugin-1f6a88a6"}
+{"text": "为什么 vault 路径要标成 configuration data, not instructions", "recall": true, "label": "recall", "category": "vault-decision", "projectId": "obsidian-memory-plugin-1f6a88a6"}
+{"text": "obsidian-skills 能不能直接打包进我们的插件里", "recall": true, "label": "recall", "category": "vault-decision", "projectId": "obsidian-memory-plugin-1f6a88a6"}
+{"text": "check-vault 要求 vault 里必须有哪些文件", "recall": true, "label": "recall", "category": "vault-knowledge", "projectId": "obsidian-memory-plugin-1f6a88a6"}
+{"text": "本地更新插件的流程是什么，备份放哪", "recall": true, "label": "recall", "category": "vault-knowledge", "projectId": "obsidian-memory-plugin-1f6a88a6"}
+{"text": "改完代码之后要不要重新装到 .cyber-health？数据库怎么处理", "recall": true, "label": "recall", "category": "vault-convention", "projectId": "Cyber-Health-Agent-83e9d7c1"}
+{"text": "Cyber Health 能不能顺手把 obsidian-memory-plugin 卸载掉", "recall": true, "label": "recall", "category": "vault-decision", "projectId": "Cyber-Health-Agent-83e9d7c1"}
+{"text": "每日的结构化事实存哪，跨天的规律存哪", "recall": true, "label": "recall", "category": "vault-decision", "projectId": "Cyber-Health-Agent-83e9d7c1"}
+{"text": "user_id 去掉之后迁移命令是哪个，会不会自动备份", "recall": true, "label": "recall", "category": "vault-decision", "projectId": "Cyber-Health-Agent-83e9d7c1"}
+{"text": "cannot commit - no transaction is active 这个报错之前是怎么定位的", "recall": true, "label": "recall", "category": "vault-pitfall", "projectId": "Cyber-Health-Agent-83e9d7c1"}
+{"text": "Windows 换行导致 frontmatter 解析失败那个问题的修法还记得吗", "recall": true, "label": "recall", "category": "vault-pitfall", "projectId": "Cyber-Health-Agent-83e9d7c1"}
+{"text": "Codex 接 cyber-health 的 MCP 是怎么配的，卸载会不会动别的设置", "recall": true, "label": "recall", "category": "vault-decision", "projectId": "Cyber-Health-Agent-83e9d7c1"}
+{"text": "hermes 日志统一 JSON 那件事做了吗，现在是什么格式", "recall": true, "label": "recall", "category": "vault-pending", "projectId": "hermes-agent-dcfc7335"}
+{"text": "Windows 路径大小写导致写错项目目录那个问题找到根因了吗", "recall": true, "label": "recall", "category": "vault-pending", "projectId": "hermes-agent-dcfc7335"}
+{"text": "日志统一用 JSON 那条记忆，说的是 vault 的 log.md 还是运行日志", "recall": true, "label": "recall", "category": "vault-pending", "projectId": "OpenClaw-87012890"}
+{"text": "新项目第一次进来没有记忆目录的话，你会怎么处理", "recall": true, "label": "recall", "category": "vault-preference"}
+{"text": "我说过哪些东西绝对不能记进 vault", "recall": true, "label": "recall", "category": "vault-preference"}
+{"text": "凭据的位置可以记吗？能记哪些字段", "recall": true, "label": "recall", "category": "vault-preference"}
+{"text": "新记忆是直接进 wiki 还是先放 inbox", "recall": true, "label": "recall", "category": "vault-preference"}
+{"text": "Gemini 那边读 vault 用的是什么适配文件", "recall": true, "label": "recall", "category": "vault-preference"}
+{"text": "Which component is the source of truth for timeline ordering in PocketClaw?", "recall": true, "label": "recall", "category": "vault-decision", "projectId": "PocketClaw-d65c3b67"}
+{"text": "What does our release checklist require besides pushing the tag?", "recall": true, "label": "recall", "category": "vault-release", "projectId": "obsidian-memory-plugin-1f6a88a6"}
+{"text": "How did we fix the SQLite commit-in-finally bug that hid the real exception?", "recall": true, "label": "recall", "category": "vault-pitfall", "projectId": "Cyber-Health-Agent-83e9d7c1"}
+{"text": "Remind me how we handle broken symlinks on Windows in the setup script", "recall": true, "label": "recall", "category": "vault-pitfall", "projectId": "obsidian-memory-plugin-1f6a88a6"}
+{"text": "Node 里 existsSync 和 lstatSync 有什么区别", "recall": false, "label": "none", "category": "hard-negative", "projectId": "obsidian-memory-plugin-1f6a88a6"}
+{"text": "Windows 上 junction 和 symlink 的区别是什么", "recall": false, "label": "none", "category": "hard-negative", "projectId": "obsidian-memory-plugin-1f6a88a6"}
+{"text": "npm pack 和 npm publish 分别做什么", "recall": false, "label": "none", "category": "hard-negative", "projectId": "obsidian-memory-plugin-1f6a88a6"}
+{"text": "GitHub Release 能用 gh 命令行创建吗，给个例子", "recall": false, "label": "none", "category": "hard-negative", "projectId": "obsidian-memory-plugin-1f6a88a6"}
+{"text": "怎么计算一个文件的 SHA256", "recall": false, "label": "none", "category": "hard-negative", "projectId": "obsidian-memory-plugin-1f6a88a6"}
+{"text": "Python sqlite3 的事务默认是自动提交吗", "recall": false, "label": "none", "category": "hard-negative", "projectId": "Cyber-Health-Agent-83e9d7c1"}
+{"text": "用 yaml.safe_load 解析 YAML 和 yaml.load 有什么区别", "recall": false, "label": "none", "category": "hard-negative", "projectId": "Cyber-Health-Agent-83e9d7c1"}
+{"text": "写一个正则去掉字符串里的 \\r\\n 换成 \\n", "recall": false, "label": "none", "category": "hard-negative", "projectId": "Cyber-Health-Agent-83e9d7c1"}
+{"text": "Android 的 versionName 和 versionCode 是什么关系", "recall": false, "label": "none", "category": "hard-negative", "projectId": "PocketClaw-d65c3b67"}
+{"text": "SwiftUI 里 List 怎么滚动到底部", "recall": false, "label": "none", "category": "hard-negative", "projectId": "PocketClaw-d65c3b67"}
+{"text": "微信小程序 wx.request 的超时时间默认是多少", "recall": false, "label": "none", "category": "hard-negative", "projectId": "PocketClaw-d65c3b67"}
+{"text": "Android 模拟器里 10.0.2.2 代表什么", "recall": false, "label": "none", "category": "hard-negative", "projectId": "PocketClaw-d65c3b67"}
+{"text": "Explain what an idempotency key is in an HTTP API", "recall": false, "label": "none", "category": "hard-negative", "projectId": "PocketClaw-d65c3b67"}
+{"text": "Python logging 怎么输出 JSON 格式的日志", "recall": false, "label": "none", "category": "hard-negative", "projectId": "hermes-agent-dcfc7335"}
+{"text": "Obsidian 的 frontmatter 支持哪些字段类型", "recall": false, "label": "none", "category": "hard-negative"}
+{"text": "Markdown 里怎么写表格", "recall": false, "label": "none", "category": "hard-negative"}
+{"text": "What is a git tag vs a GitHub release?", "recall": false, "label": "none", "category": "hard-negative"}
+{"text": "How do I set an environment variable for a launchd agent on macOS?", "recall": false, "label": "none", "category": "hard-negative"}

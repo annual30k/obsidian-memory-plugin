@@ -15,7 +15,7 @@
   → Obsidian CLI → Obsidian 应用（仅应用专属操作）
 ```
 
-当前包版本：`0.6.0`。本包仅包含一个 Skill：`skills/obsidian-memory/`，
+当前包版本：`0.7.0`。本包仅包含一个 Skill：`skills/obsidian-memory/`，
 及其流程参考和 14 个最小记忆模板。
 **不打包、不复制、不重写 obsidian-skills。**
 
@@ -95,7 +95,7 @@ cd obsidian-memory-plugin
 
 ```sh
 shasum -a 256 -c SHA256SUMS
-openclaw plugins install ./obsidian-memory-plugin-0.6.0.tgz
+openclaw plugins install ./obsidian-memory-plugin-0.7.0.tgz
 ```
 
 下例是从源码目录安装：
@@ -363,8 +363,8 @@ npm run check:vault -- --vault /path/to/vault
 npm run laya:eval
 npm test
 npm pack
-node tests/openclaw-smoke.mjs obsidian-memory-plugin-0.6.0.tgz
-node tests/host-package-smoke.mjs obsidian-memory-plugin-0.6.0.tgz
+node tests/openclaw-smoke.mjs obsidian-memory-plugin-0.7.0.tgz
+node tests/host-package-smoke.mjs obsidian-memory-plugin-0.7.0.tgz
 openclaw plugins inspect obsidian-memory-plugin --runtime --json
 openclaw skills --agent main info obsidian-memory
 openclaw skills --agent main info obsidian-cli
@@ -451,6 +451,7 @@ npm run laya:uninstall
     "recallThreshold": 0.50,
     "captureThreshold": 0.75,
     "proactiveCapture": true,
+    "layaCapture": false,
     "timeout": 1000,
     "coldStartTimeout": 7500
   }
@@ -460,7 +461,8 @@ npm run laya:uninstall
 - 当服务未启动时，自动快速降级为安全模式（0 网络开销，后台低频本地探测）。
 - 当服务启动并就绪后，自动握手 `/health` 并承接 `/judge/recall` 裁决。
 - `laya start` 默认在服务就绪后**后台预加载模型**（Apple Silicon 实测加载约 5.6 秒），避免首个对话回合承担冷启动；加载期间 `/health` 报告 `loading`，此时到达的请求会等待同一次加载完成。可用 `laya start --no-preload` 关闭。
-- 冷启动超时 `coldStartTimeout` 默认 7500 ms（高于实测加载时间，且与 Node 启动、健康检查合计仍低于 10 秒宿主 Hook 超时）。
+- **后台冷启动**（`coldStart: "background"`，默认）：模型已空闲卸载时，本轮不再等待数秒加载，而是调用 `POST /warmup` 让服务在后台加载，本轮按常驻工作流处理（trace 原因 `model_warming`），下一轮即可正常判断。需要阻塞等待旧行为时设 `coldStart: "wait"`；strict 模式始终等待。旧版服务没有 `/warmup` 时自动退回等待。
+- 冷启动超时 `coldStartTimeout` 默认 7500 ms（仅 `coldStart: "wait"` 或 strict 模式使用；与 Node 启动、健康检查合计仍低于 10 秒宿主 Hook 超时）。
 - 未配置 `projectId` 时不再向模型发送 `project_context`（此前 OpenClaw 会发送 `null`，被服务端转成字符串 `"None"` 输入模型，导致同一提示在不同宿主上判定不一致）。
 - Laya 服务默认在 **15 分钟无推理请求后卸载内存中的模型**，服务进程继续运行；下一次 `/judge/recall` 会按需重新加载模型。可用 `laya start --idle-unload-seconds 0` 关闭空闲卸载，或传入秒数调整阈值。
 - 仅当此前健康的 Laya 服务进程**异常退出**时，`auto` 模式会在当前回合 fail-open 后后台尝试重启；不会在首次使用、未安装或未配置服务时自动安装/启动。
@@ -488,9 +490,69 @@ npm run laya:uninstall
 
 `skip` 省下的是本轮读取 SKILL.md（约 4.5k tokens）和 Vault 检索；OpenClaw 同时把每轮约 230 tokens 的指引换成约 80 tokens 的短句。Codex / Antigravity / Hermes 的常驻规则已改为"……除非本轮的 Obsidian Memory 提示说明不需要记忆"，已安装用户需重新运行 `npm run setup:codex` / `npm run setup:antigravity` 更新 AGENTS.md / GEMINI.md 中的受管区块；Laya 未运行时不会出现 skip 提示，行为与以前一致。
 
+### 按 Vault 内容补判断（vaultHints）
+
+Laya 只看提示文本，不知道 Vault 里已经有哪些笔记。插件会为 Vault 建一个只读的小索引（`10-Global` 与各项目 `wiki/`、`inbox/` 笔记的标题、文件名、aliases、tags 和正文中的 `代码标识符`，缓存在 `~/.cache/obsidian-memory-plugin/vault-index.json`，目录变化或 10 分钟后重建），每轮把提示和索引做加权词匹配（中文按二字词、英文按单词，约 0.1 ms）：
+
+- **强匹配**：只在判断拿不准（`default`）时改为 `recall`，并在提示里列出最相关的 1–3 条笔记（Vault 相对路径）。
+- **任何匹配**：本轮不再 `skip`（`skip` → `default`）；已经明确判定的 `recall` / `capture` 保持不变，只附上相关笔记。
+- 词重叠只是弱证据：在 520 条真实提示上，单凭匹配就强制 `recall` 时只有约十分之一是对的（多数项目任务都会和某篇笔记共享词汇），所以它只用来补拿不准的轮次。
+- "X 和 Y 有什么区别""默认是多少""写一篇……""你现在的版本是什么"这类不指向自己工作的通用提问不做 Vault 匹配，也不会因为 Laya 分数偏高而调取记忆。
+- 只共享一个词或一个短词组（如"软链接""Node.js"）不算匹配；当前目录能通过 `projects.yaml` 的 roots 对应到项目时，只看该项目和全局笔记，除非提示里点名了别的项目。
+- Codex / Antigravity 从 `OBSIDIAN_MEMORY_VAULT` 或 setup 写入 AGENTS.md / GEMINI.md 的受管区块读取 Vault 路径；OpenClaw / Hermes 用插件配置的 `vaultPath`。设 `vaultHints: false` 关闭。
+- 用自己的 Vault 校准阈值：`npm run laya:calibrate-vault -- --vault ~/Obsidian/Workspace --data my-vault-prompts.jsonl --verbose`。
+
+同一会话里，上一轮刚调取过记忆、这一轮 Laya 拿不准时沿用 `recall`；上一轮调取过、这一轮是"继续""那这个呢"之类的短追问时不跳过。
+
+### 判断记录与标注（decisionLog）
+
+各宿主的每轮判断会追加到本机 `~/.laya/decisions.jsonl`（权限 0600，只在本机，超过 5 MB 轮转；含密钥的提示不记录原文）。某轮被跳过后用户紧接着问"之前/上次……"时，会把那一轮标记为疑似漏判。设 `OBSIDIAN_MEMORY_DECISION_LOG=off` 或 `decisionLog: false` 关闭。
+
+```sh
+npm run laya:label -- --stats   # 统计：各判断数量、补判断次数、疑似漏判
+npm run laya:label -- --review  # 校对已有标注（~/.laya/labels-bootstrap.jsonl，回车 = 标注正确，模型意见不同的排最前）
+npm run laya:label              # 逐条标注（疑似漏判排在最前），写入 ~/.laya/labels.jsonl
+npm run laya:eval -- --data ~/.laya/labels.jsonl --vault ~/Obsidian/Workspace   # 用自己的真实提示评估
+```
+
+### 训练召回分类头（recall head）
+
+Laya 的零样本提问分不清"通用问题"和"关于你自己工作的问题"（两者用词往往相同）。`npm run laya:train` 在同一个 Laya 编码器上训练一个小的逻辑回归层（句向量 + 零样本分数），用分层交叉验证选正则强度，报告的都是未参与拟合的折外指标；服务启动时加载它来替代零样本分数，推理只多一次向量计算。
+
+- 加载顺序：`LAYA_RECALL_HEAD` → `~/.laya/recall-head.json`（用你自己的标注训练）→ 插件自带的 `lib/laya-service/recall-head.json`（只用仓库内的公开 fixtures 训练）。设 `LAYA_RECALL_HEAD=off` 回到零样本；模型不匹配或文件损坏时自动回退。`laya status` 显示当前使用的是哪个。
+- 训练数据：`tests/fixtures/laya-recall-*.jsonl` 加 `~/.laya/labels*.jsonl`（`npm run laya:label` 的标注）。有真实标注时，阈值按真实提示的分布选择（真实流量里需要记忆的提示通常只有百分之几）。
+- 训练后重启服务：`laya stop && laya start`。
+
+```sh
+npm run laya:train -- --dry-run                     # 只看交叉验证结果
+npm run laya:train                                  # 写入 ~/.laya/recall-head.json（0600）
+npm run laya:train -- --test blind.jsonl            # 另附一份从未参与训练的盲测集
+```
+
+在作者 589 条未参与训练的真实提示上（其中只有 11 条需要用到记忆；两条 Fast-Path 规则参考过其中的误判，数字略偏乐观；真实服务、完整链路 Fast-Path → 分类头 → Vault 提示）：
+
+| | 召回 | 精确率 | 需要记忆却被跳过 | 加载记忆的轮次 |
+|---|---|---|---|---|
+| 零样本 | 82% | 4% | 1 条 | 39% |
+| 插件自带分类头 | 82% | 6% | 1 条 | 24% |
+| 用自己的标注训练的分类头 | 73% | 20% | 2 条 | 7% |
+
+正例很少，这些数字的误差仍然很大（差一条就是 9 个百分点）。插件自带的分类头只用通用 fixtures 训练，效果有限；用自己的标注再训练一次收益最大。
+
+建议的维护节奏：平时照常使用；每一两周运行一次 `npm run laya:label` 标注新积累的提示（`--stats` 可先看数量），然后 `npm run laya:train && laya stop && laya start`。想确认改动没有变差，可以把一份从不参与训练的标注集放在 `~/.laya/testsets/`（不会被 `labels*.jsonl` 读入），用 `npm run laya:eval -- --data <文件> --vault <Vault> --errors` 对比。
+
+标注口径（四类，按键 y / c / n / x）：
+
+- `y` recall：需要先查长期记忆——过去的决定和理由、约定的规范、你的偏好、项目里记录过的事实。
+- `c` capture：要求保存规则、偏好或经验（"记住……""写到 agent.md"）。
+- `n` none：当前对话、给出的文件、代码或 git 历史就够了。"改回之前的样式""继续上面的"依赖上文，不等于依赖长期记忆。
+- `x` context：仅凭这一句无法判断，不参与训练和评估。
+
+分类头只学 `recall` 对 `none`；`capture` 由 Fast-Path 处理，评估时算作"用到记忆"。
+
 ### 评估 Laya 召回准确率
 
-召回判断使用经 `npm run laya:tune` 在真实 MLX 模型上选出的三选一提问（需要项目历史 / 自成一体的请求 / 闲聊），单独提问、只看原始文本；默认 `recallThreshold` 为 0.50。在 40 条未参与调优的提示上，误判为"需要查 Vault"的比例从旧提问的 70% 降到 5%，召回约 60%。"照老规矩""和上次一样""the way we agreed"等明确引用过往约定的说法由 Fast-Path 直接判定。换模型或换提问后请重新运行 `npm run laya:tune` 校准。`captureThreshold` 尚未校准。启动 Laya 服务后运行：
+召回判断使用经 `npm run laya:tune` 在真实 MLX 模型上选出的三选一提问（需要项目历史 / 自成一体的请求 / 闲聊），单独提问、只看原始文本；默认 `recallThreshold` 为 0.50。在 40 条未参与调优的提示上，误判为"需要查 Vault"的比例从旧提问的 70% 降到 5%，召回约 60%。"照老规矩""和上次一样""the way we agreed"等明确引用过往约定的说法由 Fast-Path 直接判定。换模型或换提问后请重新运行 `npm run laya:tune` 校准。明确的"记住……""写到 agent.md"由 Fast-Path 判定为 capture；Laya 按分类自行建议 capture 默认关闭（`layaCapture: false`）：在 735 条未见过的真实提示上它触发 40 次，没有一次是真的要保存内容。`captureThreshold` 只在 `layaCapture: true` 时生效，尚未校准。启动 Laya 服务后运行：
 
 ```sh
 npm run laya:eval

@@ -88,6 +88,31 @@ CATEGORY = {
     },
 }
 
+FOUR_WAY = {
+    "type": "choice",
+    "instructions": "Classify `text` by what is needed to answer it.",
+    "criteria": {
+        "project_history": "needs this user's or team's earlier decisions, conventions, preferences, previous sessions, past incidents, or recorded project facts",
+        "self_contained": "a general knowledge, coding, or writing request answerable without any history",
+        "live_task": "an instruction to run, inspect, test, build, fix, or change the current code or machine, fully described in the text",
+        "chitchat": "greeting, thanks, small talk, or a question about the assistant itself",
+    },
+}
+
+FOUR_WAY_HISTORY = {
+    "type": "choice",
+    "instructions": "Classify `text` by what is needed to answer it.",
+    "criteria": {
+        "project_history": (
+            "refers to something earlier: previous versions, past changes to undo or restore, unfinished work to continue, "
+            "agreed conventions, the user's stated preferences, past incidents, or recorded project facts such as release steps"
+        ),
+        "self_contained": "a general knowledge, coding, or writing request answerable without any history",
+        "live_task": "an instruction to run, inspect, test, build, fix, or change the current code or machine, fully described in the text",
+        "chitchat": "greeting, thanks, small talk, or a question about the assistant itself",
+    },
+}
+
 # name -> (questions dict, key to read, label whose probability means "needs memory", include task in state)
 VARIANTS = {
     "v0_current": ({"requires_memory": YES_NO_V0, "scope": SCOPE, "category": CATEGORY}, "requires_memory", "yes", True),
@@ -95,15 +120,26 @@ VARIANTS = {
     "v2_strict_negatives": ({"requires_memory": YES_NO_STRICT}, "requires_memory", "yes", False),
     "v3_three_way": ({"needed": THREE_WAY}, "needed", "project_history", False),
     "v4_inverted": ({"self_contained": SELF_CONTAINED_INVERTED}, "self_contained", "no", False),
+    "v5_four_way": ({"needed": FOUR_WAY}, "needed", "project_history", False),
+    "v6_four_way_history": ({"needed": FOUR_WAY_HISTORY}, "needed", "project_history", False),
 }
 
 
-def load_rows(path: Path) -> list[dict]:
+def load_rows(paths) -> list[dict]:
+    rows = []
+    for path in paths if isinstance(paths, list) else [paths]:
+        rows.extend(_load_one(Path(path)))
+    return rows
+
+
+def _load_one(path: Path) -> list[dict]:
     rows = []
     for line in path.read_text(encoding="utf-8").splitlines():
         if line.strip():
             item = json.loads(line)
-            rows.append({"text": item["text"], "recall": bool(item["recall"])})
+            label = item.get("label") or ("recall" if item.get("recall") else "none")
+            if label in ("recall", "none"):
+                rows.append({"text": item["text"], "recall": label == "recall"})
     return rows
 
 
@@ -159,9 +195,11 @@ def main() -> int:
     parser.add_argument("--model", default=None)
     parser.add_argument("--variants", default=",".join(VARIANTS), help="comma-separated variant names")
     parser.add_argument("--out", default=str(ROOT / "laya-tune-result.json"))
+    parser.add_argument("--tune", action="append", help="tune set JSONL (repeatable; default: laya-recall-eval.jsonl)")
+    parser.add_argument("--holdout", action="append", help="holdout JSONL (repeatable; default: laya-recall-holdout.jsonl)")
     args = parser.parse_args()
 
-    tune, holdout = load_rows(TUNE), load_rows(HOLDOUT)
+    tune, holdout = load_rows(args.tune or [TUNE]), load_rows(args.holdout or [HOLDOUT])
     t0 = time.perf_counter()
     agent, backend = load_agent(args.backend, args.model)
     load_ms = (time.perf_counter() - t0) * 1000

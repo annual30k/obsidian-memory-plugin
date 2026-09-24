@@ -4,6 +4,7 @@
 Listens strictly on 127.0.0.1 or ::1 (ephemeral loopback port), exposes:
 - GET /health (authenticated health check)
 - POST /judge/recall (authenticated memory recall decision)
+- POST /warmup (authenticated; starts loading an unloaded model in the background)
 - POST /shutdown (authenticated graceful shutdown)
 
 Authenticates via constant-time Bearer token comparison, clamps all probability outputs
@@ -168,7 +169,94 @@ def _answer(answers: Dict[str, Any], key: str) -> Tuple[Dict[str, Any], float]:
     return ans.get("probabilities", {}) or {}, sanitize_score(ans.get("confidence", 0.5))
 
 
-def run_judgement(agent: Any, text: str, project_context: Optional[Dict[str, Any]], task: str) -> Dict[str, Any]:
+# Matches the plugin's default skipThreshold: below it the router skips memory and suppresses
+# capture, so scope/category answers would never be used.
+SECOND_CALL_MIN_SCORE = 0.35
+
+
+# ---------------------------------------------------------------- trained recall head
+# A logistic-regression layer on the encoder's sentence embedding plus the zero-shot score, trained on
+# labelled prompts by scripts/train-laya-head.py. It replaces the zero-shot memory-need score when it
+# matches the loaded model. Lookup order: $LAYA_RECALL_HEAD, ~/.laya/recall-head.json (trained on your
+# own labels), the head bundled next to this file. Set LAYA_RECALL_HEAD=off to use zero-shot only.
+RECALL_HEAD_FORMAT = "laya-recall-head"
+RECALL_HEAD_VERSION = 1
+BUNDLED_RECALL_HEAD = Path(__file__).resolve().parent / "recall-head.json"
+USER_RECALL_HEAD = Path.home() / ".laya" / "recall-head.json"
+MAX_HEAD_BYTES = 2_000_000
+
+
+def recall_head_candidates() -> list:
+    env = os.environ.get("LAYA_RECALL_HEAD", "").strip()
+    if env.lower() in ("off", "none", "0", "false"):
+        return []
+    if env:
+        return [Path(os.path.expanduser(env))]
+    return [USER_RECALL_HEAD, BUNDLED_RECALL_HEAD]
+
+
+def load_recall_head(model_name: str, candidates: Optional[list] = None) -> Optional[Dict[str, Any]]:
+    """First valid head for this model, or None. Never raises: a bad head only disables itself."""
+    for path in recall_head_candidates() if candidates is None else candidates:
+        try:
+            if not path.is_file() or path.is_symlink() or path.stat().st_size > MAX_HEAD_BYTES:
+                continue
+            head = json.loads(path.read_text(encoding="utf-8"))
+            if head.get("format") != RECALL_HEAD_FORMAT or head.get("version") != RECALL_HEAD_VERSION or head.get("model") != model_name:
+                continue
+            mean, std, weights = head.get("mean"), head.get("std"), head.get("weights")
+            dim = len(weights) if isinstance(weights, list) else 0
+            if dim < 2 or not isinstance(mean, list) or not isinstance(std, list) or len(mean) != dim or len(std) != dim:
+                continue
+            values = [float(v) for v in mean + std + weights] + [float(head.get("bias", 0.0))]
+            if not all(math.isfinite(v) for v in values) or any(float(v) <= 0 for v in std):
+                continue
+            calibration = head.get("calibration") or {}
+            points = [calibration.get("skip"), calibration.get("recall")]
+            if not all(isinstance(pt, list) and len(pt) == 2 and all(math.isfinite(float(v)) for v in pt) for pt in points) or points[0][0] >= points[1][0]:
+                points = None
+            return {
+                "path": str(path),
+                "dim": dim,
+                "max_length": int(head.get("maxLength", 128)),
+                # Standardisation folded into the weights: z = sum(x_i * w_i / std_i) + (b - sum(mean_i * w_i / std_i)).
+                "w": [float(w) / float(sd) for w, sd in zip(weights, std)],
+                "b": float(head.get("bias", 0.0)) - sum(float(m) * float(w) / float(sd) for m, w, sd in zip(mean, weights, std)),
+                "calibration": [[float(v) for v in pt] for pt in points] if points else None,
+                "trained_at": head.get("trainedAt"),
+                "prompts": (head.get("trainedOn") or {}).get("prompts"),
+            }
+        except Exception:
+            continue
+    return None
+
+
+def _calibrate(logit_value: float, calibration: Optional[list]) -> float:
+    """Monotone piecewise-linear map in logit space that puts the head's chosen skip/recall operating
+    points on the router's default thresholds (0.35 / 0.5)."""
+    if calibration:
+        (x0, y0), (x1, y1) = calibration
+        if logit_value <= x0:
+            logit_value = y0 + (logit_value - x0)
+        elif logit_value >= x1:
+            logit_value = y1 + (logit_value - x1)
+        else:
+            logit_value = y0 + (logit_value - x0) * (y1 - y0) / (x1 - x0)
+    return 1.0 / (1.0 + math.exp(-max(-30.0, min(30.0, logit_value))))
+
+
+def head_score(head: Dict[str, Any], embedding: Any, zero_shot: float) -> float:
+    vector = [float(v) for v in embedding]
+    norm = math.sqrt(sum(v * v for v in vector)) or 1e-9
+    features = [v / norm for v in vector] + [zero_shot]
+    if len(features) != head["dim"]:
+        raise ValueError("recall head does not match the embedding size")
+    z = head["b"] + sum(x * w for x, w in zip(features, head["w"]))
+    return sanitize_score(_calibrate(z, head["calibration"]))
+
+
+def run_judgement(agent: Any, text: str, project_context: Optional[Dict[str, Any]], task: str,
+                  head: Optional[Dict[str, Any]] = None, embed: Any = None) -> Dict[str, Any]:
     """Ask the model and map its answers to the service response shape (shared by MLX and PyTorch)."""
     state: Dict[str, Any] = {"text": text, "task": task}
     project_id = clean_project_id(project_context)
@@ -179,9 +267,19 @@ def run_judgement(agent: Any, text: str, project_context: Optional[Dict[str, Any
         # 1) memory need, asked alone on the bare text (see MEMORY_NEED_QUESTION)
         need = agent.predict({"text": text}, {"memory_need": MEMORY_NEED_QUESTION}).get("answers", {})
         need_probs, confidence = _answer(need, "memory_need")
-        requires_memory = sanitize_score(need_probs.get("project_history", 0.0))
-        # 2) scope and category, only used to shape the hint text
-        answers = agent.predict(state, {key: QUESTIONS[key] for key in ("scope", "category")}).get("answers", {})
+        zero_shot = sanitize_score(need_probs.get("project_history", 0.0))
+        requires_memory = zero_shot
+        if head is not None and embed is not None:
+            try:
+                requires_memory = head_score(head, embed([text])[0], zero_shot)
+            except Exception:
+                requires_memory = zero_shot
+        # 2) scope and category, only used to shape the recall/capture hint. A clearly self-contained
+        # turn gets neither hint, so skip this second model call (halves warm latency for most turns).
+        if requires_memory < SECOND_CALL_MIN_SCORE:
+            answers = {}
+        else:
+            answers = agent.predict(state, {key: QUESTIONS[key] for key in ("scope", "category")}).get("answers", {})
     else:
         answers = agent.predict(state, {key: QUESTIONS[key] for key in TASK_QUESTIONS.get(task, TASK_QUESTIONS["recall"])}).get("answers", {})
         req_probs, confidence = _answer(answers, "requires_memory")
@@ -191,7 +289,7 @@ def run_judgement(agent: Any, text: str, project_context: Optional[Dict[str, Any
     cat_probs, cat_confidence = _answer(answers, "category")
     capture_probs, capture_confidence = _answer(answers, "capture")
     relation_probs, relation_confidence = _answer(answers, "relation")
-    return {
+    result = {
         "requires_memory": requires_memory,
         "confidence": confidence,
         "category_confidence": cat_confidence,
@@ -200,6 +298,10 @@ def run_judgement(agent: Any, text: str, project_context: Optional[Dict[str, Any
         "capture": {"yes": sanitize_score(capture_probs.get("yes", 0.0)), "confidence": capture_confidence if capture_probs else 0.0},
         "relation": {"label": max(relation_probs, key=relation_probs.get) if relation_probs else "unrelated", "confidence": relation_confidence if relation_probs else 0.0}
     }
+    if task == "recall":
+        result["zero_shot"] = zero_shot
+        result["recall_head"] = head is not None and embed is not None
+    return result
 
 
 class BaseBackend:
@@ -300,12 +402,21 @@ class LazyModelBackend(BaseBackend):
     def __init__(self, model_name: str, idle_unload_seconds: int = 900):
         super().__init__(model_name)
         self.agent = None
+        self.embed = None
         self.status = "unloaded"
         self.idle_unload_seconds = idle_unload_seconds
         self._model_lock = threading.RLock()
+        self.recall_head = load_recall_head(model_name)
 
     def load_agent(self) -> Any:
         raise NotImplementedError
+
+    def make_embed(self, agent: Any) -> Any:
+        return None
+
+    def judge(self, text: str, project_context: Optional[Dict[str, Any]], task: str) -> Dict[str, Any]:
+        agent = self.ensure_loaded()
+        return run_judgement(agent, text, project_context, task, self.recall_head, self.embed)
 
     def release_backend_cache(self) -> None:
         gc.collect()
@@ -322,6 +433,12 @@ class LazyModelBackend(BaseBackend):
                 self.agent = None
                 self.status = "unloaded"
                 raise
+            self.embed = None
+            if self.recall_head is not None:
+                try:
+                    self.embed = self.make_embed(self.agent)
+                except Exception:
+                    self.embed = None
             self.status = "ready"
             self.mark_used()
             return self.agent
@@ -336,6 +453,7 @@ class LazyModelBackend(BaseBackend):
             if self.agent is None or time.monotonic() - self.last_used_at < idle_seconds:
                 return False
             self.agent = None
+            self.embed = None
             self.status = "unloaded"
         self.release_backend_cache()
         return True
@@ -350,6 +468,10 @@ class MlxBackend(LazyModelBackend):
         import laya_mlx
         return laya_mlx.load(self.model_name)
 
+    def make_embed(self, agent: Any) -> Any:
+        import laya_mlx
+        return laya_mlx.embed_fn_from_agent(agent, max_length=self.recall_head["max_length"])
+
     def release_backend_cache(self) -> None:
         super().release_backend_cache()
         try:
@@ -359,7 +481,7 @@ class MlxBackend(LazyModelBackend):
             pass
 
     def predict(self, text: str, project_context: Optional[Dict[str, Any]] = None, task: str = "recall") -> Dict[str, Any]:
-        return run_judgement(self.ensure_loaded(), text, project_context, task)
+        return self.judge(text, project_context, task)
 
 
 class PyTorchBackend(LazyModelBackend):
@@ -370,6 +492,10 @@ class PyTorchBackend(LazyModelBackend):
     def load_agent(self) -> Any:
         import laya
         return laya.load(self.model_name)
+
+    def make_embed(self, agent: Any) -> Any:
+        import laya
+        return laya.embed_fn_from_agent(agent, max_length=self.recall_head["max_length"])
 
     def release_backend_cache(self) -> None:
         super().release_backend_cache()
@@ -384,7 +510,7 @@ class PyTorchBackend(LazyModelBackend):
             pass
 
     def predict(self, text: str, project_context: Optional[Dict[str, Any]] = None, task: str = "recall") -> Dict[str, Any]:
-        return run_judgement(self.ensure_loaded(), text, project_context, task)
+        return self.judge(text, project_context, task)
 
 
 def create_backend(backend_type: str, model_name: Optional[str] = None, idle_unload_seconds: int = 900) -> BaseBackend:
@@ -459,19 +585,53 @@ class LayaRequestHandler(BaseHTTPRequestHandler):
             self._send_json(401, {"error": "unauthorized"})
             return
 
+        self._send_json(200, self._status_info())
+
+    def _status_info(self, model_status: Optional[str] = None) -> Dict[str, Any]:
         backend = self.server.backend
-        status_info = {
+        return {
             "service": SERVICE_IDENTITY,
             "status": "ok",
             "api_version": API_VERSION,
-            "model_status": backend.status if backend else "loading",
+            "model_status": model_status or (backend.status if backend else "loading"),
             "idle_unload_seconds": backend.idle_unload_seconds if backend else 0,
-            "capabilities": ["recall", "capture", "relation", "scope"],
+            "capabilities": ["recall", "capture", "relation", "scope", "warmup"] + (["recall_head"] if getattr(backend, "recall_head", None) else []),
             "backend": getattr(backend, "backend_type", "unknown"),
             "model": backend.model_name if backend else None,
+            "recall_head": ({k: backend.recall_head.get(k) for k in ("path", "trained_at", "prompts")}
+                            if getattr(backend, "recall_head", None) else None),
             "instance_id": self.server.instance_id
         }
-        self._send_json(200, status_info)
+
+    def _handle_warmup(self) -> None:
+        """Start loading an unloaded model in the background and answer at once.
+
+        Hooks use this instead of waiting several seconds for a cold model: the current turn
+        falls back to the normal workflow and the next turn finds the model ready.
+        """
+        if not self._verify_auth():
+            self._send_json(401, {"error": "unauthorized"})
+            return
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        if 0 < length <= MAX_PAYLOAD_BYTES:
+            self.rfile.read(length)
+        backend = self.server.backend
+        started = False
+        with self.server.warmup_lock:
+            if backend is not None and getattr(backend, "status", None) == "unloaded":
+                def load() -> None:
+                    try:
+                        backend.preload()
+                    except Exception:
+                        pass
+                threading.Thread(target=load, name="laya-warmup", daemon=True).start()
+                started = True
+        info = self._status_info("loading" if started else None)
+        info["warming"] = started
+        self._send_json(200, info)
 
     def do_POST(self) -> None:
         if self.path == "/shutdown":
@@ -534,6 +694,10 @@ class LayaRequestHandler(BaseHTTPRequestHandler):
                 self.server.shutdown()
 
             threading.Thread(target=delayed_shutdown, daemon=True).start()
+            return
+
+        if self.path == "/warmup":
+            self._handle_warmup()
             return
 
         route = self.path
@@ -660,6 +824,7 @@ class LayaServer(ThreadingHTTPServer):
         self.instance_id = instance_id
         self.connection_semaphore = threading.Semaphore(self.MAX_CONCURRENT_REQUESTS)
         self.inference_semaphore = threading.Semaphore(1)
+        self.warmup_lock = threading.Lock()
 
 
 class LayaUnixServer(ThreadingHTTPServer):
@@ -676,6 +841,7 @@ class LayaUnixServer(ThreadingHTTPServer):
         self.instance_id = instance_id
         self.connection_semaphore = threading.Semaphore(self.MAX_CONCURRENT_REQUESTS)
         self.inference_semaphore = threading.Semaphore(1)
+        self.warmup_lock = threading.Lock()
 
 
 def start_idle_unload_monitor(server: LayaServer, idle_seconds: int) -> Tuple[threading.Event, Optional[threading.Thread]]:

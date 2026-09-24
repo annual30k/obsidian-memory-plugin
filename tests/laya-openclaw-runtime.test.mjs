@@ -85,7 +85,7 @@ test("OpenClaw runtime appends recall recommendation on user trigger when Laya t
     });
 
     const promise = hook(
-      { prompt: "How did we resolve that architectural conflict earlier?" },
+      { prompt: "Which approach resolved that architectural conflict?" },
       { agentId: "owner", trigger: "user" }
     );
     const res = await promise;
@@ -100,7 +100,7 @@ test("OpenClaw runtime appends recall recommendation on user trigger when Laya t
     assert.ok(res.prependContext.includes("/my/test/vault"));
 
     // 3. Recall recommendation is appended before [End Obsidian Memory]
-    assert.ok(res.prependContext.includes("[Laya Memory Judge: recall recommended (scope: project). Search Vault before proceeding.]"));
+    assert.ok(res.prependContext.includes("[Laya Memory Judge: recall recommended (scope: project). Read the obsidian-memory skill, then search the Vault before proceeding.]"));
     const judgeIdx = res.prependContext.indexOf("[Laya Memory Judge");
     const endIdx = res.prependContext.indexOf("[End Obsidian Memory]");
     assert.ok(judgeIdx < endIdx, "Laya suggestion must be placed before [End Obsidian Memory]");
@@ -221,7 +221,7 @@ test("OpenClaw runtime appends proactive capture recommendation when Laya detect
         endpoint: "http://127.0.0.1:18791",
         recallThreshold: 0.70,
         captureThreshold: 0.75,
-        proactiveCapture: true
+        proactiveCapture: true, layaCapture: true
       }
     });
 

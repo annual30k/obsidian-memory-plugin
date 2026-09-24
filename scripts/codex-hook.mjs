@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import { DEFAULT_MEMORY_JUDGE, parseMemoryJudgeConfig } from "../lib/config.js";
 import { createMemoryRouter } from "../lib/memory-router/router.js";
 import { buildLayaNotice } from "../lib/prompt.js";
+import { resolveVaultPath } from "../lib/memory-router/vault-index.js";
 
 // Fixed, user-facing block text; only the sanitized reason category is appended (never raw errors).
 export function strictBlockReason(category) {
@@ -102,7 +103,12 @@ async function main() {
   const router = createMemoryRouter(judgeConfig, { useCache: true });
 
   try {
-    const decision = await router.evaluateRecall(promptText);
+    const decision = await router.evaluateRecall(promptText, null, {
+      host: "codex",
+      sessionKey: typeof payload.session_id === "string" ? payload.session_id : null,
+      cwd: typeof payload.cwd === "string" ? payload.cwd : process.cwd(),
+      vaultPath: resolveVaultPath()
+    });
     if (decision.trace) {
       decision.trace.hookExecuted = true;
     }

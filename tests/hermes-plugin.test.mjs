@@ -85,9 +85,9 @@ class Ctx:
 ctx = Ctx(); m.register(ctx)
 os.environ["OBSIDIAN_MEMORY_ROUTER_MODE"] = "auto"
 orig = m._evaluate_router
-m._evaluate_router = lambda text, pid, mode: {"memoryAction": "default", "guidanceAppend": None, "trace": {}}
+m._evaluate_router = lambda text, pid, mode, turn=None: {"memoryAction": "default", "guidanceAppend": None, "trace": {}}
 default_ctx = ctx.hooks["pre_llm_call"](user_message="写个脚本", session_id="s")
-m._evaluate_router = lambda text, pid, mode: {"memoryAction": "skip", "guidanceAppend": "[Obsidian Memory: not needed for this turn]", "trace": {}}
+m._evaluate_router = lambda text, pid, mode, turn=None: {"memoryAction": "skip", "guidanceAppend": "[Obsidian Memory: not needed for this turn]", "trace": {}}
 skip_ctx = ctx.hooks["pre_llm_call"](user_message="你好", session_id="s")
 print(json.dumps({"skills": ctx.skills, "hooks": sorted(ctx.hooks), "settings": m._settings(ctx), "default": default_ctx, "skip": skip_ctx}))
 `;

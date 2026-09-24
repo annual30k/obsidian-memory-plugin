@@ -33,6 +33,31 @@ export function ensureLayaDir(customHome = null) {
   return dir;
 }
 
+const DEFAULT_MODELS = ["aac6fef/laya-multilingual-mlx", "convaiinnovations/laya-multilingual"];
+
+/**
+ * Environment that makes Hugging Face load an already-downloaded model without contacting the Hub.
+ * Otherwise every load first calls the Hub API, which fails behind proxies the venv cannot use (e.g. a
+ * SOCKS proxy without `socksio`) or offline. The Hub client is still built in offline mode and reads the
+ * proxy variables, so they are blanked for the child too (it needs no network). Nothing changes when the
+ * user set HF_HUB_OFFLINE or the model is not cached yet (the first download still needs the network).
+ */
+export function offlineModelEnv(env = process.env, models = DEFAULT_MODELS, home = os.homedir()) {
+  if (env.HF_HUB_OFFLINE !== undefined || env.HF_OFFLINE !== undefined) return {};
+  const hub = env.HF_HUB_CACHE || path.join(env.HF_HOME || path.join(env.XDG_CACHE_HOME || path.join(home, ".cache"), "huggingface"), "hub");
+  const cached = models.filter(Boolean).some((model) => {
+    try {
+      const snapshots = path.join(hub, `models--${String(model).replace(/\//gu, "--")}`, "snapshots");
+      return fs.readdirSync(snapshots).length > 0;
+    } catch {
+      return false;
+    }
+  });
+  if (!cached) return {};
+  const noProxy = Object.fromEntries(Object.keys(env).filter((key) => /^(?:all|https?|socks)_proxy$/iu.test(key)).map((key) => [key, ""]));
+  return { HF_HUB_OFFLINE: "1", ...noProxy };
+}
+
 export function getDefaultVenvPath(customHome = null) {
   return path.join(getLayaDir(customHome), "venv");
 }
@@ -397,6 +422,8 @@ export async function statusCommand(args = {}) {
   process.stdout.write(`  Backend:      ${health.backend || "unknown"}\n`);
   process.stdout.write(`  Model:        ${health.model || "default"}\n`);
   process.stdout.write(`  Model Status: ${health.model_status || health.modelStatus || "unknown"}\n`);
+  const head = health.recall_head;
+  process.stdout.write(`  Recall head:  ${head && typeof head.path === "string" ? `${head.path} (trained ${head.trained_at ?? "?"} on ${head.prompts ?? "?"} prompts)` : "none (zero-shot)"}\n`);
   process.stdout.write(`  Token:        ${maskToken(token)}\n`);
   process.stdout.write("=================================\n");
   return 0;
@@ -506,7 +533,7 @@ export async function startCommand(args = {}) {
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
     // Keep the installed plugin directory free of __pycache__/*.pyc.
-    env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1", ...(args.env || {}) }
+    env: { ...process.env, ...offlineModelEnv(process.env, args.model ? [args.model] : DEFAULT_MODELS), PYTHONDONTWRITEBYTECODE: "1", ...(args.env || {}) }
   });
 
   child.unref();

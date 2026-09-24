@@ -1,38 +1,38 @@
-{"text": "我们之前在项目中对于数据库连接池是怎么约定的？", "recall": true}
-{"text": "上次那个 CI 在 Windows 上挂掉的问题最后是怎么解决的", "recall": true}
-{"text": "按我们项目的惯例，新接口的错误码应该怎么定义", "recall": true}
-{"text": "继续昨天没做完的导出功能", "recall": true}
-{"text": "这个项目为什么当初不用 Redis 做缓存", "recall": true}
-{"text": "给 README 加一段安装说明，风格和其他章节保持一致", "recall": true}
-{"text": "照老规矩写 commit message", "recall": true}
-{"text": "我偏好的测试框架是什么来着", "recall": true}
-{"text": "离线导出那个需求还有哪些限制", "recall": true}
-{"text": "部署到 staging 的步骤跟之前一样吗", "recall": true}
-{"text": "What did we decide about the auth token refresh flow?", "recall": true}
-{"text": "Use the same retry strategy we settled on for the payment client", "recall": true}
-{"text": "Why does this repo pin Node 22 again?", "recall": true}
-{"text": "Pick up where we left off on the migration script", "recall": true}
-{"text": "Follow our usual naming conventions for the new service", "recall": true}
-{"text": "Is there a known gotcha with the Obsidian CLI on Windows in this project?", "recall": true}
-{"text": "How did we handle the rate limit issue last time?", "recall": true}
-{"text": "Apply my preferred code review checklist to this diff", "recall": true}
-{"text": "写一个 Python 函数，把列表按指定大小分块", "recall": false}
-{"text": "解释一下 JavaScript 里的事件循环", "recall": false}
-{"text": "把这段代码里的 var 全部改成 const 或 let", "recall": false}
-{"text": "这个正则 ^[a-z]+$ 能匹配空字符串吗", "recall": false}
-{"text": "帮我写个 bash 脚本统计目录下所有 .md 文件的行数", "recall": false}
-{"text": "TypeScript 的 unknown 和 any 有什么区别", "recall": false}
-{"text": "给这个函数加上单元测试", "recall": false}
-{"text": "把下面的 JSON 格式化一下", "recall": false}
-{"text": "sort 函数默认是稳定排序吗", "recall": false}
-{"text": "今天天气怎么样", "recall": false}
-{"text": "Write a SQL query that returns the top 5 customers by revenue", "recall": false}
-{"text": "What is the difference between a process and a thread?", "recall": false}
-{"text": "Convert this callback-based function to async/await", "recall": false}
-{"text": "Fix the off-by-one error in this loop", "recall": false}
-{"text": "Explain what this regular expression does: \\d{3}-\\d{4}", "recall": false}
-{"text": "Generate a .gitignore for a Node project", "recall": false}
-{"text": "How do I center a div with flexbox?", "recall": false}
-{"text": "Rename the variable tmp to buffer in this snippet", "recall": false}
-{"text": "Summarize this stack trace for me", "recall": false}
-{"text": "What does HTTP status 422 mean?", "recall": false}
+{"text": "我们之前在项目中对于数据库连接池是怎么约定的？", "recall": true, "label": "recall"}
+{"text": "上次那个 CI 在 Windows 上挂掉的问题最后是怎么解决的", "recall": true, "label": "recall"}
+{"text": "按我们项目的惯例，新接口的错误码应该怎么定义", "recall": true, "label": "recall"}
+{"text": "继续昨天没做完的导出功能", "recall": true, "label": "recall"}
+{"text": "这个项目为什么当初不用 Redis 做缓存", "recall": true, "label": "recall"}
+{"text": "给 README 加一段安装说明，风格和其他章节保持一致", "recall": false, "label": "none"}
+{"text": "照老规矩写 commit message", "recall": true, "label": "recall"}
+{"text": "我偏好的测试框架是什么来着", "recall": true, "label": "recall"}
+{"text": "离线导出那个需求还有哪些限制", "recall": true, "label": "recall"}
+{"text": "部署到 staging 的步骤跟之前一样吗", "recall": true, "label": "recall"}
+{"text": "What did we decide about the auth token refresh flow?", "recall": true, "label": "recall"}
+{"text": "Use the same retry strategy we settled on for the payment client", "recall": true, "label": "recall"}
+{"text": "Why does this repo pin Node 22 again?", "recall": true, "label": "recall"}
+{"text": "Pick up where we left off on the migration script", "recall": true, "label": "recall"}
+{"text": "Follow our usual naming conventions for the new service", "recall": true, "label": "recall"}
+{"text": "Is there a known gotcha with the Obsidian CLI on Windows in this project?", "recall": true, "label": "recall"}
+{"text": "How did we handle the rate limit issue last time?", "recall": true, "label": "recall"}
+{"text": "Apply my preferred code review checklist to this diff", "recall": true, "label": "recall"}
+{"text": "写一个 Python 函数，把列表按指定大小分块", "recall": false, "label": "none"}
+{"text": "解释一下 JavaScript 里的事件循环", "recall": false, "label": "none"}
+{"text": "把这段代码里的 var 全部改成 const 或 let", "recall": false, "label": "none"}
+{"text": "这个正则 ^[a-z]+$ 能匹配空字符串吗", "recall": false, "label": "none"}
+{"text": "帮我写个 bash 脚本统计目录下所有 .md 文件的行数", "recall": false, "label": "none"}
+{"text": "TypeScript 的 unknown 和 any 有什么区别", "recall": false, "label": "none"}
+{"text": "给这个函数加上单元测试", "recall": false, "label": "none"}
+{"text": "把下面的 JSON 格式化一下", "recall": false, "label": "none"}
+{"text": "sort 函数默认是稳定排序吗", "recall": false, "label": "none"}
+{"text": "今天天气怎么样", "recall": false, "label": "none"}
+{"text": "Write a SQL query that returns the top 5 customers by revenue", "recall": false, "label": "none"}
+{"text": "What is the difference between a process and a thread?", "recall": false, "label": "none"}
+{"text": "Convert this callback-based function to async/await", "recall": false, "label": "none"}
+{"text": "Fix the off-by-one error in this loop", "recall": false, "label": "none"}
+{"text": "Explain what this regular expression does: \\d{3}-\\d{4}", "recall": false, "label": "none"}
+{"text": "Generate a .gitignore for a Node project", "recall": false, "label": "none"}
+{"text": "How do I center a div with flexbox?", "recall": false, "label": "none"}
+{"text": "Rename the variable tmp to buffer in this snippet", "recall": false, "label": "none"}
+{"text": "Summarize this stack trace for me", "recall": false, "label": "none"}
+{"text": "What does HTTP status 422 mean?", "recall": false, "label": "none"}

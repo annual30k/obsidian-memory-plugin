@@ -1428,7 +1428,7 @@ states = []
 class FakeAgent:
     def predict(self, state, questions):
         states.append(dict(state))
-        return {"answers": {"requires_memory": {"probabilities": {"yes": 0.5}, "confidence": 0.5}}}
+        return {"answers": {"memory_need": {"probabilities": {"project_history": 0.9}, "confidence": 0.9}}}
 sys.modules["laya_mlx"] = types.SimpleNamespace(load=lambda name: FakeAgent())
 ns = runpy.run_path(sys.argv[1])
 backend = ns["MlxBackend"]("test-model")
@@ -1515,4 +1515,172 @@ print("three-way recall mapping passed")
   const result = spawnSync(python.command, [...python.args, "-c", script, SERVICE_PY], { encoding: "utf8", windowsHide: true });
   assert.equal(result.status, 0, result.stderr || result.stdout);
   assert.match(result.stdout, /three-way recall mapping passed/);
+});
+
+test("cold model: router answers at once with model_warming, /warmup loads in the background, next turn is judged", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "laya-warmup-test-"));
+  const serviceFile = path.join(tmpDir, "service.json");
+  const token = "warmup-test-token-1234567890";
+  // No --preload: the mock backend starts "unloaded" and needs 1.5 s to load.
+  const pyProc = spawn(python.command, [
+    ...python.args, SERVICE_PY, "--backend", "mock", "--idle-unload-seconds", "0",
+    "--service-file", serviceFile, "--token", token, "--port", "0"
+  ], { windowsHide: true, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, LAYA_MOCK_LOAD_DELAY: "1.5" } });
+  try {
+    const started = Date.now();
+    while (!fs.existsSync(serviceFile) && Date.now() - started < 10000) await new Promise((r) => setTimeout(r, 50));
+    const { endpoint } = JSON.parse(fs.readFileSync(serviceFile, "utf8"));
+    const router = new MemoryRouter({ mode: "manual", endpoint, timeout: 1000, coldStartTimeout: 5000, healthTimeout: 1000 }, { useCache: false });
+    router.client.token = token;
+
+    const t0 = Date.now();
+    const first = await router.evaluateRecall("an ambiguous request about the parser");
+    const firstMs = Date.now() - t0;
+    assert.equal(first.reason, "model_warming");
+    assert.equal(first.memoryAction, "default");
+    assert.ok(firstMs < 1000, `cold turn must not wait for the model load (took ${firstMs} ms)`);
+
+    let ready = false;
+    while (Date.now() - started < 10000) {
+      const health = await (await fetch(`${endpoint}/health`, { headers: { Authorization: `Bearer ${token}` } })).json();
+      if (health.model_status === "ready") { ready = true; break; }
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    assert.ok(ready, "warmup must finish loading without a judge request");
+
+    const second = await router.evaluateRecall("an ambiguous request about the parser");
+    assert.equal(second.trace.route, "laya");
+    router.dispose();
+
+    const unauth = await fetch(`${endpoint}/warmup`, { method: "POST" });
+    assert.equal(unauth.status, 401);
+  } finally {
+    try { pyProc.kill("SIGTERM"); } catch {}
+    await new Promise((r) => { if (pyProc.exitCode !== null) return r(); const timer = setTimeout(r, 1500); pyProc.once("exit", () => { clearTimeout(timer); r(); }); });
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("coldStart wait keeps the old blocking behaviour", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "laya-warmup-wait-"));
+  const serviceFile = path.join(tmpDir, "service.json");
+  const token = "warmup-wait-token-1234567890";
+  const pyProc = spawn(python.command, [
+    ...python.args, SERVICE_PY, "--backend", "mock", "--idle-unload-seconds", "0",
+    "--service-file", serviceFile, "--token", token, "--port", "0"
+  ], { windowsHide: true, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, LAYA_MOCK_LOAD_DELAY: "0.8" } });
+  try {
+    const started = Date.now();
+    while (!fs.existsSync(serviceFile) && Date.now() - started < 10000) await new Promise((r) => setTimeout(r, 50));
+    const { endpoint } = JSON.parse(fs.readFileSync(serviceFile, "utf8"));
+    const router = new MemoryRouter({ mode: "manual", endpoint, timeout: 1000, coldStartTimeout: 5000, healthTimeout: 1000, coldStart: "wait" }, { useCache: false });
+    router.client.token = token;
+    const result = await router.evaluateRecall("an ambiguous request about the parser");
+    assert.equal(result.trace.route, "laya");
+    router.dispose();
+  } finally {
+    try { pyProc.kill("SIGTERM"); } catch {}
+    await new Promise((r) => { if (pyProc.exitCode !== null) return r(); const timer = setTimeout(r, 1500); pyProc.once("exit", () => { clearTimeout(timer); r(); }); });
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("a clearly self-contained turn costs one model call, not two", () => {
+  const script = String.raw`
+import runpy, sys, types
+calls = []
+class FakeAgent:
+    def __init__(self, need): self.need = need
+    def predict(self, state, questions):
+        calls.append(sorted(questions))
+        return {"answers": {"memory_need": {"probabilities": {"project_history": self.need}, "confidence": 0.9}}}
+for need, expected in ((0.05, 1), (0.6, 2)):
+    calls.clear()
+    sys.modules["laya_mlx"] = types.SimpleNamespace(load=lambda name, n=need: FakeAgent(n))
+    ns = runpy.run_path(sys.argv[1])
+    out = ns["MlxBackend"]("test-model").predict("t", None)
+    assert len(calls) == expected, (need, calls)
+    assert out["requires_memory"] == need
+print("second call gating passed")
+`;
+  const result = spawnSync(python.command, [...python.args, "-c", script, SERVICE_PY], { encoding: "utf8", windowsHide: true });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /second call gating passed/);
+});
+
+test("service.py recall head: loads only a valid head for the same model and replaces the zero-shot score", () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "laya-py-head-"));
+  try {
+    const pyScript = `
+import sys, json, math
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from service import load_recall_head, run_judgement, _calibrate
+
+tmp = Path(sys.argv[2])
+def write(name, **over):
+    head = {"format": "laya-recall-head", "version": 1, "model": "m1", "maxLength": 64,
+            "mean": [0, 0, 0], "std": [1, 1, 1], "weights": [4.0, -4.0, 0.0], "bias": 0.0,
+            "calibration": {"skip": [-1.0, math.log(0.35 / 0.65)], "recall": [1.0, 0.0]}}
+    head.update(over)
+    p = tmp / name
+    p.write_text(json.dumps(head), encoding="utf-8")
+    return p
+
+good = write("good.json")
+assert load_recall_head("m1", [good])["dim"] == 3
+assert load_recall_head("other-model", [good]) is None, "head for another model must be ignored"
+assert load_recall_head("m1", [write("bad-dim.json", mean=[0, 0])]) is None
+assert load_recall_head("m1", [write("bad-std.json", std=[1, 0, 1])]) is None
+assert load_recall_head("m1", [write("bad-format.json", format="x")]) is None
+assert load_recall_head("m1", [tmp / "missing.json", good])["path"].endswith("good.json"), "falls through to the next candidate"
+(tmp / "garbage.json").write_text("{not json", encoding="utf-8")
+assert load_recall_head("m1", [tmp / "garbage.json"]) is None
+
+# Calibration puts the chosen operating points on the router thresholds and stays monotone.
+assert abs(_calibrate(1.0, [[-1.0, math.log(0.35 / 0.65)], [1.0, 0.0]]) - 0.5) < 1e-9
+assert abs(_calibrate(-1.0, [[-1.0, math.log(0.35 / 0.65)], [1.0, 0.0]]) - 0.35) < 1e-9
+xs = [_calibrate(x / 4, [[-1.0, -0.6], [1.0, 0.0]]) for x in range(-20, 21)]
+assert xs == sorted(xs)
+
+class Agent:
+    def predict(self, state, questions):
+        if "memory_need" in questions:
+            return {"answers": {"memory_need": {"probabilities": {"project_history": 0.9}, "confidence": 0.8}}}
+        return {"answers": {}}
+
+head = load_recall_head("m1", [good])
+self_ref = run_judgement(Agent(), "we agreed", None, "recall", head, lambda texts: [[1.0, 0.0]])
+generic = run_judgement(Agent(), "what is x", None, "recall", head, lambda texts: [[0.0, 1.0]])
+assert self_ref["zero_shot"] == 0.9 and self_ref["recall_head"] is True
+assert self_ref["requires_memory"] > 0.9 and generic["requires_memory"] < 0.1, (self_ref, generic)
+plain = run_judgement(Agent(), "x", None, "recall")
+assert plain["requires_memory"] == 0.9 and plain["recall_head"] is False
+def broken(texts):
+    raise RuntimeError("embed failed")
+assert run_judgement(Agent(), "x", None, "recall", head, broken)["requires_memory"] == 0.9, "embedding errors fall back to zero-shot"
+print("RECALL_HEAD_TESTS_PASSED")
+`;
+    const res = spawnSync(python.command, [...python.args, "-c", pyScript, path.dirname(SERVICE_PY), tmpDir], { encoding: "utf8", windowsHide: true });
+    assert.equal(res.status, 0, `Python test failed: ${res.stderr}`);
+    assert.ok(res.stdout.includes("RECALL_HEAD_TESTS_PASSED"));
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test("offlineModelEnv loads a cached model without contacting the Hub, and leaves explicit settings alone", async () => {
+  const { offlineModelEnv } = await import("../scripts/laya-service.mjs");
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "laya-hf-"));
+  try {
+    assert.deepEqual(offlineModelEnv({}, ["org/model"], home), {}, "not cached yet: first download needs the network");
+    fs.mkdirSync(path.join(home, ".cache", "huggingface", "hub", "models--org--model", "snapshots", "abc"), { recursive: true });
+    assert.deepEqual(offlineModelEnv({}, ["org/model"], home), { HF_HUB_OFFLINE: "1" });
+    assert.deepEqual(offlineModelEnv({ ALL_PROXY: "socks5://127.0.0.1:1080", https_proxy: "http://p", PATH: "/bin" }, ["org/model"], home),
+      { HF_HUB_OFFLINE: "1", ALL_PROXY: "", https_proxy: "" }, "a proxy the venv cannot use must not break a cached load");
+    assert.deepEqual(offlineModelEnv({ HF_HUB_OFFLINE: "0" }, ["org/model"], home), {});
+    assert.deepEqual(offlineModelEnv({ HF_HOME: path.join(home, "elsewhere") }, ["org/model"], home), {});
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
 });

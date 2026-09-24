@@ -21,6 +21,7 @@ test("DEFAULT_MEMORY_JUDGE has expected safe defaults", () => {
   assert.equal(DEFAULT_MEMORY_JUDGE.recallThreshold, 0.50);
   assert.equal(DEFAULT_MEMORY_JUDGE.captureThreshold, 0.75);
   assert.equal(DEFAULT_MEMORY_JUDGE.proactiveCapture, true);
+  assert.equal(DEFAULT_MEMORY_JUDGE.layaCapture, false);
   assert.equal(DEFAULT_MEMORY_JUDGE.consecutiveFailures, 2);
   assert.equal(DEFAULT_MEMORY_JUDGE.resetTimeout, 300000);
   assert.ok(Object.isFrozen(DEFAULT_MEMORY_JUDGE));
@@ -103,6 +104,8 @@ test("parseMemoryJudgeConfig validates valid options and rejects invalid fields"
   assert.throws(() => parseMemoryJudgeConfig({ recallThreshold: 1.5 }), TypeError);
   assert.throws(() => parseMemoryJudgeConfig({ captureThreshold: 1.5 }), TypeError);
   assert.throws(() => parseMemoryJudgeConfig({ proactiveCapture: "true" }), TypeError);
+  assert.throws(() => parseMemoryJudgeConfig({ layaCapture: "yes" }), TypeError);
+  assert.equal(parseMemoryJudgeConfig({ layaCapture: true }).layaCapture, true);
   assert.throws(() => parseMemoryJudgeConfig({ consecutiveFailures: 0 }), TypeError);
   assert.throws(() => parseMemoryJudgeConfig({ discoveryInterval: 500 }), TypeError);
 });

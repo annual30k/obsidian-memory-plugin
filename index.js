@@ -2,6 +2,7 @@ import { DEFAULT_MEMORY_JUDGE, parseConfigs } from "./lib/config.js";
 import { buildGuidance, memoryActionFor } from "./lib/prompt.js";
 import { createMemoryRouter } from "./lib/memory-router/router.js";
 import { evaluateFastPath } from "./lib/memory-router/fast-path.js";
+import { enrichDecision } from "./lib/memory-router/turn-context.js";
 
 const CACHE_TTL_MS = 30000;
 
@@ -151,6 +152,13 @@ export function createOpenClawPlugin(options = {}) {
           }
 
           const turnKey = getTurnKey(event, context, text);
+          const turn = {
+            host: "openclaw",
+            sessionKey: context?.sessionKey ?? context?.sessionId ?? null,
+            vaultPath: agentConfig.vaultPath,
+            cwd: agentConfig.projectRoot ?? context?.workspaceDir ?? null,
+            projectId: agentConfig.projectId ?? null
+          };
 
           const fast = evaluateFastPath(text);
           if (fast.action !== "consult_laya") {
@@ -170,23 +178,21 @@ export function createOpenClawPlugin(options = {}) {
               }
             };
             decision.memoryAction = memoryActionFor(decision, memoryJudge.skipThreshold);
+            if (router) {
+              try { enrichDecision(decision, text, turn, memoryJudge); } catch {}
+            }
             setTurnDecision(turnKey, decision);
             api.logger?.debug?.(`[Laya Memory Router] before_prompt_build Fast-Path Trace: ${JSON.stringify(decision.trace)}`);
-            if (decision.memoryAction === "skip") {
+            if (decision.memoryAction === "skip" || decision.recallRecommended ||
+                (decision.captureRecommended && memoryJudge.proactiveCapture !== false)) {
               return { prependContext: buildGuidance(agentConfig, decision) };
-            }
-            if (fast.recallRecommended) {
-              return { prependContext: buildGuidance(agentConfig, { recallRecommended: true, scope: fast.scope ?? "project" }) };
-            }
-            if (fast.captureRecommended && memoryJudge.proactiveCapture !== false) {
-              return { prependContext: buildGuidance(agentConfig, { captureRecommended: true, captureCategory: fast.captureCategory, scope: fast.scope ?? "project" }) };
             }
             return { prependContext: baseGuidance };
           }
 
           return (async () => {
             try {
-              const decision = await router.evaluateRecall(text, agentConfig.projectId ? { project_id: agentConfig.projectId } : null);
+              const decision = await router.evaluateRecall(text, agentConfig.projectId ? { project_id: agentConfig.projectId } : null, turn);
               if (decision.trace) {
                 decision.trace.hookExecuted = true;
                 api.logger?.debug?.(`[Laya Memory Router] before_prompt_build Trace: ${JSON.stringify(decision.trace)}`);

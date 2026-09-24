@@ -20,6 +20,7 @@ import { fileURLToPath } from "node:url";
 import { DEFAULT_MEMORY_JUDGE, parseMemoryJudgeConfig } from "../lib/config.js";
 import { createMemoryRouter } from "../lib/memory-router/router.js";
 import { buildLayaNotice } from "../lib/prompt.js";
+import { resolveVaultPath } from "../lib/memory-router/vault-index.js";
 
 const TURN_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour TTL
 
@@ -207,7 +208,14 @@ async function main() {
   const router = createMemoryRouter(judgeConfig, { useCache: true });
 
   try {
-    const decision = await router.evaluateRecall(userPrompt);
+    const workspace = [payload?.cwd, payload?.workspaceRoot, Array.isArray(payload?.workspaceRoots) ? payload.workspaceRoots[0] : null]
+      .find((v) => typeof v === "string" && v) || process.cwd();
+    const decision = await router.evaluateRecall(userPrompt, null, {
+      host: "antigravity",
+      sessionKey: conversationId || null,
+      cwd: workspace,
+      vaultPath: resolveVaultPath()
+    });
     if (decision.trace) {
       decision.trace.hookExecuted = true;
     }

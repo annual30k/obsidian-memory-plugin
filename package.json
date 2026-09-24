@@ -1,6 +1,6 @@
 {
   "name": "obsidian-memory-plugin",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "private": true,
   "description": "The Obsidian Memory skill packaged for Antigravity, OpenClaw, Codex, and Hermes.",
   "type": "module",
@@ -45,8 +45,8 @@
   "scripts": {
     "clean": "node -e \"fs.rmSync('dist', {recursive:true, force:true}); fs.readdirSync('.').filter(f => f.endsWith('.tgz')).forEach(f => fs.unlinkSync(f))\"",
     "pack": "node -e \"fs.mkdirSync('dist', {recursive:true})\" && npm pack --pack-destination dist",
-    "test": "node --test tests/*.test.mjs",
-    "check": "node --check index.js && node --check lib/config.js && node --check lib/managed-block.js && node --check lib/prompt.js && node --check lib/memory-router/schemas.js && node --check lib/memory-router/security.js && node --check lib/memory-router/fast-path.js && node --check lib/memory-router/circuit-breaker.js && node --check lib/memory-router/client.js && node --check lib/memory-router/cache.js && node --check lib/memory-router/auto-restart.js && node --check lib/memory-router/router.js && node --check lib/memory-router/cli.js && node --check scripts/codex-hook.mjs && node --check scripts/antigravity-hook.mjs && node --check scripts/laya-service.mjs && node --check scripts/check-vault.mjs && node --check scripts/setup-antigravity.mjs && node --check scripts/setup-codex.mjs && node --check scripts/setup-hermes.mjs && node --check scripts/setup-openclaw.mjs && node --check scripts/validate-antigravity-plugin.mjs && node --check scripts/validate-codex-plugin.mjs && node --check scripts/eval-laya.mjs && node --check scripts/bench-laya.mjs && node --check scripts/tune-laya.mjs && node scripts/check-python.mjs",
+    "test": "node --import ./tests/setup-env.mjs --test tests/*.test.mjs",
+    "check": "node --check index.js && node --check lib/config.js && node --check lib/managed-block.js && node --check lib/prompt.js && node --check lib/memory-router/schemas.js && node --check lib/memory-router/security.js && node --check lib/memory-router/fast-path.js && node --check lib/memory-router/circuit-breaker.js && node --check lib/memory-router/client.js && node --check lib/memory-router/cache.js && node --check lib/memory-router/auto-restart.js && node --check lib/memory-router/router.js && node --check lib/memory-router/cli.js && node --check lib/memory-router/vault-index.js && node --check lib/memory-router/turn-context.js && node --check scripts/codex-hook.mjs && node --check scripts/antigravity-hook.mjs && node --check scripts/laya-service.mjs && node --check scripts/check-vault.mjs && node --check scripts/setup-antigravity.mjs && node --check scripts/setup-codex.mjs && node --check scripts/setup-hermes.mjs && node --check scripts/setup-openclaw.mjs && node --check scripts/validate-antigravity-plugin.mjs && node --check scripts/validate-codex-plugin.mjs && node --check scripts/eval-laya.mjs && node --check scripts/bench-laya.mjs && node --check scripts/tune-laya.mjs && node --check scripts/train-laya.mjs && node --check scripts/label-laya.mjs && node --check scripts/calibrate-vault-hints.mjs && node scripts/check-python.mjs",
     "check:antigravity": "node scripts/validate-antigravity-plugin.mjs",
     "check:codex": "node scripts/validate-codex-plugin.mjs",
     "check:vault": "node scripts/check-vault.mjs",
@@ -62,6 +62,9 @@
     "laya:eval": "node scripts/eval-laya.mjs",
     "laya:bench": "node scripts/bench-laya.mjs",
     "laya:tune": "node scripts/tune-laya.mjs",
+    "laya:train": "node scripts/train-laya.mjs",
+    "laya:label": "node scripts/label-laya.mjs",
+    "laya:calibrate-vault": "node scripts/calibrate-vault-hints.mjs",
     "prepack": "npm run check && npm run check:antigravity && npm run check:codex && npm test"
   }
 }
