@@ -101,3 +101,20 @@ print(json.dumps({"skills": ctx.skills, "hooks": sorted(ctx.hooks), "settings": 
   assert.ok(r.default.context.includes(vaultPath));
   assert.equal(r.skip.context, "[Obsidian Memory: not needed for this turn]");
 });
+
+test("plugin.json stays a valid Agent Plugins v1 manifest so `hermes plugins install` accepts the repository", async () => {
+  const { readFileSync } = await import("node:fs");
+  const manifest = JSON.parse(readFileSync(new URL("../plugin.json", import.meta.url), "utf8"));
+  // Mirrors hermes_cli/agent_plugins.py _validate_manifest: Hermes validates plugin.json on install
+  // whenever it exists, even though it loads the native plugin.yaml.
+  assert.equal(manifest.$schema, "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json");
+  assert.match(manifest.name, /^(?!.*(?:--|\.\.))[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/u);
+  assert.ok(manifest.name.length <= 64);
+  for (const field of ["version", "description", "homepage", "repository", "license"]) {
+    if (field in manifest) assert.equal(typeof manifest[field], "string", field);
+  }
+  assert.ok(Array.isArray(manifest.keywords) && manifest.keywords.every((k) => typeof k === "string"));
+  assert.deepEqual(Object.keys(manifest.author).filter((k) => !["name", "email", "url"].includes(k)), []);
+  const yaml = readFileSync(new URL("../plugin.yaml", import.meta.url), "utf8");
+  assert.match(yaml, /^provides_hooks:\n  - pre_llm_call$/mu, "plugin.yaml must declare the hook it registers");
+});

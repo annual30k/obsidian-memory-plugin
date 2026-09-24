@@ -267,15 +267,23 @@ Hermes 的插件默认需要显式启用。安装并启用后，运行一次配�
 可读取的 Vault 绝对路径，并且只调用 Hermes 配置命令写入本插件自己的 `settings.vault_path`：
 
 ```sh
-hermes plugins install annual30k/obsidian-memory-plugin
-hermes plugins enable obsidian-memory-plugin
-node scripts/setup-hermes.mjs
+hermes plugins install annual30k/obsidian-memory-plugin --enable
+node ~/.hermes/plugins/obsidian-memory-plugin/scripts/setup-hermes.mjs
 ```
+
+Hermes 从 Git 安装时会锁定到当时的提交；更新到最新发布请带 `--force` 重新安装（`settings.vault_path` 等配置按插件名保存，不受影响），然后重启 Hermes 网关：
+
+```sh
+hermes plugins install annual30k/obsidian-memory-plugin --force --enable
+hermes gateway restart
+```
+
+仓库根目录的 `plugin.json` 同时是 Antigravity 清单和 Agent Plugins v1 清单（Hermes 安装时会校验它）；Hermes 实际按原生 `plugin.yaml` + `__init__.py` 加载。
 
 非交互环境必须明确给出路径：
 
 ```sh
-node scripts/setup-hermes.mjs --vault "/absolute/path/to/My Vault" --yes
+node ~/.hermes/plugins/obsidian-memory-plugin/scripts/setup-hermes.mjs --vault "/absolute/path/to/My Vault" --yes
 ```
 
 插件不会猜测或创建 Vault，也不会在注册时读写 Vault。它把下面的主动规则放入**新的** Hermes 会话，
