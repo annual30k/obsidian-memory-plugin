@@ -1,10 +1,13 @@
 {
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "obsidian-memory-plugin",
   "version": "0.7.0",
   "description": "The Obsidian Memory skill packaged for Antigravity, OpenClaw, Codex, and Hermes.",
   "author": {
     "name": "Cyber Health"
   },
+  "homepage": "https://github.com/annual30k/obsidian-memory-plugin",
+  "repository": "https://github.com/annual30k/obsidian-memory-plugin",
   "license": "MIT",
   "keywords": [
     "obsidian",

@@ -13,6 +13,8 @@ tags:
   - coding
 hooks:
   - pre_llm_call
+provides_hooks:
+  - pre_llm_call
 config_schema:
   vault_path:
     type: str
