@@ -1,3 +1,5 @@
+// Isolation first: never touch the real ~/.laya, Vault or Laya service, however this file is run.
+import "./setup-env.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { evaluateFastPath } from "../lib/memory-router/fast-path.js";

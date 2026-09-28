@@ -1,3 +1,5 @@
+// Isolation first: never touch the real ~/.laya, Vault or Laya service, however this file is run.
+import "./setup-env.mjs";
 // Regression tests for the gaps found in the 2026-09-27 audit and closed afterwards: queue claims, the
 // explicit-request backstop, held findings for sessions without a project, Antigravity's final turn,
 // Hermes through the session state, one set of environment settings, bounded Vault backfill, explicit
