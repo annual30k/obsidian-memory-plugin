@@ -52,8 +52,10 @@ jobs:
           PID=$!
           for i in $(seq 1 60); do [ -f "$D/service.json" ] && break; sleep 0.5; done
           echo "service.json after ${i} polls: $(ls "$D")"
-          python -c "import sys; print(sys.version, sys.executable)"
-          sort -t'|' -k2 -n "$D/err" | tail -25
+          echo "process alive: $(kill -0 $PID 2>/dev/null && echo yes || echo no)"
+          echo "--- stderr (without import timings)"; grep -v '^import time:' "$D/err" | tail -40
+          echo "--- stdout"; tail -20 "$D/out"
+          echo "--- slowest imports"; grep '^import time:' "$D/err" | sort -t'|' -k2 -n | tail -8
           kill $PID 2>/dev/null || true
 
       - name: Check syntax
