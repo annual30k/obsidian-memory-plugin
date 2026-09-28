@@ -25,6 +25,7 @@ import re
 import secrets
 import signal
 import socket
+import socketserver
 import stat
 import sys
 import threading
@@ -1148,10 +1149,26 @@ class LayaRequestHandler(BaseHTTPRequestHandler):
             self.server.inference_semaphore.release()
 
 
+def _bind_without_fqdn(server: ThreadingHTTPServer) -> None:
+    """Bind like HTTPServer.server_bind, without its socket.getfqdn() reverse DNS lookup.
+
+    That lookup means nothing for a loopback or Unix-socket service, and it blocks: on a Unix socket it
+    even resolves the first two characters of the socket path as a host name. Where DNS is slow (GitHub's
+    macOS runners, some proxies and VPNs) it delayed start-up by about 30 seconds.
+    """
+    socketserver.TCPServer.server_bind(server)
+    address = server.server_address
+    server.server_name = "localhost"
+    server.server_port = address[1] if isinstance(address, tuple) and len(address) > 1 else 0
+
+
 class LayaServer(ThreadingHTTPServer):
     daemon_threads = True
     request_queue_size = 128
     MAX_CONCURRENT_REQUESTS = 16
+
+    def server_bind(self) -> None:
+        _bind_without_fqdn(self)
 
     def __init__(self, server_address: Tuple[str, int], auth_token: str, backend: BaseBackend, instance_id: str):
         if ":" in server_address[0]:
@@ -1176,6 +1193,9 @@ class LayaUnixServer(ThreadingHTTPServer):
     daemon_threads = True
     request_queue_size = 128
     MAX_CONCURRENT_REQUESTS = 16
+
+    def server_bind(self) -> None:
+        _bind_without_fqdn(self)
 
     def __init__(self, socket_path: str, auth_token: str, backend: BaseBackend, instance_id: str):
         super().__init__(socket_path, LayaRequestHandler)
