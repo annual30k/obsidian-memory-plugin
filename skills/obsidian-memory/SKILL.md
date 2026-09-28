@@ -155,7 +155,11 @@ Vault's candidate template and `cand-<uuid>` ids. Treat such candidates like any
 other pending evidence: they are unreviewed and may be wrong. You never need to
 act for the digest. When the hint says the digest staged candidates since the
 last conversation, tell the user in one short sentence at the end of your reply
-that they are waiting for review; do not open or change them unless asked.
+that they are waiting for review; do not open or change them unless asked. When
+it says findings are held because their session had no project, ask the user
+one short question (which project, Global, or discard) and act on the answer
+only with the digest commands the hint names, never by writing the Vault
+yourself.
 
 The per-turn Obsidian Memory hint can carry these capture-related signals; none
 of them writes anything by itself. With the default `autoCapture: digest` only

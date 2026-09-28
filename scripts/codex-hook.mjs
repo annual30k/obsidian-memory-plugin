@@ -11,7 +11,7 @@
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { DEFAULT_MEMORY_JUDGE, parseMemoryJudgeConfig } from "../lib/config.js";
+import { memoryJudgeFromEnv, memoryJudgeModeFromEnv } from "../lib/config.js";
 import { createMemoryRouter } from "../lib/memory-router/router.js";
 import { buildLayaNotice } from "../lib/prompt.js";
 import { resolveVaultPath } from "../lib/memory-router/vault-index.js";
@@ -63,13 +63,8 @@ export function emitAuditTrace(trace, { hostCapability = "codex_user_prompt_subm
 }
 
 async function main() {
-  let mode = DEFAULT_MEMORY_JUDGE.mode;
-  if (process.env.OBSIDIAN_MEMORY_JUDGE_MODE) {
-    const envMode = process.env.OBSIDIAN_MEMORY_JUDGE_MODE.trim();
-    if (["off", "auto", "strict", "manual"].includes(envMode)) {
-      mode = envMode;
-    }
-  }
+  const judgeConfig = memoryJudgeFromEnv(process.env);
+  const mode = judgeConfig.mode;
 
   const rawInput = await readStdin();
   if (!rawInput.trim()) {
@@ -91,17 +86,6 @@ async function main() {
     return;
   }
 
-  const judgeConfigInput = { mode };
-  if (process.env.OBSIDIAN_MEMORY_ENDPOINT) {
-    judgeConfigInput.endpoint = process.env.OBSIDIAN_MEMORY_ENDPOINT.trim();
-  }
-  if (process.env.OBSIDIAN_MEMORY_SERVICE_FILE) {
-    judgeConfigInput.serviceFile = process.env.OBSIDIAN_MEMORY_SERVICE_FILE.trim();
-  }
-
-  const autoCapture = process.env.OBSIDIAN_MEMORY_AUTO_CAPTURE?.trim();
-  if (["digest", "revise", "remind", "off"].includes(autoCapture)) judgeConfigInput.autoCapture = autoCapture;
-  const judgeConfig = parseMemoryJudgeConfig(judgeConfigInput);
   const router = createMemoryRouter(judgeConfig, { useCache: true });
 
   try {
@@ -181,13 +165,7 @@ const isEntrypoint = process.argv[1] && (() => {
 if (isEntrypoint) {
   main().catch((_err) => {
     process.stderr.write("[codex-hook] Top-level error: process_failure\n");
-    let mode = DEFAULT_MEMORY_JUDGE.mode;
-    if (process.env.OBSIDIAN_MEMORY_JUDGE_MODE) {
-      const envMode = process.env.OBSIDIAN_MEMORY_JUDGE_MODE.trim();
-      if (["off", "auto", "strict", "manual"].includes(envMode)) {
-        mode = envMode;
-      }
-    }
+    const mode = memoryJudgeModeFromEnv(process.env);
     emitAuditTrace({
       route: "fallback",
       decision: mode === "strict" ? "block" : "none",

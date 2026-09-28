@@ -16,12 +16,13 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkS
 import { dirname, join, resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { DEFAULT_MEMORY_JUDGE, parseMemoryJudgeConfig } from "../lib/config.js";
 import { createMemoryRouter } from "../lib/memory-router/router.js";
 import { buildLayaNotice } from "../lib/prompt.js";
 import { resolveVaultPath } from "../lib/memory-router/vault-index.js";
-import { enqueueCapture } from "../lib/memory-router/capture-queue.js";
 import { stateFile } from "../lib/memory-router/paths.js";
+import { memoryJudgeFromEnv, memoryJudgeModeFromEnv } from "../lib/config.js";
+import { enqueueTurnEnd } from "../lib/memory-router/turn-context.js";
+import { antigravityExchangeBefore, registerTranscript, listTranscripts } from "../lib/memory-router/transcripts.js";
 
 const TURN_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour TTL
 
@@ -33,33 +34,14 @@ async function readStdin() {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-const unwrapRequest = (text) => {
-  const match = String(text).match(/<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/);
-  return (match ? match[1] : String(text)).trim();
-};
-
 /**
  * The turn before the current one in an Antigravity transcript: its user request and the model's final
- * text (the last PLANNER_RESPONSE with content before the current USER_INPUT). Antigravity has no
- * end-of-turn hook, so the previous turn is queued for the session digest when the next one starts.
+ * text. Antigravity has no end-of-turn hook, so the previous turn is queued when the next one starts, and
+ * the last turn of a conversation is collected from its transcript by the background digest.
  */
 export function previousExchange(transcriptPath, currentLineIndex) {
-  if (!transcriptPath || !existsSync(transcriptPath) || !Number.isInteger(currentLineIndex)) return null;
-  try {
-    const lines = readFileSync(transcriptPath, "utf8").trim().split("\n");
-    let reply = null;
-    for (let i = Math.min(currentLineIndex, lines.length) - 1; i >= 0; i--) {
-      let parsed;
-      try { parsed = JSON.parse(lines[i]); } catch { continue; }
-      if (!parsed || typeof parsed !== "object") continue;
-      if (!reply && parsed.type === "PLANNER_RESPONSE" && typeof parsed.content === "string" && parsed.content.trim()) {
-        reply = parsed.content;
-      } else if (parsed.type === "USER_INPUT" && typeof parsed.content === "string") {
-        return reply ? { prompt: unwrapRequest(parsed.content), reply } : null;
-      }
-    }
-  } catch {}
-  return null;
+  const exchange = antigravityExchangeBefore(transcriptPath, currentLineIndex);
+  return exchange ? { prompt: exchange.prompt, reply: exchange.reply } : null;
 }
 
 export function extractLastUserPrompt(transcriptPath) {
@@ -169,13 +151,7 @@ export function emitAuditTrace(trace, { hostCapability = "antigravity_pre_invoca
 }
 
 async function main() {
-  let mode = DEFAULT_MEMORY_JUDGE.mode;
-  if (process.env.OBSIDIAN_MEMORY_JUDGE_MODE) {
-    const envMode = process.env.OBSIDIAN_MEMORY_JUDGE_MODE.trim();
-    if (["off", "auto", "strict", "manual"].includes(envMode)) {
-      mode = envMode;
-    }
-  }
+  let mode = memoryJudgeModeFromEnv(process.env);
 
   const rawInput = await readStdin();
   if (!rawInput.trim()) {
@@ -233,27 +209,26 @@ async function main() {
     mode = "auto";
   }
 
-  const judgeConfigInput = { mode };
-  if (process.env.OBSIDIAN_MEMORY_ENDPOINT) {
-    judgeConfigInput.endpoint = process.env.OBSIDIAN_MEMORY_ENDPOINT.trim();
-  }
-  if (process.env.OBSIDIAN_MEMORY_SERVICE_FILE) {
-    judgeConfigInput.serviceFile = process.env.OBSIDIAN_MEMORY_SERVICE_FILE.trim();
-  }
-
-  const autoCapture = process.env.OBSIDIAN_MEMORY_AUTO_CAPTURE?.trim();
-  if (["digest", "revise", "remind", "off"].includes(autoCapture)) judgeConfigInput.autoCapture = autoCapture;
-  const judgeConfig = parseMemoryJudgeConfig(judgeConfigInput);
+  const judgeConfig = memoryJudgeFromEnv(process.env, { mode });
   const router = createMemoryRouter(judgeConfig, { useCache: true });
 
-  // "digest": queue the previous (finished) turn of this conversation for the session digest.
+  // "digest": queue the previous (finished) turn of this conversation for the session digest, and register
+  // the conversation so its final turn is collected from the transcript once it goes idle.
   const vaultPath = resolveVaultPath();
-  if (judgeConfig.autoCapture === "digest" && judgeConfig.proactiveCapture !== false && conversationId && extracted) {
-    const previous = previousExchange(transcriptPath, extracted.lineIndex);
-    if (previous) {
-      const cwd = [payload?.cwd, payload?.workspaceRoot, Array.isArray(payload?.workspaceRoots) ? payload.workspaceRoots[0] : null]
-        .find((v) => typeof v === "string" && v) || process.cwd();
-      enqueueCapture("turn", previous, { host: "antigravity", sessionKey: conversationId, vaultPath, cwd });
+  const cwd = [payload?.cwd, payload?.workspaceRoot, Array.isArray(payload?.workspaceRoots) ? payload.workspaceRoots[0] : null]
+    .find((v) => typeof v === "string" && v) || process.cwd();
+  if (judgeConfig.autoCapture === "digest" && judgeConfig.proactiveCapture !== false && conversationId && extracted && transcriptPath) {
+    try {
+      const known = listTranscripts().find((t) => t.host === "antigravity" && t.sessionKey === conversationId);
+      let queuedUserLine = known?.queuedUserLine ?? -1;
+      const previous = antigravityExchangeBefore(transcriptPath, extracted.lineIndex);
+      if (previous && previous.userLine > queuedUserLine) {
+        enqueueTurnEnd({ host: "antigravity", sessionKey: conversationId, assistantText: previous.reply, prompt: previous.prompt, turn: { vaultPath, cwd } });
+        queuedUserLine = previous.userLine;
+      }
+      registerTranscript({ host: "antigravity", sessionKey: conversationId, transcriptPath, vaultPath, cwd, queuedUserLine });
+    } catch {
+      // Capture never disturbs the turn.
     }
   }
 

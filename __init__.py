@@ -220,9 +220,6 @@ def _evaluate_router(user_message: str, project_id: str | None, mode: str, turn:
         }
 
 
-QUEUE_REPLY_MIN_CHARS = 200
-
-
 def _enqueue_turn(payload: dict[str, Any]) -> bool:
     """Hand one finished turn to the Node capture queue (lib/memory-router/cli.js --enqueue-turn)."""
     import shutil
@@ -258,7 +255,9 @@ def on_post_llm_call(ctx: Any = None, *, session_id: str = "", user_message: str
         auto = (os.environ.get("OBSIDIAN_MEMORY_AUTO_CAPTURE") or get_config("auto_capture", "digest") or "digest").strip()
         if mode == "off" or auto != "digest":
             return None
-        if not isinstance(assistant_response, str) or len(assistant_response.strip()) < QUEUE_REPLY_MIN_CHARS:
+        # No length filter here: the Node side queues long replies for the digest and, whatever the length,
+        # an explicit "remember" request that the turn did not stage.
+        if not isinstance(assistant_response, str) or not assistant_response.strip():
             return None
         if not isinstance(session_id, str) or not session_id:
             return None

@@ -526,12 +526,14 @@ Laya 只看提示文本，不知道 Vault 里已经有哪些笔记。插件会�
 
 分两条路（详见 [ARCHITECTURE.md](ARCHITECTURE.md#写入由谁决定)）：
 
-- **显式要求**（"记住……""记一下这个坑"）：回合内同步完成，agent 按 Skill 写 inbox 候选。OpenClaw / Codex 在回合结束时检查 inbox 有没有新文件，没有就要求模型补一轮（每次请求最多一次）；Antigravity / Hermes 下一轮提醒一次。
-- **自动暂存**（`autoCapture: "digest"`，默认）：回合结束时钩子只把本轮提问和最终回复（≥ 200 字，脱敏后）追加到本地队列，不调用模型、不让你等。会话空闲 20 分钟后，后台的会话整理按会话合并、按话题只取最后一轮结论，每个会话最多写 2 条候选（外加最多 2 条你说过的长期规则，如"以后……都……""统一用……""我对……过敏"），标 `origin: auto-digest`，内容是原话证据。你不再聊天也会整理（后台等待进程），下一轮 agent 会用一句话告诉你暂存了几条；`npm run doctor` 能看到队列积压和上次整理时间。OpenClaw 的定时任务、心跳和模型报错的回合不入队。Vault 未初始化、项目未绑定、项目 `rules.md` 里写了 `no-auto-capture`、含凭据时都不写；项目内容不会进 Global。四个宿主都覆盖：Codex `Stop`、OpenClaw `agent_end`、Hermes `post_llm_call`、Antigravity 在下一轮开始时从会话记录补记上一轮。
+- **显式要求**（"记住……""记一下这个坑"）：回合内同步完成，agent 按 Skill 写 inbox 候选。OpenClaw / Codex 在回合结束时检查 inbox 里有没有这一轮新写或更新的候选，没有就要求模型补一轮（每次请求最多一次）。回合结束时仍没写入的（agent 没照做，或 Antigravity / Hermes 这类没有回合结束控制的宿主），由后台整理把你的原话写成候选，不会丢。
+- **自动暂存**（`autoCapture: "digest"`，默认）：回合结束时钩子只把本轮提问和最终回复（≥ 200 字，脱敏后）追加到本地队列，不调用模型、不让你等。会话空闲 20 分钟后，后台的会话整理按会话合并、按话题只取最后一轮结论，每个会话最多写 2 条候选（外加最多 2 条你说过的长期规则，如"以后……都……""统一用……""我对……过敏"），标 `origin: auto-digest`，内容是原话证据。你不再聊天也会整理（后台等待进程），下一轮 agent 会用一句话告诉你暂存了几条；`npm run doctor` 能看到队列积压和上次整理时间。OpenClaw 的定时任务、心跳和模型报错的回合不入队。Vault 未初始化、项目 `rules.md` 里写了 `no-auto-capture`、含凭据时都不写；项目内容不会进 Global。**会话没有对应项目时不猜范围**：结论先放在 Vault 之外的暂存区，下一轮 agent 会问你归到哪个项目、Global 还是丢弃（关于你本人的偏好，如"我对花生过敏"，直接进 Global）；30 天未处理自动过期。四个宿主都覆盖：Codex `Stop`、OpenClaw `agent_end`、Hermes `post_llm_call`、Antigravity 在下一轮开始时补记上一轮、会话空闲后从会话记录补记最后一轮。
 
 ```sh
 laya digest              # 立即整理已空闲的会话
 laya digest --now        # 包括还没空闲的会话
+laya digest --held       # 因会话没有项目而暂存的发现；--file <id> --project <id>（或 --global）/ --discard <id>
+laya digest --stats      # 候选最后的去向：待审 / 已 ingest / 被删（保留率）
 laya digest --dry-run    # 只报告会写什么
 ```
 
@@ -542,7 +544,18 @@ laya digest --dry-run    # 只报告会写什么
 | `remind` | 无 | 无 | 只提醒，下一轮由 agent 决定 |
 | `off` | 无 | 无 | 只保留显式要求 |
 
-OpenClaw 在 `memoryJudge.autoCapture` 设置；Codex / Antigravity 用环境变量 `OBSIDIAN_MEMORY_AUTO_CAPTURE`；Hermes 在插件设置 `auto_capture`。`proactiveCapture: false` 关闭全部主动信号。候选是否有用取决于你整理时留下多少，`~/.laya/digest-log.jsonl` 记录每次整理写了什么、跳过了什么。
+OpenClaw 在 `memoryJudge.autoCapture` 设置；Hermes 在插件设置 `auto_capture`；Codex / Antigravity（以及后台整理）读同一组环境变量：
+
+| 环境变量 | 对应 `memoryJudge` 选项 | 取值 |
+|---|---|---|
+| `OBSIDIAN_MEMORY_JUDGE_MODE`（Hermes 旧名 `OBSIDIAN_MEMORY_ROUTER_MODE` 同样有效） | `mode` | `off` / `auto` / `strict` / `manual` |
+| `OBSIDIAN_MEMORY_AUTO_CAPTURE` | `autoCapture` | `digest` / `revise` / `remind` / `off` |
+| `OBSIDIAN_MEMORY_PROACTIVE_CAPTURE` | `proactiveCapture` | `1` / `0`（也接受 on/off、true/false） |
+| `OBSIDIAN_MEMORY_VAULT_HINTS`、`OBSIDIAN_MEMORY_VAULT_SEMANTIC` | `vaultHints`、`vaultSemantic` | 同上 |
+| `OBSIDIAN_MEMORY_DECISION_LOG` | `decisionLog` | 同上 |
+| `OBSIDIAN_MEMORY_ENDPOINT`、`OBSIDIAN_MEMORY_SERVICE_FILE` | `endpoint`、`serviceFile` | 服务地址 / 服务文件（默认 `$LAYA_HOME/.laya/service.json`，未设 `LAYA_HOME` 时为 `~/.laya/service.json`） |
+
+无效的值会让钩子按严格模式的约定失败（strict 时拦截，其余放行），不会悄悄换成别的设置。`proactiveCapture: false` 关闭全部主动信号（不入队、不整理、不提示）。候选是否有用取决于你整理时留下多少：`laya digest --stats` 统计保留率，`~/.laya/digest-log.jsonl` 记录每次整理写了什么、跳过了什么。
 
 ### 本机文件都在 `~/.laya`
 

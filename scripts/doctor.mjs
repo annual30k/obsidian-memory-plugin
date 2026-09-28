@@ -26,28 +26,47 @@ const readJson = (file) => { try { return JSON.parse(fs.readFileSync(file, "utf8
 const physical = (p) => { try { return realpathSync(p); } catch { return p; } };
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+const QUEUE_FILE = /^([0-9a-f]{16})(?:\.\d+-\d+\.claimed)?\.jsonl$/u;
+const QUEUE_FILE_MAX_BYTES = 2 * 1024 * 1024;
+
 /** Session digest status from ~/.laya (read only: no migration, no lock). */
 export function digestStatus(dir, now = Date.now()) {
-  const queue = [];
+  const sessions = new Map();
+  let oversized = 0;
   try {
     for (const name of fs.readdirSync(path.join(dir, "capture-queue"))) {
-      if (!/^[0-9a-f]{16}\.jsonl$/u.test(name)) continue;
-      try { queue.push(fs.statSync(path.join(dir, "capture-queue", name)).mtimeMs); } catch {}
+      const m = QUEUE_FILE.exec(name);
+      if (!m) continue;
+      try {
+        const st = fs.statSync(path.join(dir, "capture-queue", name));
+        sessions.set(m[1], Math.max(sessions.get(m[1]) ?? 0, st.mtimeMs));
+        if (!name.includes(".claimed.") && st.size > QUEUE_FILE_MAX_BYTES) oversized++;
+      } catch {}
     }
   } catch {}
+  const queue = [...sessions.values()];
   const log = (readText(path.join(dir, "digest-log.jsonl")) ?? "").split("\n").filter(Boolean)
     .map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
-  const recent = log.filter((r) => now - Date.parse(r.ts) < 7 * DAY_MS);
+  const runs = log.filter((r) => !r.action);
+  const recent = runs.filter((r) => now - Date.parse(r.ts) < 7 * DAY_MS);
   const waiter = readJson(path.join(dir, "state", "digest-waiter.json"));
   let waiterAlive = false;
   if (waiter?.pid) { try { process.kill(waiter.pid, 0); waiterAlive = true; } catch (err) { waiterAlive = err?.code === "EPERM"; } }
+  let held = 0;
+  try { held = fs.readdirSync(path.join(dir, "state", "held")).filter((n) => /^held-[0-9a-f]{8}\.json$/u.test(n)).length; } catch {}
+  const backfill = readJson(path.join(dir, "state", "embed-backfill.json"));
+  const index = readJson(path.join(dir, "cache", "vault-index.json"));
   return {
     queuedSessions: queue.length,
     oldestQueuedMs: queue.length ? now - Math.min(...queue) : null,
+    oversizedQueues: oversized,
     waiterAlive,
-    lastRun: log.at(-1)?.ts ?? null,
+    lastRun: runs.at(-1)?.ts ?? null,
     written7d: recent.reduce((n, r) => n + (Array.isArray(r.written) ? r.written.length : 0), 0),
-    errors7d: recent.filter((r) => (r.skipped ?? []).some((x) => String(x).startsWith("error:") || x === "vault_unreadable" || x === "stale_queue_dropped")).length
+    errors7d: recent.filter((r) => (r.skipped ?? []).some((x) => String(x).startsWith("error:") || x === "vault_unreadable" || x === "stale_queue_dropped")).length,
+    held,
+    backfillPausedUntil: typeof backfill?.pausedUntil === "number" && backfill.pausedUntil > now ? new Date(backfill.pausedUntil).toISOString() : null,
+    indexTruncated: index?.truncated && typeof index.truncated === "object" ? index.truncated : null
   };
 }
 
@@ -193,6 +212,9 @@ export function collect({ home = os.homedir(), env = process.env, packageVersion
     issues.push(`Session digest: ${digest.queuedSessions} queued session(s), oldest ${Math.round(digest.oldestQueuedMs / 3600000)} h, and no digest is waiting; run 'laya digest' to process them`);
   }
   if (digest.errors7d) issues.push(`Session digest: ${digest.errors7d} run(s) in the last 7 days could not finish (see ${path.join(layaDir, "digest-log.jsonl")})`);
+  if (digest.held) issues.push(`Session digest: ${digest.held} finding(s) held because their session had no project; list them with 'laya digest --held', then file or discard each`);
+  if (digest.oversizedQueues) issues.push(`Session digest: ${digest.oversizedQueues} session queue(s) reached 2 MB and stopped taking turns; run 'laya digest --now'`);
+  if (digest.indexTruncated) issues.push(`Vault index: over 2000 notes, so some were left out of Vault hints (${Object.entries(digest.indexTruncated).map(([id, n]) => `${id} ${n}`).join(", ")}); newest notes of every project are kept`);
   if (laya.cli && !fs.existsSync(path.resolve(path.join(home, ".local", "bin"), laya.cli))) issues.push(`laya CLI points to a missing file: ${laya.cli}`);
   return { packageVersion, envVault, hosts, laya, digest, issues };
 }
@@ -214,7 +236,8 @@ function render(report, stdout) {
     `recall head ${l.userHead ?? "bundled / zero-shot"}; labels ${l.labels.length ? l.labels.join(", ") : "none"}; CLI -> ${l.cli ?? "(not linked)"}`);
   const d = report.digest;
   w(`Session digest: ${d.queuedSessions} queued session(s)${d.waiterAlive ? ", waiting to digest" : ""}; last run ${d.lastRun ?? "never"}; ` +
-    `${d.written7d} candidate(s) staged in the last 7 days`);
+    `${d.written7d} candidate(s) staged in the last 7 days${d.held ? `; ${d.held} held (no project)` : ""}`);
+  if (d.backfillPausedUntil) w(`Vault embeddings: backfill paused until ${d.backfillPausedUntil} after a slow or failed retriever call`);
   w(report.issues.length ? `\n${report.issues.length} issue(s):` : "\nNo issues found.");
   for (const i of report.issues) w(`  - ${i}`);
 }

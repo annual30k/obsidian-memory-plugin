@@ -400,6 +400,10 @@ class BaseBackend:
     def unload_if_idle(self, idle_seconds: int) -> bool:
         return False
 
+    def touch(self) -> bool:
+        """Keep loaded weights resident (see start_idle_unload_monitor). No-op for eager backends."""
+        return False
+
     def preload(self) -> None:
         """Load model weights ahead of the first request (no-op for eager backends)."""
         return None
@@ -549,6 +553,14 @@ class LazyModelBackend(BaseBackend):
             self.status = "unloaded"
         self.release_backend_cache()
         return True
+
+    def touch(self) -> bool:
+        """One tiny inference over the loaded weights, without counting as use (the idle clock is not reset)."""
+        with self._model_lock:
+            if self.agent is None:
+                return False
+            run_judgement(self.agent, "ok", None, "recall", self.recall_head, self.embed, self.durable_head)
+            return True
 
 
 class MlxBackend(LazyModelBackend):
@@ -702,6 +714,14 @@ class BaseEmbedder:
             self.status = "unloaded"
         gc.collect()
         return True
+
+    def touch(self) -> bool:
+        """One tiny embedding over the loaded weights, without counting as use."""
+        with self._lock:
+            if self.status != "ready":
+                return False
+            self._embed(["ok"], "query")
+            return True
 
 
 class MockEmbedder(BaseEmbedder):
@@ -1162,23 +1182,54 @@ class LayaUnixServer(ThreadingHTTPServer):
         self.warmup_lock = threading.Lock()
 
 
-def start_idle_unload_monitor(server: LayaServer, idle_seconds: int) -> Tuple[threading.Event, Optional[threading.Thread]]:
+def start_idle_unload_monitor(server: LayaServer, idle_seconds: int, keep_warm_seconds: int = 0) -> Tuple[threading.Event, Optional[threading.Thread]]:
+    """Unload models after `idle_seconds` without a request; meanwhile keep them resident.
+
+    Under memory pressure macOS compresses or swaps pages it has not touched for a while, so a model
+    that is "ready" can still take seconds to answer (measured: Laya judge calls hitting the 1 s hook
+    budget with the service's resident size at 3 MB). While a model is loaded and has been used within
+    the unload window, one tiny inference every `keep_warm_seconds` keeps its pages resident. It does
+    not count as use, so unloading happens on schedule; 0 disables it.
+    """
     stop_event = threading.Event()
-    if idle_seconds <= 0:
+    if idle_seconds <= 0 and keep_warm_seconds <= 0:
         return stop_event, None
 
-    poll_seconds = max(1.0, min(30.0, idle_seconds / 4))
+    poll_candidates = [30.0]
+    if idle_seconds > 0:
+        poll_candidates.append(max(1.0, idle_seconds / 4))
+    if keep_warm_seconds > 0:
+        poll_candidates.append(max(1.0, keep_warm_seconds / 2))
+    poll_seconds = min(poll_candidates)
+    last_touch = [time.monotonic()]
+
+    def keep_warm(now: float) -> None:
+        if keep_warm_seconds <= 0 or now - last_touch[0] < keep_warm_seconds:
+            return
+        last_touch[0] = now
+        for model in (server.backend, getattr(server, "embedder", None)):
+            if model is None:
+                continue
+            # Only a model that would stay loaded anyway: never extends its life.
+            if idle_seconds > 0 and now - model.last_used_at >= idle_seconds:
+                continue
+            try:
+                model.touch()
+            except Exception:
+                pass
 
     def monitor() -> None:
         while not stop_event.wait(poll_seconds):
-            # Do not unload while an inference is loading or using the model.
+            # Do not unload or touch while an inference is loading or using the model.
             if not server.inference_semaphore.acquire(blocking=False):
                 continue
             try:
-                server.backend.unload_if_idle(idle_seconds)
-                embedder = getattr(server, "embedder", None)
-                if embedder is not None:
-                    embedder.unload_if_idle(idle_seconds)
+                if idle_seconds > 0:
+                    server.backend.unload_if_idle(idle_seconds)
+                    embedder = getattr(server, "embedder", None)
+                    if embedder is not None:
+                        embedder.unload_if_idle(idle_seconds)
+                keep_warm(time.monotonic())
             finally:
                 server.inference_semaphore.release()
 
@@ -1367,6 +1418,8 @@ def main() -> None:
                         help="Load model weights in the background right after the service starts listening")
     parser.add_argument("--idle-unload-seconds", type=int, default=900,
                         help="Unload model weights after this many idle seconds; 0 disables unloading (default: 900)")
+    parser.add_argument("--keep-warm-seconds", type=int, default=120,
+                        help="While a model is loaded, touch it this often so its pages stay resident under memory pressure; 0 disables (default: 120)")
     parser.add_argument("--embed-model", type=str, default=None,
                         help=f"Sentence-embedding model for Vault retrieval, or 'off' (default: $LAYA_EMBED_MODEL or {EMBED_MODEL_DEFAULT})")
 
@@ -1374,6 +1427,8 @@ def main() -> None:
 
     if args.idle_unload_seconds < 0 or args.idle_unload_seconds > 86400:
         parser.error("--idle-unload-seconds must be between 0 and 86400")
+    if args.keep_warm_seconds < 0 or args.keep_warm_seconds > 3600:
+        parser.error("--keep-warm-seconds must be between 0 and 3600")
 
     use_uds = args.transport == "uds" or (args.transport == "auto" and sys.platform != "win32")
     if use_uds and sys.platform == "win32":
@@ -1485,7 +1540,7 @@ def main() -> None:
         endpoint = f"http://[{bound_host}]:{bound_port}" if ":" in str(bound_host) else f"http://{bound_host}:{bound_port}"
         socket_identity = None
         transport = "http"
-    idle_stop_event, idle_thread = start_idle_unload_monitor(server, args.idle_unload_seconds)
+    idle_stop_event, idle_thread = start_idle_unload_monitor(server, args.idle_unload_seconds, args.keep_warm_seconds)
 
     pid = os.getpid()
 

@@ -63,7 +63,7 @@ Laya 的核心定位是：
 - 插件随包提供宿主 Hook；安装脚本默认不重复写全局 Hook（`--hooks` 才写，只用于不加载插件钩子的宿主版本）。
 - 默认 `mode: "auto"`。Laya 未安装或不可用时 auto fail-open；`mode: "off"` 时零网络请求、零本机文件。
 - Codex strict 可在 `UserPromptSubmit` 阻断；Antigravity、Hermes 不提供可靠阻断契约，strict 显式降级。
-- Antigravity 没有回合结束钩子：上一轮在下一轮开始时补记，一次会话的最后一轮要等用户再回到该会话才会进入队列。
+- Antigravity 没有回合结束钩子：上一轮在下一轮开始时补记；钩子同时登记会话记录（`~/.laya/state/open-transcripts/`），会话记录空闲 20 分钟后，后台整理从中补记最后一轮。
 
 ---
 
@@ -125,9 +125,9 @@ Laya 的核心定位是：
 
 #### 4.4.1 显式要求：回合内，同步
 - Fast-Path 识别"记住……""记一下这个坑""写到 agent.md""沉淀成长期记忆"等（排除"记住密码 / 记住登录"这类登录功能用语）→ 提示 *用户要求保存*，agent 按 Skill 在本轮结束前写 inbox 候选。
-- **兜底**：路由记下目标 inbox 目录的签名；回合结束时（OpenClaw `before_agent_finalize` 返回 `revise`，Codex `Stop` 返回 `decision: block`）若没有新文件，要求模型再跑一轮补上。每个回合最多一次，和回合结束检查共用这一次；宿主传 `stop_hook_active` 时不触发。
-- 解析不到项目时，签名覆盖 Global 与所有项目的 inbox，写进任何一个都算已写入；指令里不指定 Global，由 Skill 判断范围。
-- Antigravity / Hermes 没有回合结束控制：下一轮提示里提醒一次。
+- **兜底**：路由在提问时记下目标 inbox 里最新候选的修改时间；回合结束时（OpenClaw `before_agent_finalize` 返回 `revise`，Codex `Stop` 返回 `decision: block`）若没有比它更新、且不是整理自动写的候选（新建或原地更新都算），要求模型再跑一轮补上。每个回合最多一次，和回合结束检查共用这一次；宿主传 `stop_hook_active` 时不触发。只比较文件时间和文件时间，不依赖系统时钟；目录签名会漏掉原地更新、也会被其他写入者误触发，已不再使用（旧状态仍兼容）。
+- 解析不到项目时，检测覆盖 Global 与所有项目的 inbox，写进任何一个都算已写入；指令里不指定 Global，由 Skill 判断范围。
+- **回合结束时仍未写入**（agent 没照做、OpenClaw 因本回合有副作用而忽略了补跑、或 Antigravity / Hermes 这类没有回合结束控制的宿主）：请求以 `explicit` 记录进入整理队列，由整理把用户原话写成候选（`auto_kind: explicit-request`），"记住"不会悄悄丢失。已交给整理的请求不再在下一轮提醒，避免写两份。
 
 #### 4.4.2 自动暂存：回合外，异步（`autoCapture: "digest"`，默认）
 
@@ -157,7 +157,8 @@ Vault 项目 inbox/cand-<uuid>.md（origin: auto-digest，pending-ingest）
    - 同一会话的同一结论不写第二次；同样文字的结论在该 inbox 已有候选（`source_hash`）不写；与已有 auto-digest 候选余弦 ≥ 0.95 视为重复；显式"记住"的回合 agent 已写过候选时不写。
    - 写文件前对成稿再扫一遍凭据（sk- / sk-proj- / sk-ant- / sk_live_ / xoxb- / AIza / hf_ / glpat- / 带密码的 URL / JSON 里的 apiKey / "密码是……" 等），命中不写。
 5. **候选内容是原话证据**：本轮提问原文 + 最后一轮结论原文（引用），注明该话题共几轮、是否被用户确认，标 `origin: auto-digest`、来源宿主与会话，附检索器找到的相关笔记。归纳提炼留到用户发起 ingest 时。
-6. **收尾**：处理完删除该会话的队列文件，结果写入 `~/.laya/digest-log.jsonl`（出错也记）；Vault 暂时读不到或出错时保留队列下次再试；超过 7 天的队列先整理，整理不了才删除并记日志。下一轮提示告诉用户暂存了几条（每批一次），`npm run doctor` 显示积压与上次整理。
+6. **收尾**：整理开始前把会话的队列文件原子改名"领取"，处理完只删领取的部分（整理期间结束的回合写进新文件，不会丢）；结果写入 `~/.laya/digest-log.jsonl`（含 Vault 路径，出错也记）；Vault 暂时读不到或出错时保留领取的部分下次再试；超过 7 天的先整理，整理不了才删除并记日志。下一轮提示告诉用户暂存了几条（每批一次），`npm run doctor` 显示积压与上次整理，`laya digest --stats` 统计保留率。
+7. **会话没有项目**：会话结论与没有范围词的陈述/显式请求不猜范围（Skill："If only one scope is unresolved, hold that part"），放进 Vault 之外的暂存区 `~/.laya/state/held/`；关于用户本人的陈述（"我对……过敏""回复我用中文"）直接进 Global。下一轮提示让 agent 问用户归属，用 `laya digest --held / --file <id> --project <id>|--global / --discard <id>` 执行，写入走同一套硬规则；30 天未处理自动过期并记日志。
 
 **为什么按会话、取最后一轮**：9 月的真实数据中，有触发的 48 个会话平均触发 5.5 次，89% 的触发落在触发 ≥ 3 次的会话里；36 个多次触发的会话里有 12 个后来改口（"更正""之前判断不对""其实是"）。逐回合记录会对同一件事写多条，并记下中途被推翻的结论。
 
@@ -249,12 +250,13 @@ Vault 项目 inbox/cand-<uuid>.md（origin: auto-digest，pending-ingest）
 
 - OpenClaw `agent_end` / `before_agent_finalize` 与 Hermes `post_llm_call` 只经过单元测试和钩子层冒烟，尚未在真实网关的真实对话中跑过；真实端到端只在隔离环境里用 Codex 验证过。
 - Codex 的两个钩子需要用户批准一次（插件页 Trust all 或 `/hooks`）；批准前 Codex 回合没有记忆提示、不进入整理队列。
-- 自动候选在真实使用中的保留率（用户整理时留下多少）没有数据，是决定默认模式是否合适的关键指标。
+- 自动候选在真实使用中的保留率（用户整理时留下多少）还没有数据，是决定默认模式是否合适的关键指标；`laya digest --stats` 已可统计，需积累数周真实使用。
 - 话题合并阈值 0.91 只在手写的结论对上校准过（2026-09-28），未用真实会话；结论词表与 200 字门槛在同一批数据上调出，偏乐观；标注由 Claude 完成，口径不是用户本人的。
 - 2026-09-27 审计：新代码上线后四个宿主都没有真实用户回合经过这些路径；OpenClaw `agent_end` 曾把 cron 失败重试重放的旧回复入队（已修复：只收用户回合、不回找历史、按问答去重）；整理此前从未运行（已加后台等待进程）；脱敏漏掉 9 种常见密钥格式（已补齐并在写入前复查）；小项目语义匹配几乎总判强、空项目串到其他项目（已改为小范围以全库为参照、按项目限定候选）。修复后仍需在每个宿主上各做一次真实对话验收。
 - 长期规则判断头在 `digest` 模式下 ≥ 0.5 入队（折外 P≈0.53 / R≈0.47），另有确定性说法兜底；但作者的真实长期规则多夹在任务请求里（"整个 app 的字体大小要统一风格……"），确定性说法在 520 条真实提问上命中 0 条，主要靠判断头。
 - 2026-09-28 发现：9-24 为支持 `hermes plugins install` 给根 `plugin.json` 加了 Agent Plugins `$schema` 之后，Codex（0.155 起）改按 Agent Plugins 清单读取根清单，而 Codex 读这种清单时不读钩子（顶层 `hooks`、数组写法、`extensions["com.openai"].hooks` 均无效），插件钩子从此不运行、插件页也不显示待批准的钩子。已去掉 `$schema`，Codex 回到读取 `.codex-plugin/plugin.json`；代价是 Hermes 改用 `git clone` + `hermes plugins enable` 安装。若 Codex 将来支持 Agent Plugins 清单里的钩子，可恢复 `$schema`。
-- Windows 上的新功能（`~/.laya` 路径、后台整理进程）未经实机验证。
+- Windows 上的新功能（`~/.laya` 路径、后台整理进程）未经实机验证；CI 已覆盖 Ubuntu / Windows / macOS 并安装 PyYAML（2026-09-28 前 CI 因缺 PyYAML 一直失败）。
+- 2026-09-28 补齐的已知问题：整理期间结束的回合被一起删除（改为领取式队列）；显式"记住"在 agent 不照做或宿主不支持回合结束控制时丢失（改为交给整理兜底）；"是否已写入"用目录签名误判（改为比较候选文件时间）；无项目会话的结论被丢弃（改为暂存区 + 询问用户）；Antigravity 会话最后一轮永不入队（改为从会话记录补记）；Hermes 入队绕过会话状态（改走同一路径）；内存紧张时 Laya 被换出导致超时（服务对最近用过的模型定期轻触，保持常驻）；整理时模型已卸载导致打不出分（整理前先唤醒，最多等 45 秒）；补算笔记向量无熔断（改为有预算、失败后跨进程暂停 10 分钟）；索引超 2000 篇静默丢整个项目（改为按项目公平分配、最新优先并在 doctor 报告）；显式召回不走语义检索（补一次查询向量）；各宿主配置项不一致（统一环境变量）；`LAYA_HOME` 下找不到服务文件；`proactiveCapture: false` 仍入队"已解决"并调度整理；写满 2 MB 的队列静默丢弃（doctor 报告）。
 
 ---
 
@@ -618,7 +620,7 @@ Direct Native Action      Call Laya Judge
 
 ### 场景 9：异步会话整理
 - **动作**：一次会话中连续几轮排查同一个问题，最后给出根因与修法，然后会话空闲。
-- **预期**：回合结束钩子毫秒级返回、不调用模型、不阻塞；空闲 20 分钟后（或 `laya digest --now`）在该项目 inbox 生成 1 条 `origin: auto-digest` 候选，内容为最后一轮结论原文；项目未绑定、Vault 未初始化、项目声明 `no-auto-capture`、含凭据时均不写，也不写进 Global；`--dry-run` 只报告不写。
+- **预期**：回合结束钩子毫秒级返回、不调用模型、不阻塞；空闲 20 分钟后（或 `laya digest --now`）在该项目 inbox 生成 1 条 `origin: auto-digest` 候选，内容为最后一轮结论原文；Vault 未初始化、项目声明 `no-auto-capture`、含凭据时均不写，也不写进 Global；会话没有项目时放进暂存区，下一轮询问用户；`--dry-run` 只报告不写。
 
 ### 场景 10：`mode: off` 零副作用
 - **动作**：设为 `off`，依次触发提问钩子与回合结束钩子。

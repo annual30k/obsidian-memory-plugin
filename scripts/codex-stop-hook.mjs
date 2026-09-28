@@ -19,7 +19,7 @@ import { realpathSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { pendingCaptureEnforcement, judgeTurnEndCapture, turnEndNeedsScore, enqueueTurnEnd } from "../lib/memory-router/turn-context.js";
-import { DEFAULT_MEMORY_JUDGE, parseMemoryJudgeConfig } from "../lib/config.js";
+import { DEFAULT_MEMORY_JUDGE, memoryJudgeFromEnv } from "../lib/config.js";
 import { createMemoryRouter } from "../lib/memory-router/router.js";
 
 async function readStdin() {
@@ -52,14 +52,7 @@ export function lastAssistantMessageFromTranscript(transcriptPath) {
 }
 
 export function judgeConfigFromEnv(env = process.env) {
-  const input = {};
-  const mode = env.OBSIDIAN_MEMORY_JUDGE_MODE?.trim();
-  if (["off", "auto", "strict", "manual"].includes(mode)) input.mode = mode;
-  if (env.OBSIDIAN_MEMORY_ENDPOINT) input.endpoint = env.OBSIDIAN_MEMORY_ENDPOINT.trim();
-  if (env.OBSIDIAN_MEMORY_SERVICE_FILE) input.serviceFile = env.OBSIDIAN_MEMORY_SERVICE_FILE.trim();
-  const auto = env.OBSIDIAN_MEMORY_AUTO_CAPTURE?.trim();
-  if (["digest", "revise", "remind", "off"].includes(auto)) input.autoCapture = auto;
-  return parseMemoryJudgeConfig(input);
+  return memoryJudgeFromEnv(env);
 }
 
 /**

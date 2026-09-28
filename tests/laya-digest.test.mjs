@@ -130,11 +130,12 @@ test("runDigest writes one pending candidate per topic in the project inbox, fro
 });
 
 test("the digest never guesses a scope and honours the Vault's rules", async () => {
-  // No project resolvable: nothing is steered into Global.
+  // No project resolvable: nothing is steered into Global; the finding is held outside the Vault.
   const a = setup();
   enqueueCapture("turn", { prompt: "q", reply: REPLY() }, { ...turn(a), cwd: "/somewhere/else" }, { queueDir: a.queueDir });
   const ra = await runDigest({ queueDir: a.queueDir, stateDir: a.stateDir, force: true });
-  assert.deepEqual(ra.skipped.map((s) => s.reason), ["no_project"]);
+  assert.deepEqual(ra.skipped.map((s) => s.reason), ["held_no_project"]);
+  assert.equal(ra.held.length, 1);
   assert.equal(inbox(a, "global").length, 0);
 
   // Uninitialized Vault.
@@ -250,7 +251,9 @@ test("digest keeps a queue when the Vault is unreadable, digests stale queues fi
 
   // Older than 7 days and still unreadable: dropped, and the log says so.
   const week = new Date(Date.now() - 8 * 24 * 3600_000);
-  fs.utimesSync(listQueue(v.queueDir)[0].file, week, week);
+  const kept = listQueue(v.queueDir)[0];
+  assert.equal(kept.live, null, "the claimed segment is what is kept");
+  for (const f of kept.files) fs.utimesSync(f, week, week);
   res = await runDigest({ queueDir: v.queueDir, stateDir: v.stateDir });
   assert.ok(res.skipped.some((s) => s.reason === "stale_queue_dropped"));
   assert.equal(listQueue(v.queueDir).length, 0);
