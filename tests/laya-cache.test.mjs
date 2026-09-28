@@ -43,20 +43,22 @@ test("getDefaultCacheDir handles Windows LOCALAPPDATA with spaces, fallback, and
   assert.equal(fallback, "C:\\Users\\John Doe\\AppData\\Local\\obsidian-memory-plugin");
 });
 
-test("getDefaultCachePath produces correct file path for platform", () => {
+test("getDefaultCachePath lives in the Laya folder on every platform", () => {
   const winPath = getDefaultCachePath({
     platform: "win32",
     env: { LOCALAPPDATA: "C:\\Users\\Bob\\AppData\\Local" },
-    pathModule: path.win32
+    homedir: () => "C:\\Users\\Bob"
   });
-  assert.equal(winPath, "C:\\Users\\Bob\\AppData\\Local\\obsidian-memory-plugin\\laya-cache.json");
+  assert.equal(winPath, "C:\\Users\\Bob\\.laya\\state\\router-state.json");
 
   const posixPath = getDefaultCachePath({
     platform: "linux",
     env: { XDG_CACHE_HOME: "/home/bob/.cache" },
-    pathModule: path.posix
+    homedir: () => "/home/bob"
   });
-  assert.equal(posixPath, "/home/bob/.cache/obsidian-memory-plugin/laya-cache.json");
+  assert.equal(posixPath, "/home/bob/.laya/state/router-state.json");
+  assert.equal(getDefaultCachePath({ platform: "linux", env: { LAYA_HOME: "/data" }, homedir: () => "/home/bob" }), "/data/.laya/state/router-state.json");
+  assert.equal(getDefaultCachePath({ platform: "linux", env: { OBSIDIAN_MEMORY_LAYA_DIR: "/tmp/laya-x" }, homedir: () => "/home/bob" }), "/tmp/laya-x/state/router-state.json");
 });
 
 test("writeStateCache writes atomically with POSIX 0600 permissions", () => {
@@ -539,3 +541,50 @@ test("Cache sanitization and writeStateCache clamp backoffMultiplier to MAX_BACK
   assert.equal(updatedEp.circuitBreaker.backoffMultiplier, 6, "writeStateCache clamps backoffMultiplier to 6");
 });
 
+
+test("files from the old cache folder move into the Laya folder once, without overwriting newer ones", async () => {
+  const { migrateLegacyFilesAt, layaHome } = await import("../lib/memory-router/paths.js");
+  const fsm = await import("node:fs");
+  const os = await import("node:os");
+  const legacy = fsm.mkdtempSync(path.join(os.tmpdir(), "om-legacy-"));
+  const home = fsm.mkdtempSync(path.join(os.tmpdir(), "om-laya-"));
+  fsm.writeFileSync(path.join(legacy, "laya-cache.json"), "{}");
+  fsm.writeFileSync(path.join(legacy, "session-state.json"), '{"old":true}');
+  fsm.writeFileSync(path.join(legacy, "vault-index.json"), "{}");
+  fsm.writeFileSync(path.join(legacy, "digest-log.jsonl"), '{"a":1}\n');
+  fsm.writeFileSync(path.join(legacy, "digest-last-run"), "1");
+  fsm.mkdirSync(path.join(legacy, "capture-queue"));
+  fsm.writeFileSync(path.join(legacy, "capture-queue", "0123456789abcdef.jsonl"), "{}\n");
+  fsm.mkdirSync(path.join(home, "state"), { recursive: true });
+  fsm.writeFileSync(path.join(home, "state", "session-state.json"), '{"new":true}');
+  fsm.writeFileSync(path.join(home, "digest-log.jsonl"), '{"b":2}\n');
+  const r = migrateLegacyFilesAt(legacy, home);
+  assert.equal(fsm.readFileSync(path.join(home, "state", "router-state.json"), "utf8"), "{}");
+  assert.equal(fsm.readFileSync(path.join(home, "state", "session-state.json"), "utf8"), '{"new":true}', "newer file kept");
+  assert.ok(fsm.existsSync(path.join(home, "cache", "vault-index.json")));
+  assert.equal(fsm.readFileSync(path.join(home, "digest-log.jsonl"), "utf8"), '{"b":2}\n{"a":1}\n', "logs are appended");
+  assert.ok(fsm.existsSync(path.join(home, "capture-queue", "0123456789abcdef.jsonl")));
+  assert.ok(r.dropped.includes("digest-last-run"));
+  assert.ok(r.dropped.includes("session-state.json"), "the superseded state file is dropped");
+  assert.equal(r.removed, true, "the emptied old folder is removed");
+  // An unknown file keeps the old folder in place.
+  const legacy2 = fsm.mkdtempSync(path.join(os.tmpdir(), "om-legacy-"));
+  fsm.writeFileSync(path.join(legacy2, "notes-from-the-user.txt"), "keep");
+  assert.equal(migrateLegacyFilesAt(legacy2, home).removed, false);
+  assert.ok(fsm.existsSync(path.join(legacy2, "notes-from-the-user.txt")));
+  assert.equal(layaHome({ env: {}, homedir: () => "/u", platform: "linux" }), "/u/.laya");
+});
+
+test("old Antigravity turn records in the temp folder move under ~/.laya/state", async () => {
+  const { migrateAntigravityTurnRecords } = await import("../lib/memory-router/paths.js");
+  const fsm = await import("node:fs");
+  const os = await import("node:os");
+  const tmpDir = fsm.mkdtempSync(path.join(os.tmpdir(), "om-agy-tmp-"));
+  const home = fsm.mkdtempSync(path.join(os.tmpdir(), "om-laya-"));
+  const hash = "a".repeat(32);
+  fsm.writeFileSync(path.join(tmpDir, `antigravity-turn-${hash}.json`), "{}");
+  fsm.writeFileSync(path.join(tmpDir, "unrelated.json"), "{}");
+  assert.equal(migrateAntigravityTurnRecords(tmpDir, home), 1);
+  assert.ok(fsm.existsSync(path.join(home, "state", "antigravity-turns", `${hash}.json`)));
+  assert.ok(fsm.existsSync(path.join(tmpDir, "unrelated.json")), "other temp files are left alone");
+});

@@ -250,3 +250,32 @@ test("readTrustedServiceFile parses and validates instance_id and pid, rejecting
   });
   assert.equal(badPidFloat, null);
 });
+
+test("redactSecrets covers common key formats (2026-09-27 audit: 9 of 12 leaked)", async () => {
+  const { redactSecrets, containsSensitiveContent } = await import("../lib/memory-router/fast-path.js");
+  // Fake credentials are assembled at run time so the source never holds a token-shaped literal
+  // (GitHub push protection blocks those even in tests).
+  const k = (...parts) => parts.join("");
+  const leaks = [
+    `key ${k("sk-ant-", "api03-AbCdEf0123456789_AbCdEf0123456789-xyz")}`,
+    `key ${k("sk-proj-", "AbCdEf0123456789AbCdEf0123456789")}`,
+    `stripe ${k("sk_", "live_51HxAbCdEf0123456789")}`,
+    `slack ${k("xox", "b-1234567890-abcdefghij")}`,
+    `google ${k("AI", "zaSyA1234567890abcdefghijklmnopqrstuv")}`,
+    `hf ${k("hf_", "AbCdEfGhIjKlMnOpQrStUvWxYz012345")}`,
+    `db ${k("postgres://admin:", "s3cretPass@db.example.com:5432/app")}`,
+    'config {"apiKey": "abcd1234efgh5678"}',
+    `密钥是 ${k("sk-ant-", "api03-AbCdEf0123456789_AbCdEf0123456789")}`,
+    "密码是 hunter22",
+    `gitlab ${k("glp", "at-AbCdEf0123456789AbCd")}`,
+    k("sk-", "abcdefghijklmnopqrstuvwxyz123456")
+  ];
+  for (const text of leaks) {
+    const r = redactSecrets(text);
+    assert.equal(r.redacted, true, text);
+    assert.match(r.text, /\[REDACTED\]/u, text);
+  }
+  for (const text of ["用 scikit-learn 训练", "sk-learn-style naming", "密码是多少", "https://example.com:8080/path@v2", "把 apiKey 字段改成必填", "task-1234567890 done"]) {
+    assert.equal(containsSensitiveContent(text), false, text);
+  }
+});

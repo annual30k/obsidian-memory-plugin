@@ -99,6 +99,8 @@ async function main() {
     judgeConfigInput.serviceFile = process.env.OBSIDIAN_MEMORY_SERVICE_FILE.trim();
   }
 
+  const autoCapture = process.env.OBSIDIAN_MEMORY_AUTO_CAPTURE?.trim();
+  if (["digest", "revise", "remind", "off"].includes(autoCapture)) judgeConfigInput.autoCapture = autoCapture;
   const judgeConfig = parseMemoryJudgeConfig(judgeConfigInput);
   const router = createMemoryRouter(judgeConfig, { useCache: true });
 

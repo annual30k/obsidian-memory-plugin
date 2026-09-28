@@ -268,18 +268,19 @@ Hermes 的插件默认需要显式启用。安装并启用后，运行一次配�
 可读取的 Vault 绝对路径，并且只调用 Hermes 配置命令写入本插件自己的 `settings.vault_path`：
 
 ```sh
-hermes plugins install annual30k/obsidian-memory-plugin --enable
+git clone https://github.com/annual30k/obsidian-memory-plugin.git ~/.hermes/plugins/obsidian-memory-plugin
+hermes plugins enable obsidian-memory-plugin
 node ~/.hermes/plugins/obsidian-memory-plugin/scripts/setup-hermes.mjs
 ```
 
-Hermes 从 Git 安装时会锁定到当时的提交；更新到最新发布请带 `--force` 重新安装（`settings.vault_path` 等配置按插件名保存，不受影响），然后重启 Hermes 网关：
+更新到最新版本（`settings.vault_path` 等配置按插件名保存，不受影响），然后重启 Hermes 网关：
 
 ```sh
-hermes plugins install annual30k/obsidian-memory-plugin --force --enable
+git -C ~/.hermes/plugins/obsidian-memory-plugin pull
 hermes gateway restart
 ```
 
-仓库根目录的 `plugin.json` 同时是 Antigravity 清单和 Agent Plugins v1 清单（Hermes 安装时会校验它）；Hermes 实际按原生 `plugin.yaml` + `__init__.py` 加载。
+Hermes 按原生 `plugin.yaml` + `__init__.py` 加载。暂不支持 `hermes plugins install`：仓库根目录的 `plugin.json` 是 Antigravity 清单，Hermes 从 Git 安装时会把它当作 Agent Plugins v1 清单校验并要求 `$schema`；而根清单一旦声明 Agent Plugins 的 `$schema`，当前 Codex 就改读它并忽略插件钩子，Codex 插件页不再显示需要批准的钩子。
 
 非交互环境必须明确给出路径：
 
@@ -402,17 +403,20 @@ openclaw skills --agent main info defuddle
 
 为提升 Agent 检索长期记忆的精准度，插件内置了基于轻量级非自回归决策引擎（Laya）的智能召回裁决路由。在用户发起提问时，可在毫秒级（约 7~35 ms）内完成对问题意图的快速研判，兼顾准确率与极低时延，避免无关闲聊或自包含编码任务消耗 Vault 检索 token。
 
+同一个服务里还带一个**Vault 检索器**（默认 `intfloat/multilingual-e5-small`，约 118M 参数）：Laya 只看提示文本，答不了"Vault 里有没有对应的笔记"；检索器把提示和笔记都变成向量来回答这个问题，并把最相关的笔记路径直接写进每轮提示（见下文"按 Vault 内容补判断"）。
+
 ### 架构与硬件路线
 
 1. **Apple Silicon (macOS arm64)**：
    - 采用独立开源 MLX 移植版 [mizorewww/laya-mlx](https://github.com/mizorewww/laya-mlx) (Apache-2.0，声明 378/378 权重对比验证与数值保真；请注意此为独立开源移植版，非 Convai 官方发行)。
-   - 模型 checkpoint：`aac6fef/laya-multilingual-mlx`。
-   - 资源预期：磁盘权重约 678 MiB，峰值内存占用约 688 MiB，单次决策中位数延迟 ~7.4 ms。
-   - 依赖极简：仅需 `mlx`, `huggingface-hub`, `numpy`, `tokenizers`，无 PyTorch / Transformers 运行时负担。
+   - 模型 checkpoint：`aac6fef/laya-multilingual-mlx`；检索器 checkpoint：`intfloat/multilingual-e5-small`（MIT，约 450 MiB，`laya install` 一并下载）。
+   - 资源预期：磁盘权重约 678 MiB + 450 MiB，峰值内存占用约 688 MiB + 230 MiB，单次决策中位数延迟 ~7.4 ms，检索器编码一句约 6 ms。
+   - 依赖极简：仅需 `mlx`, `huggingface-hub`, `numpy`, `tokenizers`，无 PyTorch / Transformers 运行时负担。检索器由插件自带的 `lib/laya-service/bert_embed.py`（约 150 行纯 MLX 的 BERT 编码器）运行，不引入 `mlx-embeddings`（它会带进 transformers / mlx-vlm 等约 600 MB 依赖）。
 2. **Windows / Linux / x64 macOS**：
    - 采用官方 [NandhaKishorM/laya](https://github.com/NandhaKishorM/laya) (>=0.3.5, Apache-2.0) 基于 PyTorch 的跨平台后端。
    - 模型 checkpoint：`convaiinnovations/laya-multilingual`。
    - 资源预期：磁盘权重约 1.2 GiB，内存约 1.2 GiB。
+   - 该后端暂无检索器：Vault 匹配退回词重叠方式。
 3. **环境隔离与安全性**：
    - 使用 `uv` 在 `~/.laya/venv` 维护独立的 Python >=3.10 环境，不污染系统 Python。
    - 严格落实安全边界：安装必须显式执行，绝不静默下载模型权重；支持 `--skip-model` 跳过下载。
@@ -444,7 +448,7 @@ npm run laya:status
 # 4. 停止本地服务（调用本地已鉴权 POST /shutdown 优雅退出；核验进程真正退出与身份清理）
 npm run laya:stop
 
-# 5. 彻底卸载本地服务与虚拟环境（优先鉴权退出，清理 ~/.laya/venv 与服务元数据；默认保留 Hugging Face 权重缓存；若需清除可指定 --purge-cache，且仅精确清理两个 Laya 专属模型目录）
+# 5. 彻底卸载本地服务与虚拟环境（优先鉴权退出，清理 ~/.laya/venv 与服务元数据；默认保留 Hugging Face 权重缓存；若需清除可指定 --purge-cache，且仅精确清理 Laya 判断模型与检索器这三个专属模型目录）
 npm run laya:uninstall
 ```
 
@@ -499,13 +503,14 @@ npm run laya:uninstall
 
 `skip` 省下的是本轮读取 SKILL.md（约 4.5k tokens）和 Vault 检索；OpenClaw 同时把每轮约 230 tokens 的指引换成约 80 tokens 的短句。Codex / Antigravity / Hermes 的常驻规则已改为"……除非本轮的 Obsidian Memory 提示说明不需要记忆"，已安装用户需重新运行 `npm run setup:codex` / `npm run setup:antigravity` 更新 AGENTS.md / GEMINI.md 中的受管区块；Laya 未运行时不会出现 skip 提示，行为与以前一致。
 
-### 按 Vault 内容补判断（vaultHints）
+### 按 Vault 内容补判断（vaultHints / vaultSemantic）
 
-Laya 只看提示文本，不知道 Vault 里已经有哪些笔记。插件会为 Vault 建一个只读的小索引（`10-Global` 与各项目 `wiki/`、`inbox/` 笔记的标题、文件名、aliases、tags 和正文中的 `代码标识符`，缓存在 `~/.cache/obsidian-memory-plugin/vault-index.json`，目录变化或 10 分钟后重建），每轮把提示和索引做加权词匹配（中文按二字词、英文按单词，约 0.1 ms）：
+Laya 只看提示文本，不知道 Vault 里已经有哪些笔记。插件会为 Vault 建一个只读的小索引（`10-Global` 与各项目 `wiki/`、`inbox/` 笔记，缓存在 `~/.laya/cache/vault-index.json`，目录变化或 10 分钟后重建），并通过 Laya 服务的检索器给每篇笔记算一个向量（标题、aliases、tags、代码标识符加正文开头 600 字；缓存在同目录的 `vault-embeddings.json`，每轮最多补 32 篇，笔记改动后只重算那一篇）。每轮判断时，`/judge/recall` 顺带返回本轮提示的向量，路由算它的**突出度**：最相关笔记的相似度减去所有候选笔记相似度的中位数。绝对相似度分不开（同一项目的任务和笔记本来就都相似），突出度问的是"有没有一篇特别对得上"。
 
-- **强匹配**：只在判断拿不准（`default`）时改为 `recall`，并在提示里列出最相关的 1–3 条笔记（Vault 相对路径）。
-- **任何匹配**：本轮不再 `skip`（`skip` → `default`）；已经明确判定的 `recall` / `capture` 保持不变，只附上相关笔记。
-- 词重叠只是弱证据：在 520 条真实提示上，单凭匹配就强制 `recall` 时只有约十分之一是对的（多数项目任务都会和某篇笔记共享词汇），所以它只用来补拿不准的轮次。
+- **强匹配**（突出度 ≥ 0.048）：改为 `recall`，即使 Laya 分数说不需要；提示里列出最相关的 1–3 条笔记（Vault 相对路径）。
+- **弱匹配**（≥ 0.038）：本轮不再 `skip`（`skip` → `default`），附上笔记；已经明确判定的 `recall` / `capture` 保持不变，只附上相关笔记。
+- 在作者的 Vault 上测得（501 条真实无关提示 + 66 条针对 Vault 内容的提问）：只用分类头时误跳过 5%、召回 86%；加上突出度后误跳过 0%、召回 98%，无关提示仍有 83% 被跳过。Laya 自己的句向量做检索接近随机（AUC 0.39～0.57），所以检索器是单独的模型。
+- 检索器不可用（PyTorch 后端、旧版服务、`laya start --embed-model off`、`vaultSemantic: false`）时退回**词重叠匹配**（中文按二字词、英文按单词，约 0.1 ms）：强匹配只在判断拿不准（`default`）时改为 `recall`，任何匹配阻止 `skip`。词重叠只是弱证据：在 520 条真实提示上，单凭匹配就强制 `recall` 时只有约十分之一是对的。
 - "X 和 Y 有什么区别""默认是多少""写一篇……""你现在的版本是什么"这类不指向自己工作的通用提问不做 Vault 匹配，也不会因为 Laya 分数偏高而调取记忆。
 - 只共享一个词或一个短词组（如"软链接""Node.js"）不算匹配；当前目录能通过 `projects.yaml` 的 roots 对应到项目时，只看该项目和全局笔记，除非提示里点名了别的项目。
 - Codex / Antigravity 从 `OBSIDIAN_MEMORY_VAULT` 或 setup 写入 AGENTS.md / GEMINI.md 的受管区块读取 Vault 路径；OpenClaw / Hermes 用插件配置的 `vaultPath`。设 `vaultHints: false` 关闭。
@@ -517,10 +522,53 @@ Laya 只看提示文本，不知道 Vault 里已经有哪些笔记。插件会�
 
 各宿主的每轮判断会追加到本机 `~/.laya/decisions.jsonl`（权限 0600，只在本机，超过 5 MB 轮转；含密钥的提示不记录原文）。某轮被跳过后用户紧接着问"之前/上次……"时，会把那一轮标记为疑似漏判。设 `OBSIDIAN_MEMORY_DECISION_LOG=off` 或 `decisionLog: false` 关闭。
 
+### 主动写入（proactive capture）
+
+分两条路（详见 [ARCHITECTURE.md](ARCHITECTURE.md#写入由谁决定)）：
+
+- **显式要求**（"记住……""记一下这个坑"）：回合内同步完成，agent 按 Skill 写 inbox 候选。OpenClaw / Codex 在回合结束时检查 inbox 有没有新文件，没有就要求模型补一轮（每次请求最多一次）；Antigravity / Hermes 下一轮提醒一次。
+- **自动暂存**（`autoCapture: "digest"`，默认）：回合结束时钩子只把本轮提问和最终回复（≥ 200 字，脱敏后）追加到本地队列，不调用模型、不让你等。会话空闲 20 分钟后，后台的会话整理按会话合并、按话题只取最后一轮结论，每个会话最多写 2 条候选（外加最多 2 条你说过的长期规则，如"以后……都……""统一用……""我对……过敏"），标 `origin: auto-digest`，内容是原话证据。你不再聊天也会整理（后台等待进程），下一轮 agent 会用一句话告诉你暂存了几条；`npm run doctor` 能看到队列积压和上次整理时间。OpenClaw 的定时任务、心跳和模型报错的回合不入队。Vault 未初始化、项目未绑定、项目 `rules.md` 里写了 `no-auto-capture`、含凭据时都不写；项目内容不会进 Global。四个宿主都覆盖：Codex `Stop`、OpenClaw `agent_end`、Hermes `post_llm_call`、Antigravity 在下一轮开始时从会话记录补记上一轮。
+
+```sh
+laya digest              # 立即整理已空闲的会话
+laya digest --now        # 包括还没空闲的会话
+laya digest --dry-run    # 只报告会写什么
+```
+
+| 模式 | 回合内等待 | 额外大模型调用 | 适合 |
+|---|---|---|---|
+| `digest`（默认） | 钩子毫秒级 | 无 | 多进 inbox、自己整理 |
+| `revise` | 触发时 4～66 秒，平均每回合约 15～20 秒 | 约 45% 的回合一次 | 希望候选当场由模型整理好 |
+| `remind` | 无 | 无 | 只提醒，下一轮由 agent 决定 |
+| `off` | 无 | 无 | 只保留显式要求 |
+
+OpenClaw 在 `memoryJudge.autoCapture` 设置；Codex / Antigravity 用环境变量 `OBSIDIAN_MEMORY_AUTO_CAPTURE`；Hermes 在插件设置 `auto_capture`。`proactiveCapture: false` 关闭全部主动信号。候选是否有用取决于你整理时留下多少，`~/.laya/digest-log.jsonl` 记录每次整理写了什么、跳过了什么。
+
+### 本机文件都在 `~/.laya`
+
+插件在本机的所有文件都放在 `~/.laya` 这一个文件夹里（和 Laya 服务共用）：
+
+```text
+~/.laya/
+├── service.json, venv/ …        Laya 服务
+├── recall-head.json             用你的标注训练的召回判断头
+├── durable-head.json            用你的标注训练的长期规则判断头
+├── labels*.jsonl                标注
+├── decisions.jsonl              每轮判断日志（laya label 用）
+├── digest-log.jsonl             会话整理写了什么、跳过了什么
+├── capture-queue/               等待整理的回合（整理后自动删除）
+├── state/                       运行状态，可删，会重建
+└── cache/                       Vault 索引和笔记向量，可删，会重建
+```
+
+旧版本放在 `~/.cache/obsidian-memory-plugin` 的文件会在插件第一次运行时自动搬到这里，旧文件夹清空后删除。完整说明见 [ARCHITECTURE.md](ARCHITECTURE.md#本机文件)。
+
+长期规则陈述由 Laya 持久性判断头识别（作者的 520 条真实提示上折外精确率约 60%、召回约 40%）。想让它更准：`laya label` 时用 `d` 标出陈述长期规则的提示，然后 `npm run laya:train -- --target durable`。
+
 日常只需两步：`laya label` 标注新积累的提示，`laya train` 重新训练并自动重启服务（`laya help` 列出全部子命令；对应的 `npm run laya:*` 仍可用）。`laya doctor`（或 `npm run doctor`）只读地列出四个宿主各自的插件版本、安装方式和 Vault 路径，路径不一致、插件落后、软链接到开发目录、Codex 钩子重复注册都会标出来。
 
 ```sh
-npm run laya:label -- --stats   # 统计：各判断数量、补判断次数、疑似漏判
+npm run laya:label -- --stats   # 统计：各判断数量、补判断次数、疑似漏判（标注时 d = 这句话陈述了长期规则）
 npm run laya:label -- --review  # 校对已有标注（~/.laya/labels-bootstrap.jsonl，回车 = 标注正确，模型意见不同的排最前）
 npm run laya:label              # 逐条标注（疑似漏判排在最前），写入 ~/.laya/labels.jsonl
 npm run laya:eval -- --data ~/.laya/labels.jsonl --vault ~/Obsidian/Workspace   # 用自己的真实提示评估
@@ -538,6 +586,7 @@ Laya 的零样本提问分不清"通用问题"和"关于你自己工作的问题
 npm run laya:train -- --dry-run                     # 只看交叉验证结果
 npm run laya:train                                  # 写入 ~/.laya/recall-head.json（0600）
 npm run laya:train -- --test blind.jsonl            # 另附一份从未参与训练的盲测集
+npm run laya:train -- --target durable              # 训练持久性判断头（主动写入用）
 ```
 
 在作者 589 条未参与训练的真实提示上（其中只有 11 条需要用到记忆；两条 Fast-Path 规则参考过其中的误判，数字略偏乐观；真实服务、完整链路 Fast-Path → 分类头 → Vault 提示）：
@@ -563,7 +612,7 @@ npm run laya:train -- --test blind.jsonl            # 另附一份从未参与�
 
 ### 评估 Laya 召回准确率
 
-召回判断使用经 `npm run laya:tune` 在真实 MLX 模型上选出的三选一提问（需要项目历史 / 自成一体的请求 / 闲聊），单独提问、只看原始文本；默认 `recallThreshold` 为 0.50。在 40 条未参与调优的提示上，误判为"需要查 Vault"的比例从旧提问的 70% 降到 5%，召回约 60%。"照老规矩""和上次一样""the way we agreed"等明确引用过往约定的说法由 Fast-Path 直接判定。换模型或换提问后请重新运行 `npm run laya:tune` 校准。每轮的 capture 提示只来自用户明确要求（Fast-Path）；模型按分类自行建议 capture 已移除：在 735 条未见过的真实提示上它触发 40 次，没有一次是真的要保存内容（旧配置里的 `layaCapture` 仍被接受但不起作用）。`captureThreshold` 只用于 Skill 在任务结束时可选调用的 `obsidian-memory-laya-judge --capture`，尚未校准。启动 Laya 服务后运行：
+召回判断使用经 `npm run laya:tune` 在真实 MLX 模型上选出的三选一提问（需要项目历史 / 自成一体的请求 / 闲聊），单独提问、只看原始文本；默认 `recallThreshold` 为 0.50。在 40 条未参与调优的提示上，误判为"需要查 Vault"的比例从旧提问的 70% 降到 5%，召回约 60%。"照老规矩""和上次一样""the way we agreed"等明确引用过往约定的说法由 Fast-Path 直接判定。换模型或换提问后请重新运行 `npm run laya:tune` 校准。每轮的 capture 提示只来自用户明确要求（Fast-Path）；模型按分类自行建议 capture 已移除：在 735 条未见过的真实提示上它触发 40 次，没有一次是真的要保存内容（旧配置里的 `layaCapture` 仍被接受但不起作用）。`captureThreshold` 用于 `obsidian-memory-laya-judge --capture` 和 `revise` / `remind` 模式下的长期规则提示；默认 `digest` 模式下长期规则分 ≥ 0.5 即入队（在作者 520 条真实提问上折外精确率约 0.53、召回约 0.47，由你在 ingest 时把关）。启动 Laya 服务后运行：
 
 ```sh
 npm run laya:eval
@@ -589,7 +638,7 @@ node scripts/bench-laya.mjs --backend mock --mock-load-delay 1.5   # 无模型�
    - **能保证**：100% 的合格用户回合在调用主大模型前，**必然经过宿主底层原生代码 Hook 拦截与路由判定**（由宿主底层进程执行，而非提示词）。“合格用户回合”的前提是插件处于启用状态且其原生 Hook 已通过宿主信任与审核（在 Codex 中，未受信任的插件 Hook 会被宿主跳过）。
    - **不承诺**：Laya 神经网络服务永远 100% 在线或推理永远成功。
 2. **三模式控制矩阵（`off` / `auto` / `strict`）**：
-   - `off`：彻底关闭路由与网络探测，零延迟放行。
+   - `off`：彻底关闭路由与网络探测，零延迟放行；不写任何本机文件（不建会话状态、Vault 索引、判断日志、整理队列，也不做会话整理），行为与没有路由时一致。显式"记住"仍由 agent 按 Skill 写进 Obsidian。
    - `auto`（默认）：原生 Hook 硬路由 + 优雅降级（Fail-Open）。先 Fast-Path（敏感词/问候/显式意图），必要时调用 Laya；Laya 服务未就绪、异常或超时时不卡死对话，安全降级放行。
    - `strict`：强一致性硬阻断（Fail-Closed）。要求必须具备有效判定；但各宿主阻断能力受宿主原生架构严格限制：
 
@@ -616,9 +665,8 @@ node scripts/bench-laya.mjs --backend mock --mock-load-delay 1.5   # 无模型�
    > **审计准则**：`hookExecuted` 字段在底层通用 router 与 CLI 中默认为 `false`，必须且仅由真实宿主原生 Hook 适配层在实际拦截时置为 `true`，杜绝虚假审计标记。同时 stdout 保持单一合法宿主 JSON，绝不污染。
 
 4. **安装器防重复执行与 Hook 发现机制**：
-   - 插件内置的原生 Hook 声明（Codex 的 `hooks/hooks.json` 与 Antigravity 的 `hooks.json`）为宿主发现并加载的单一首要来源。
-   - `scripts/setup-codex.mjs` 与 `scripts/setup-antigravity.mjs` 安装脚本默认 `configureHooks: false`，避免在插件内置 Hook 之外向全局配置文件重复注册导致单次回合双重执行。
-   - 仅在用户显式传入 `--hooks` 命令行参数时，安装脚本才会向用户全局目录配置独立 Hook。
+   - **Codex**：插件自带的 `hooks/hooks.json`（由 `.codex-plugin/plugin.json` 的 `hooks` 字段指向，含 `UserPromptSubmit` 与 `Stop`）是唯一来源。安装后需要批准一次：在 Codex 应用里打开 插件 > Obsidian Memory，在"Hooks"一栏点 **Trust all**（或在 Codex 终端界面运行 `/hooks`）；插件不会代替你写信任记录，`npm run setup:codex` 结束时和 `npm run doctor` 都会提示这一步。注意根目录 `plugin.json` 不能声明 Agent Plugins 的 `$schema`：当前 Codex 会优先按 Agent Plugins 清单读取它并忽略钩子（2026-09-28 在 Codex 0.158 上验证）。`setup-codex.mjs --hooks` 可把两个钩子另写进 `~/.codex/hooks.json`，只用于不加载插件钩子的 Codex，与插件钩子同时存在会执行两次。
+   - **Antigravity**：插件内置的 `hooks.json` 是首要来源，`scripts/setup-antigravity.mjs` 默认不向全局配置重复注册，只有显式 `--hooks` 才写。
 
 
 ## 禁用与卸载

@@ -64,7 +64,7 @@ function run(command, args, options = {}) {
 }
 
 const codexBin = process.env.CODEX_BIN
-  ?? ["/Applications/ChatGPT.app/Contents/Resources/codex", join(homedir(), "Applications", "ChatGPT.app", "Contents", "Resources", "codex")].find(c => existsSync(c))
+  ?? ["/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex", "/Applications/ChatGPT.app/Contents/Resources/codex", join(homedir(), "Applications", "ChatGPT.app", "Contents", "Resources", "codex-cli", "bin", "codex"), join(homedir(), "Applications", "ChatGPT.app", "Contents", "Resources", "codex")].find(c => existsSync(c))
   ?? "codex";
 
 function codexSetup() {

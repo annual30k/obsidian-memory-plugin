@@ -108,7 +108,7 @@ test("four-way labels: context rows are left out, capture counts as using memory
   fs.writeFileSync(file, JSON.stringify({ text: "a", label: "maybe" }));
   assert.throws(() => loadDataset(file), /recall\/capture\/none\/context/u);
   const { labelOf, ANSWER_LABELS } = await import("../scripts/label-laya.mjs");
-  assert.deepEqual(ANSWER_LABELS, { y: "recall", c: "capture", n: "none", x: "context" });
+  assert.deepEqual(ANSWER_LABELS, { y: "recall", c: "capture", n: "none", x: "context", d: "none" });
   assert.equal(labelOf({ label: "context", recall: false }), "context");
   assert.equal(labelOf({ recall: true }), "recall");
   assert.equal(labelOf({ label: "bogus" }), null);

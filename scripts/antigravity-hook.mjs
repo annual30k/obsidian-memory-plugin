@@ -12,15 +12,16 @@
  * Outputs sanitized audit trace to stderr, keeping stdout strictly formatted for host JSON contracts.
  */
 
-import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync, realpathSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync, realpathSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_MEMORY_JUDGE, parseMemoryJudgeConfig } from "../lib/config.js";
 import { createMemoryRouter } from "../lib/memory-router/router.js";
 import { buildLayaNotice } from "../lib/prompt.js";
 import { resolveVaultPath } from "../lib/memory-router/vault-index.js";
+import { enqueueCapture } from "../lib/memory-router/capture-queue.js";
+import { stateFile } from "../lib/memory-router/paths.js";
 
 const TURN_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour TTL
 
@@ -30,6 +31,35 @@ async function readStdin() {
     chunks.push(chunk);
   }
   return Buffer.concat(chunks).toString("utf8");
+}
+
+const unwrapRequest = (text) => {
+  const match = String(text).match(/<USER_REQUEST>([\s\S]*?)<\/USER_REQUEST>/);
+  return (match ? match[1] : String(text)).trim();
+};
+
+/**
+ * The turn before the current one in an Antigravity transcript: its user request and the model's final
+ * text (the last PLANNER_RESPONSE with content before the current USER_INPUT). Antigravity has no
+ * end-of-turn hook, so the previous turn is queued for the session digest when the next one starts.
+ */
+export function previousExchange(transcriptPath, currentLineIndex) {
+  if (!transcriptPath || !existsSync(transcriptPath) || !Number.isInteger(currentLineIndex)) return null;
+  try {
+    const lines = readFileSync(transcriptPath, "utf8").trim().split("\n");
+    let reply = null;
+    for (let i = Math.min(currentLineIndex, lines.length) - 1; i >= 0; i--) {
+      let parsed;
+      try { parsed = JSON.parse(lines[i]); } catch { continue; }
+      if (!parsed || typeof parsed !== "object") continue;
+      if (!reply && parsed.type === "PLANNER_RESPONSE" && typeof parsed.content === "string" && parsed.content.trim()) {
+        reply = parsed.content;
+      } else if (parsed.type === "USER_INPUT" && typeof parsed.content === "string") {
+        return reply ? { prompt: unwrapRequest(parsed.content), reply } : null;
+      }
+    }
+  } catch {}
+  return null;
 }
 
 export function extractLastUserPrompt(transcriptPath) {
@@ -77,7 +107,7 @@ export function deriveTurnId({ extracted, invocationNum, userPrompt }) {
 
 export function getConversationTurnCachePath(conversationId) {
   const safeHash = createHash("sha256").update(conversationId || "default").digest("hex").slice(0, 32);
-  return join(tmpdir(), `antigravity-turn-${safeHash}.json`);
+  return stateFile(`antigravity-turns/${safeHash}.json`);
 }
 
 export function readConversationTurnCache(conversationId) {
@@ -111,7 +141,8 @@ export function writeConversationTurnCacheAtomic(conversationId, cache) {
   const cachePath = getConversationTurnCachePath(conversationId);
   const tmpPath = `${cachePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
   try {
-    writeFileSync(tmpPath, JSON.stringify(cache, null, 2), "utf8");
+    mkdirSync(dirname(cachePath), { recursive: true, mode: 0o700 });
+    writeFileSync(tmpPath, JSON.stringify(cache, null, 2), { encoding: "utf8", mode: 0o600 });
     renameSync(tmpPath, cachePath);
   } catch (err) {
     try {
@@ -174,6 +205,12 @@ async function main() {
     return;
   }
 
+  // mode "off": behave as if the router did not exist. No turn records, no capture queue, no hint.
+  if (mode === "off") {
+    console.log(JSON.stringify({}));
+    return;
+  }
+
   const turnId = deriveTurnId({ extracted, invocationNum, userPrompt });
   const turnCache = readConversationTurnCache(conversationId) || {
     conversationId,
@@ -204,8 +241,21 @@ async function main() {
     judgeConfigInput.serviceFile = process.env.OBSIDIAN_MEMORY_SERVICE_FILE.trim();
   }
 
+  const autoCapture = process.env.OBSIDIAN_MEMORY_AUTO_CAPTURE?.trim();
+  if (["digest", "revise", "remind", "off"].includes(autoCapture)) judgeConfigInput.autoCapture = autoCapture;
   const judgeConfig = parseMemoryJudgeConfig(judgeConfigInput);
   const router = createMemoryRouter(judgeConfig, { useCache: true });
+
+  // "digest": queue the previous (finished) turn of this conversation for the session digest.
+  const vaultPath = resolveVaultPath();
+  if (judgeConfig.autoCapture === "digest" && judgeConfig.proactiveCapture !== false && conversationId && extracted) {
+    const previous = previousExchange(transcriptPath, extracted.lineIndex);
+    if (previous) {
+      const cwd = [payload?.cwd, payload?.workspaceRoot, Array.isArray(payload?.workspaceRoots) ? payload.workspaceRoots[0] : null]
+        .find((v) => typeof v === "string" && v) || process.cwd();
+      enqueueCapture("turn", previous, { host: "antigravity", sessionKey: conversationId, vaultPath, cwd });
+    }
+  }
 
   try {
     const workspace = [payload?.cwd, payload?.workspaceRoot, Array.isArray(payload?.workspaceRoots) ? payload.workspaceRoots[0] : null]
@@ -214,7 +264,7 @@ async function main() {
       host: "antigravity",
       sessionKey: conversationId || null,
       cwd: workspace,
-      vaultPath: resolveVaultPath()
+      vaultPath
     });
     if (decision.trace) {
       decision.trace.hookExecuted = true;

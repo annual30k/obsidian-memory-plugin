@@ -231,3 +231,16 @@ test("a strong Vault match overrides a model-suggested capture but not an explic
   assert.equal(explicit.memoryAction, "capture");
   assert.ok(explicit.relatedNotes.length > 0, "explicit capture still lists notes to check for duplicates");
 });
+
+test("resolveProjectIdFromCwd matches a cwd reported through a symlinked path", () => {
+  const vault = fs.mkdtempSync(path.join(os.tmpdir(), "om-link-vault-"));
+  const real = fs.mkdtempSync(path.join(os.tmpdir(), "om-link-real-"));
+  const link = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "om-link-")), "proj");
+  fs.symlinkSync(real, link);
+  fs.mkdirSync(path.join(vault, "00-System"), { recursive: true });
+  fs.writeFileSync(path.join(vault, "00-System", "projects.yaml"), `projects:\n  - id: linked-11111111\n    roots:\n      - ${link}\n`);
+  assert.equal(resolveProjectIdFromCwd(vault, link), "linked-11111111");
+  assert.equal(resolveProjectIdFromCwd(vault, fs.realpathSync(real)), "linked-11111111", "physical path of the registered symlink");
+  assert.equal(resolveProjectIdFromCwd(vault, path.join(fs.realpathSync(real), "src")), "linked-11111111");
+  assert.equal(resolveProjectIdFromCwd(vault, os.tmpdir()), null);
+});

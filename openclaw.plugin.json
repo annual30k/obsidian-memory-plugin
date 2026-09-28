@@ -45,6 +45,8 @@
           "coldStart": { "type": "string", "enum": ["background", "wait"], "default": "background" },
           "decisionLog": { "type": "boolean", "default": true },
           "vaultHints": { "type": "boolean", "default": true },
+          "vaultSemantic": { "type": "boolean", "default": true },
+          "autoCapture": { "type": "string", "enum": ["digest", "revise", "remind", "off"], "default": "digest" },
           "healthTimeout": { "type": "integer", "minimum": 20, "maximum": 10000, "default": 200 },
           "recallThreshold": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.5 },
           "skipThreshold": { "type": "number", "minimum": 0.0, "maximum": 1.0, "default": 0.35 },

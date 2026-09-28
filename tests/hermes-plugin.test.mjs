@@ -95,19 +95,26 @@ print(json.dumps({"skills": ctx.skills, "hooks": sorted(ctx.hooks), "settings": 
   const vaultPath = join(root, "My Vault");
   const r = JSON.parse(execFileSync(python.command, [...python.args, "-c", program, root, vaultPath], { encoding: "utf8" }));
   assert.deepEqual(r.skills, ["obsidian-memory"]);
-  assert.deepEqual(r.hooks, ["pre_llm_call"]);
+  assert.deepEqual(r.hooks, ["post_llm_call", "pre_llm_call"]);
   assert.equal(r.settings.vaultPath, vaultPath);
   assert.match(r.default.context, /For code tasks, use the obsidian-memory skill/);
   assert.ok(r.default.context.includes(vaultPath));
   assert.equal(r.skip.context, "[Obsidian Memory: not needed for this turn]");
 });
 
-test("plugin.json stays a valid Agent Plugins v1 manifest so `hermes plugins install` accepts the repository", async () => {
+test("plugin.json does not declare the Agent Plugins schema, so Codex reads .codex-plugin/plugin.json and its hooks", async () => {
   const { readFileSync } = await import("node:fs");
   const manifest = JSON.parse(readFileSync(new URL("../plugin.json", import.meta.url), "utf8"));
-  // Mirrors hermes_cli/agent_plugins.py _validate_manifest: Hermes validates plugin.json on install
-  // whenever it exists, even though it loads the native plugin.yaml.
-  assert.equal(manifest.$schema, "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json");
+  // With "$schema": agent-plugins.org, current Codex (0.155+) treats the root plugin.json as an Agent Plugins
+  // manifest and ignores hooks entirely, so the plugin page shows no Hooks section and nothing runs
+  // (verified 2026-09-28 against Codex 0.158 app-server plugin/read). Without it, Codex falls back to
+  // .codex-plugin/plugin.json. Trade-off: `hermes plugins install` validates a present plugin.json as an Agent
+  // Plugins manifest and refuses it, so Hermes installs with scripts/setup-hermes.mjs (plugin.yaml + __init__.py).
+  assert.equal(manifest.$schema, undefined);
+  const codex = JSON.parse(readFileSync(new URL("../.codex-plugin/plugin.json", import.meta.url), "utf8"));
+  assert.equal(codex.hooks, "./hooks/hooks.json");
+  const hooks = JSON.parse(readFileSync(new URL("../hooks/hooks.json", import.meta.url), "utf8")).hooks;
+  assert.deepEqual(Object.keys(hooks).sort(), ["Stop", "UserPromptSubmit"]);
   assert.match(manifest.name, /^(?!.*(?:--|\.\.))[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/u);
   assert.ok(manifest.name.length <= 64);
   for (const field of ["version", "description", "homepage", "repository", "license"]) {
@@ -116,5 +123,5 @@ test("plugin.json stays a valid Agent Plugins v1 manifest so `hermes plugins ins
   assert.ok(Array.isArray(manifest.keywords) && manifest.keywords.every((k) => typeof k === "string"));
   assert.deepEqual(Object.keys(manifest.author).filter((k) => !["name", "email", "url"].includes(k)), []);
   const yaml = readFileSync(new URL("../plugin.yaml", import.meta.url), "utf8");
-  assert.match(yaml, /^provides_hooks:\n  - pre_llm_call$/mu, "plugin.yaml must declare the hook it registers");
+  assert.match(yaml, /^provides_hooks:\n  - pre_llm_call\n  - post_llm_call$/mu, "plugin.yaml must declare the hooks it registers");
 });

@@ -1,5 +1,38 @@
 import { DEFAULT_MEMORY_JUDGE, parseConfigs } from "./lib/config.js";
-import { buildGuidance, memoryActionFor } from "./lib/prompt.js";
+import { buildGuidance, buildLayaNotice, memoryActionFor } from "./lib/prompt.js";
+import { pendingCaptureEnforcement, judgeTurnEndCapture, turnEndNeedsScore, enqueueTurnEnd } from "./lib/memory-router/turn-context.js";
+
+function messageText(message) {
+  const m = message && typeof message === "object" && message.message && typeof message.message === "object" ? message.message : message;
+  if (!m || typeof m !== "object") return { role: null, text: "", error: false };
+  const content = m.content ?? m.text ?? "";
+  const text = typeof content === "string" ? content
+    : Array.isArray(content) ? content.map((p) => (typeof p === "string" ? p : (typeof p?.text === "string" ? p.text : ""))).filter(Boolean).join("\n")
+    : "";
+  const error = m.stopReason === "error" || m.stop_reason === "error" || (typeof m.errorMessage === "string" && m.errorMessage !== "");
+  return { role: typeof m.role === "string" ? m.role : null, text, error };
+}
+
+/**
+ * The last user request and the final assistant text of a finished OpenClaw run (agent_end messages).
+ * Only the run's own final message counts: when the last assistant message is empty or an error (a failed
+ * model call), nothing is returned instead of reaching back into older history.
+ */
+export function lastExchange(messages) {
+  if (!Array.isArray(messages)) return { prompt: "", reply: "" };
+  let reply = null;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const { role, text, error } = messageText(messages[i]);
+    if (reply === null) {
+      if (role !== "assistant") continue;
+      if (error || !text.trim()) return { prompt: "", reply: "" };
+      reply = text;
+    } else if (role === "user" && text.trim()) {
+      return { prompt: text, reply };
+    }
+  }
+  return { prompt: "", reply: reply ?? "" };
+}
 import { createMemoryRouter } from "./lib/memory-router/router.js";
 import { evaluateFastPath } from "./lib/memory-router/fast-path.js";
 import { enrichDecision } from "./lib/memory-router/turn-context.js";
@@ -166,6 +199,7 @@ export function createOpenClawPlugin(options = {}) {
               recallRecommended: fast.recallRecommended ?? false,
               captureRecommended: (fast.captureRecommended && memoryJudge.proactiveCapture !== false) ? true : false,
               captureCategory: fast.captureCategory ?? null,
+              captureKind: (fast.captureRecommended && memoryJudge.proactiveCapture !== false) ? "explicit" : null,
               scope: fast.scope ?? "project",
               blocked: false,
               reason: fast.reason,
@@ -184,7 +218,7 @@ export function createOpenClawPlugin(options = {}) {
             setTurnDecision(turnKey, decision);
             api.logger?.debug?.(`[Laya Memory Router] before_prompt_build Fast-Path Trace: ${JSON.stringify(decision.trace)}`);
             if (decision.memoryAction === "skip" || decision.recallRecommended ||
-                (decision.captureRecommended && memoryJudge.proactiveCapture !== false)) {
+                (decision.captureRecommended && memoryJudge.proactiveCapture !== false) || buildLayaNotice(decision)) {
               return { prependContext: buildGuidance(agentConfig, decision) };
             }
             return { prependContext: baseGuidance };
@@ -198,8 +232,9 @@ export function createOpenClawPlugin(options = {}) {
                 api.logger?.debug?.(`[Laya Memory Router] before_prompt_build Trace: ${JSON.stringify(decision.trace)}`);
               }
               setTurnDecision(turnKey, decision);
-              // recall/capture add a hint; a confident "skip" replaces the workflow with a short notice.
-              if (decision.memoryAction === "skip" || decision.recallRecommended || decision.captureRecommended) {
+              // recall/capture add a hint; a confident "skip" replaces the workflow with a short notice;
+              // a reminder from the previous turn (unsaved request, solved problem) also needs the hint.
+              if (decision.memoryAction === "skip" || decision.recallRecommended || decision.captureRecommended || buildLayaNotice(decision)) {
                 return { prependContext: buildGuidance(agentConfig, decision) };
               }
             } catch (err) {
@@ -221,6 +256,61 @@ export function createOpenClawPlugin(options = {}) {
             return { prependContext: baseGuidance };
           })();
         });
+
+        // End of turn: an explicit "remember this" that produced no inbox candidate gets one more model
+        // pass (at most once per request; the harness guards loops with stopHookActive).
+        if (router && memoryJudge.proactiveCapture !== false) {
+          api.on("before_agent_finalize", async (event, context) => {
+            try {
+              if (!event || event.stopHookActive) return;
+              const agentConfig = configs.get(context?.agentId);
+              if (!agentConfig) return;
+              const sessionKey = context?.sessionKey ?? context?.sessionId ?? event.sessionKey ?? event.sessionId ?? null;
+              const pending = pendingCaptureEnforcement({ host: "openclaw", sessionKey });
+              if (pending) {
+                api.logger?.debug?.("[Laya Memory Router] before_agent_finalize: explicit save request not staged, asking for a revision");
+                return { action: "revise", reason: "obsidian_memory_capture_pending", retry: { instruction: pending.instruction, maxAttempts: 1 } };
+              }
+              // End-of-turn check on the final reply, only in "revise" / "remind" (autoCapture). The default
+              // "digest" queues the turn in agent_end below and never asks for another pass.
+              const reply = typeof event.lastAssistantMessage === "string" ? event.lastAssistantMessage : null;
+              if (!reply || memoryJudge.autoCapture === "off" || memoryJudge.autoCapture === "digest") return;
+              // Ask the local model only when the cheap features cannot decide (most turns never call it).
+              const check = { host: "openclaw", sessionKey, assistantText: reply, mode: memoryJudge.autoCapture };
+              const layaScore = turnEndNeedsScore(check) ? await router.captureScoreFor(reply) : null;
+              const verdict = judgeTurnEndCapture({ ...check, layaScore });
+              if (!verdict || memoryJudge.autoCapture !== "revise") return;
+              api.logger?.debug?.(`[Laya Memory Router] before_agent_finalize: ${verdict.reason}, asking for a capture pass`);
+              return { action: "revise", reason: "obsidian_memory_turn_end_capture", retry: { instruction: verdict.instruction, maxAttempts: 1 } };
+            } catch (err) {
+              api.logger?.debug?.(`[Laya Memory Router] before_agent_finalize error: ${err.message}`);
+            }
+          });
+
+          // "digest": after a successful run, queue its request and final reply for the background
+          // session digest (no model call, nothing for the agent to do).
+          if (memoryJudge.autoCapture === "digest") {
+            api.on("agent_end", (event, context) => {
+              try {
+                // Only real user turns: cron / heartbeat / system runs and failed model calls are not conversation.
+                if (!event || event.success === false || event.error || isExplicitNonUserInput(context)) return;
+                const agentConfig = configs.get(context?.agentId);
+                if (!agentConfig) return;
+                const { prompt, reply } = lastExchange(event.messages);
+                if (!reply) return;
+                enqueueTurnEnd({
+                  host: "openclaw",
+                  sessionKey: context?.sessionKey ?? context?.sessionId ?? null,
+                  assistantText: reply,
+                  prompt: prompt || null,
+                  turn: { vaultPath: agentConfig.vaultPath, projectId: agentConfig.projectId ?? null, cwd: agentConfig.projectRoot ?? context?.workspaceDir ?? null }
+                });
+              } catch (err) {
+                api.logger?.debug?.(`[Laya Memory Router] agent_end capture queue error: ${err.message}`);
+              }
+            });
+          }
+        }
 
         // 2. Strict mode official gatekeeper: before_agent_run runs SECOND in OpenClaw lifecycle.
         // Consumes and deletes the cached turn decision, or re-evaluates independently on cache miss (fail-closed).

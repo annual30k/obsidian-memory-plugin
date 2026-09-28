@@ -17,7 +17,9 @@ const argv = process.argv.slice(2);
 const restart = !argv.includes("--no-restart") && !argv.includes("--dry-run");
 const args = argv.filter((a) => a !== "--no-restart");
 // Your own head goes to ~/.laya (loaded before the bundled one) unless --out is given.
-if (!args.includes("--out") && !args.includes("--dry-run")) args.push("--out", join(homedir(), ".laya", "recall-head.json"));
+// `--target durable` trains the durable-statement head for proactive capture (labels with a `durable` field).
+const durable = args.includes("durable") && args.includes("--target");
+if (!args.includes("--out") && !args.includes("--dry-run")) args.push("--out", join(homedir(), ".laya", durable ? "durable-head.json" : "recall-head.json"));
 const script = fileURLToPath(new URL("./train-laya-head.py", import.meta.url));
 const result = spawnSync(python, ["-B", script, ...args], {
   stdio: "inherit",

@@ -143,12 +143,53 @@ path; direct file access is never permission to inspect unrelated Vault content.
 
 ## Selectively capture candidates
 
-**This skill is the only gate for writing memory.** A *save* hint just reports
-that the user asked explicitly; the optional Laya capture judge
-(`obsidian-memory-laya-judge --capture --stdin`, given a short nonsensitive task
-summary, never a transcript) may be asked only about a candidate that already
-passes the tests below, as a second opinion. Its "no", low confidence or an
-error means do not auto-capture; it never creates a candidate on its own.
+**This skill is the only gate for writing memory during a turn.** Automatic
+capture of what a session concluded normally happens outside any turn: the
+plugin queues each turn's request and final reply, and a background session
+digest stages at most a couple of candidates per finished session, marked
+`origin: auto-digest` (verbatim evidence of the final conclusion, or of a user's
+lasting statement). The digest enforces this skill's hard rules in code: an
+initialized Vault, a resolved project (never Global by default), the project's
+opt-out (`no-auto-capture` in its AGENTS.md or rules.md), no credentials, the
+Vault's candidate template and `cand-<uuid>` ids. Treat such candidates like any
+other pending evidence: they are unreviewed and may be wrong. You never need to
+act for the digest. When the hint says the digest staged candidates since the
+last conversation, tell the user in one short sentence at the end of your reply
+that they are waiting for review; do not open or change them unless asked.
+
+The per-turn Obsidian Memory hint can carry these capture-related signals; none
+of them writes anything by itself. With the default `autoCapture: digest` only
+the first two appear:
+
+- *the user asked to save something*: an explicit request ("记住……", "remember
+  this", "记录一下这个坑"). Stage the candidate before the turn ends. Hosts with an
+  end-of-turn hook ask for one more pass if no candidate appeared.
+- *Reminder: last turn the user asked to remember …*: see below.
+
+Only with `autoCapture: revise` or `remind`:
+
+- *the user seems to state a lasting rule, preference or decision*: a model
+  guess that is right about six times in ten. After the task, apply the two
+  tests below; if they pass, stage a candidate quoting the user's words; if not,
+  do nothing and do not mention memory.
+- *The previous problem now seems solved*: if the fix was non-obvious and would
+  matter again, stage a pitfall candidate (symptom, cause, fix); otherwise nothing.
+- *Obsidian Memory end-of-turn check* (an extra pass the host asks for at the end
+  of a turn, or a reminder at the start of the next): the reply read like a root
+  cause, decision, rule, environment fact or handoff. It overrides an earlier
+  "memory not needed" hint for that turn. Apply the two tests; a fix lives in the
+  code, but its symptom, cause and why it works usually do not, so a non-obvious
+  pitfall passes test 2. If they pass, stage one candidate; if not, finish as you
+  were and do not mention memory.
+
+The *Reminder* hint means the explicit request of the previous turn produced no
+inbox candidate. Stage it now or say why not.
+
+The optional Laya capture judge (`obsidian-memory-laya-judge --capture --stdin`,
+given a short nonsensitive task summary, never a transcript) may be asked only
+about a candidate that already passes the tests below, as a second opinion. Its
+"no", low confidence or an error means do not auto-capture; it never creates a
+candidate on its own.
 
 **Default: do not record routine execution.** Capture only when the user
 explicitly asks to remember, or when both relevance tests pass:

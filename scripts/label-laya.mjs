@@ -79,9 +79,12 @@ function parseArgs(argv) {
 
 // y/c/n/x -> label. "recall" needs a look-up in long-term memory (past decisions, conventions, preferences,
 // recorded facts); depending on the current conversation, the code or git history does not count.
-export const ANSWER_LABELS = Object.freeze({ y: "recall", c: "capture", n: "none", x: "context" });
+export const ANSWER_LABELS = Object.freeze({ y: "recall", c: "capture", n: "none", x: "context", d: "none" });
+// d: the prompt states a lasting rule, preference, decision or fact (proactive capture); it is a "none" for
+// look-up purposes but `durable: true` for the durable-statement head (`npm run laya:train -- --target durable`).
+export const DURABLE_ANSWERS = Object.freeze({ d: true, c: true, y: false, n: false, x: false });
 const LABEL_TEXT = { recall: "y = look up memory", capture: "c = save to memory", none: "n = no memory needed", context: "x = can't tell alone" };
-const HELP = "y = look up memory first, c = asks to save something, n = prompt/code/conversation is enough, x = can't tell from this prompt alone";
+const HELP = "y = look up memory first, c = asks to save something, d = states a lasting rule/preference/decision, n = prompt/code/conversation is enough, x = can't tell from this prompt alone";
 
 export function labelOf(row) {
   if (Object.values(ANSWER_LABELS).includes(row.label)) return row.label;
@@ -122,11 +125,12 @@ async function review(file) {
       const model = typeof row.modelScore === "number" ? `  model=${row.modelScore.toFixed(2)}${row.suspect ? " ⚠ disagrees" : ""}` : "";
       const current = labelOf(row);
       console.log(`\n[${done + reviewed + 1}/${rows.length}  current label: ${LABEL_TEXT[current]}${model}${row.kind ? `  kind=${row.kind}` : ""}]\n${row.text}`);
-      const answer = (await rl.question("Label? (Enter/y/c/n/x/s/q) ")).trim().toLowerCase();
+      const answer = (await rl.question("Label? (Enter/y/c/d/n/x/s/q) ")).trim().toLowerCase();
       if (answer === "q") break;
       if (answer === "s" || (answer && !ANSWER_LABELS[answer])) continue;
       const label = answer ? ANSWER_LABELS[answer] : current;
-      rows[index] = { ...row, label, recall: label === "recall" || label === "capture", reviewed: true, ...(label !== current ? { corrected: true } : {}) };
+      const durable = answer ? DURABLE_ANSWERS[answer] : row.durable;
+      rows[index] = { ...row, label, recall: label === "recall" || label === "capture", ...(typeof durable === "boolean" ? { durable } : {}), reviewed: true, ...(label !== current ? { corrected: true } : {}) };
       writeJsonlAtomic(file, rows);
       done++;
     }
@@ -169,12 +173,12 @@ async function main() {
     for (const item of items) {
       const meta = [item.host, `action=${item.action}`, item.score !== null ? `score=${item.score}` : null, item.boost ? `boost=${item.boost}` : null, item.suspect ? "SUSPECTED MISS" : null].filter(Boolean).join("  ");
       console.log(`\n[${meta}]\n${item.text}`);
-      const answer = (await rl.question("Label? (y/c/n/x/s/q) ")).trim().toLowerCase();
+      const answer = (await rl.question("Label? (y/c/d/n/x/s/q) ")).trim().toLowerCase();
       if (answer === "q") break;
       const label = ANSWER_LABELS[answer];
       if (!label) continue;
       fs.mkdirSync(path.dirname(args.labels), { recursive: true, mode: 0o700 });
-      fs.appendFileSync(args.labels, JSON.stringify({ text: item.text, label, recall: label === "recall" || label === "capture", action: item.action, score: item.score, ts: new Date().toISOString() }) + "\n", { mode: 0o600 });
+      fs.appendFileSync(args.labels, JSON.stringify({ text: item.text, label, recall: label === "recall" || label === "capture", durable: DURABLE_ANSWERS[answer], action: item.action, score: item.score, ts: new Date().toISOString() }) + "\n", { mode: 0o600 });
       done++;
     }
   } finally {

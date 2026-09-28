@@ -36,7 +36,13 @@ LAYA_HOME = Path.home() / ".laya"
 # labels-*.jsonl you keep there. They are added to training and, because they have the real mix of
 # prompts, used to pick the operating thresholds.
 DEFAULT_OUT = ROOT / "lib" / "laya-service" / "recall-head.json"
+DEFAULT_DURABLE_OUT = ROOT / "lib" / "laya-service" / "durable-head.json"
 HEAD_FORMAT = "laya-recall-head"
+DURABLE_HEAD_FORMAT = "laya-durable-head"
+# Proactive capture: the router hints a capture at captureThreshold; the head maps its chosen point there.
+ROUTER_CAPTURE_THRESHOLD = 0.75
+# A capture hint costs an inbox note the user has to review, so the chosen point favours precision.
+MIN_DURABLE_PRECISION = 0.6
 HEAD_VERSION = 1
 MAX_LENGTH = 128
 C_GRID = (0.03, 0.1, 0.3, 1.0, 3.0, 10.0)
@@ -46,7 +52,7 @@ ROUTER_RECALL_THRESHOLD = 0.5
 ROUTER_SKIP_THRESHOLD = 0.35
 
 sys.path.insert(0, str(ROOT / "lib" / "laya-service"))
-from service import MEMORY_NEED_QUESTION  # noqa: E402  (same zero-shot question the service asks)
+from service import MEMORY_NEED_QUESTION, DURABLE_STATEMENT_QUESTION  # noqa: E402  (same zero-shot questions the service asks)
 
 
 TRAIN_LABELS = ("recall", "none")
@@ -60,9 +66,18 @@ def label_of(item: dict):
     return ("recall" if item["recall"] else "none") if isinstance(item.get("recall"), bool) else None
 
 
-def load_rows(paths, skipped: dict | None = None) -> list[dict]:
-    """Rows for the head. It answers one question, "should the agent look something up first?", so
-    capture requests (write, not read) and context rows (undecidable from the prompt alone) are left out."""
+def durable_of(item: dict):
+    """True when the prompt states something meant to hold beyond this conversation (a rule, preference,
+    decision, environment fact or lesson). Rows without a `durable` field are only usable when they are
+    explicit save requests (label "capture"), which are durable by definition."""
+    if isinstance(item.get("durable"), bool):
+        return item["durable"]
+    return True if label_of(item) == "capture" else None
+
+
+def load_rows(paths, skipped: dict | None = None, target: str = "recall") -> list[dict]:
+    """Rows for one head. recall: "should the agent look something up first?" (capture requests and
+    context rows are left out). durable: "does the user state something that should still hold later?"."""
     rows, seen = [], set()
     for path in paths:
         path = Path(path).expanduser()
@@ -73,11 +88,22 @@ def load_rows(paths, skipped: dict | None = None) -> list[dict]:
                 continue
             item = json.loads(line)
             text = item.get("text")
-            label = label_of(item)
-            if not isinstance(text, str) or not text.strip() or label is None:
+            if not isinstance(text, str) or not text.strip():
                 continue
             key = " ".join(text.split())
             if key in seen:
+                continue
+            if target == "durable":
+                durable = durable_of(item)
+                if durable is None:
+                    if skipped is not None:
+                        skipped["unlabelled"] = skipped.get("unlabelled", 0) + 1
+                    continue
+                seen.add(key)
+                rows.append({"text": text, "recall": durable, "source": path.name})
+                continue
+            label = label_of(item)
+            if label is None:
                 continue
             seen.add(key)
             if label not in TRAIN_LABELS:
@@ -102,15 +128,22 @@ def load_agent(backend: str, model: str | None):
     return agent, laya.embed_fn_from_agent(agent, max_length=MAX_LENGTH), backend, model
 
 
-def featurize(agent, embed, texts: list[str]) -> np.ndarray:
+def featurize(agent, embed, texts: list[str], target: str = "recall") -> np.ndarray:
     emb = np.asarray(embed(texts), dtype=np.float64)
     emb /= np.maximum(np.linalg.norm(emb, axis=1, keepdims=True), 1e-9)
-    need = np.array([
-        float(agent.predict({"text": t}, {"memory_need": MEMORY_NEED_QUESTION})
-              .get("answers", {}).get("memory_need", {}).get("probabilities", {}).get("project_history", 0.0))
-        for t in texts
-    ])
-    return np.hstack([emb, need[:, None]])
+    if target == "durable":
+        zs = np.array([
+            float(agent.predict({"text": t}, {"durable": DURABLE_STATEMENT_QUESTION})
+                  .get("answers", {}).get("durable", {}).get("probabilities", {}).get("lasting_rule", 0.0))
+            for t in texts
+        ])
+    else:
+        zs = np.array([
+            float(agent.predict({"text": t}, {"memory_need": MEMORY_NEED_QUESTION})
+                  .get("answers", {}).get("memory_need", {}).get("probabilities", {}).get("project_history", 0.0))
+            for t in texts
+        ])
+    return np.hstack([emb, zs[:, None]])
 
 
 def sigmoid(z):
@@ -200,7 +233,11 @@ def main() -> int:
     parser.add_argument("--calibrate-on", default=None, help="file name of a --data source with the real prompt mix; operating points are chosen on its out-of-fold scores")
     parser.add_argument("--dump-oof", default=None, help="write out-of-fold scores per prompt (JSONL) for offline end-to-end analysis")
     parser.add_argument("--dry-run", action="store_true", help="report cross-validation only; do not write the head")
+    parser.add_argument("--target", default="recall", choices=["recall", "durable"],
+                        help="recall: memory-need head (default); durable: durable-statement head for proactive capture")
     args = parser.parse_args()
+    if args.target == "durable":
+        return train_durable(args)
 
     label_files = sorted(Path(args.labels).expanduser().glob("labels*.jsonl")) if args.labels else []
     sources = list(args.data or DEFAULT_DATA) + label_files
@@ -304,6 +341,87 @@ def main() -> int:
     if LAYA_HOME in out.resolve().parents:
         out.chmod(0o600)  # like the other files under ~/.laya
     print(f"\nHead written to {out} (restart Laya to load it: laya stop && laya start)")
+    return 0
+
+
+def train_durable(args) -> int:
+    """Durable-statement head: same features and fit, one operating point (captureThreshold)."""
+    label_files = sorted(Path(args.labels).expanduser().glob("labels*.jsonl")) if args.labels else []
+    sources = list(args.data or DEFAULT_DATA) + label_files
+    skipped: dict = {}
+    rows = load_rows(sources, skipped, target="durable")
+    if skipped:
+        print("left out (no durable label): " + ", ".join(f"{k} {v}" for k, v in sorted(skipped.items())))
+    test_rows = load_rows(args.test or [], target="durable")
+    train_keys = {" ".join(r["text"].split()) for r in rows}
+    test_rows = [r for r in test_rows if " ".join(r["text"].split()) not in train_keys]
+    y = np.array([1 if r["recall"] else 0 for r in rows])
+    if len(rows) < 40 or y.sum() < 10 or (1 - y).sum() < 10:
+        print(f"Need at least 40 prompts labelled for durability with 10 of each; have {len(rows)} ({int(y.sum())} durable). "
+              "Label with `npm run laya:label` (d = states a lasting rule).")
+        return 2
+    t0 = time.perf_counter()
+    agent, embed, backend, model_id = load_agent(args.backend, args.model)
+    X = featurize(agent, embed, [r["text"] for r in rows], target="durable")
+    print(f"backend={backend} model={model_id}; {len(rows)} labelled prompts ({int(y.sum())} durable) "
+          f"embedded in {time.perf_counter() - t0:.1f}s, dim={X.shape[1]}")
+    zero_shot = X[:, -1]
+    print("zero-shot durable @0.5      : " + fmt(metrics(zero_shot, y, 0.5)))
+    best = None
+    for C in C_GRID:
+        p = oof_scores(X, y, C, args.folds)
+        m = metrics(p, y, 0.5)
+        print(f"C={C:<5} out-of-fold @0.5 : " + fmt(m))
+        if best is None or m["f1"] > best[1]["f1"]:
+            best = (C, m, p)
+    C, _, p = best
+    # Operating point: best F1 among thresholds whose precision reaches MIN_DURABLE_PRECISION (a capture
+    # hint costs the user a note to review), else plain best F1.
+    grid = np.linspace(0.05, 0.95, 91)
+    ok = [t for t in grid if metrics(p, y, t)["precision"] >= MIN_DURABLE_PRECISION]
+    thr = max(ok or grid, key=lambda t: (metrics(p, y, t)["f1"], -abs(t - 0.5)))
+    chosen = metrics(p, y, thr)
+    print(f"\nchosen C={C}; out-of-fold at durable>={thr:.2f}: " + fmt(chosen))
+    sources_arr = np.array([r["source"] for r in rows])
+    for source in sorted(set(sources_arr)):
+        mask = sources_arr == source
+        print(f"  {source:34} " + fmt(metrics(p[mask], y[mask], thr)) + f"  (n={int(mask.sum())}, durable={int(y[mask].sum())})")
+    if args.dump_oof:
+        with Path(args.dump_oof).expanduser().open("w", encoding="utf-8") as fh:
+            for r, score_oof, zs in zip(rows, p, zero_shot):
+                fh.write(json.dumps({"text": r["text"], "durable": r["recall"], "source": r["source"], "oof": float(score_oof), "zeroShot": float(zs), "threshold": float(thr)}, ensure_ascii=False) + "\n")
+    final = fit(X, y, C)
+    mean, std, w, b = final
+    report = {"C": C, "folds": args.folds, "outOfFold": chosen, "zeroShot": metrics(zero_shot, y, 0.5)}
+    if test_rows:
+        yt = np.array([1 if r["recall"] else 0 for r in test_rows])
+        pt = predict(final, featurize(agent, embed, [r["text"] for r in test_rows], target="durable"))
+        report["blindTest"] = metrics(pt, yt, thr)
+        print(f"\nBLIND TEST ({len(test_rows)} prompts never used for fitting): " + fmt(report["blindTest"]))
+    if args.dry_run:
+        return 0
+    head = {
+        "format": DURABLE_HEAD_FORMAT,
+        "version": HEAD_VERSION,
+        "model": model_id,
+        "maxLength": MAX_LENGTH,
+        "features": ["embedding_mean_l2", "durable_statement"],
+        "mean": [round(float(v), 6) for v in mean],
+        "std": [round(float(v), 6) for v in std],
+        "weights": [round(float(v), 6) for v in w],
+        "bias": round(float(b), 6),
+        # One point: the chosen threshold lands on the router's captureThreshold.
+        "calibration": {"recall": [logit(float(thr)), logit(ROUTER_CAPTURE_THRESHOLD)]},
+        "trainedAt": time.strftime("%Y-%m-%d"),
+        "trainedOn": {"prompts": len(rows), "durable": int(y.sum()), "sources": sorted({r["source"] for r in rows})},
+        "report": report,
+    }
+    out = Path(args.out).expanduser() if args.out != str(DEFAULT_OUT) else DEFAULT_DURABLE_OUT
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(head, ensure_ascii=False) + "\n", encoding="utf-8")
+    if LAYA_HOME in out.resolve().parents:
+        out.chmod(0o600)
+    print(f"\nDurable head written to {out} (restart Laya to load it: laya stop && laya start)")
     return 0
 
 

@@ -79,10 +79,14 @@ function register(config = fixture()) {
   return calls;
 }
 
-test("only one prompt hook is registered; it is scoped to the configured agent", () => {
+test("the prompt hook, the end-of-turn hook and the capture-queue hook are registered; all are scoped to the configured agent", async () => {
   const calls = register();
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].name, "before_prompt_build");
+  assert.deepEqual(calls.map((c) => c.name), ["before_prompt_build", "before_agent_finalize", "agent_end"]);
+  assert.equal(calls[2].handler({ success: true, messages: [] }, { agentId: "another-agent" }), undefined);
+  const finalize = calls[1].handler;
+  assert.equal(await finalize({ stopHookActive: false }, { agentId: "another-agent" }), undefined);
+  assert.equal(await finalize({ stopHookActive: true }, { agentId: "owner", sessionKey: "s" }), undefined);
+  assert.equal(await finalize({ stopHookActive: false }, { agentId: "owner", sessionKey: "no-such-session" }), undefined);
   const hook = calls[0].handler;
   assert.equal(hook({}, {}), undefined);
   assert.equal(hook({}, undefined), undefined);

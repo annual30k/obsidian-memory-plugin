@@ -1,5 +1,4 @@
 {
-  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "obsidian-memory-plugin",
   "version": "0.7.0",
   "description": "The Obsidian Memory skill packaged for Antigravity, OpenClaw, Codex, and Hermes.",

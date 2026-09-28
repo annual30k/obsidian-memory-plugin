@@ -7,8 +7,9 @@
  *
  * The Vault path is configured per host (each host has its own config format), so it lives in
  * several places. This lists them side by side and flags a disagreement, an outdated plugin copy,
- * a copy linked to a development checkout, a doubly registered Codex hook, and the Laya service
- * state. Nothing is written.
+ * a copy linked to a development checkout, Codex hooks that are missing, not approved yet
+ * or registered twice, the Laya service state, and the session digest (queue backlog, last run, candidates
+ * written). Nothing is written.
  */
 import fs from "node:fs";
 import os from "node:os";
@@ -16,12 +17,49 @@ import path from "node:path";
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { vaultPathFromRuleText } from "../lib/memory-router/vault-index.js";
+import { layaHome } from "../lib/memory-router/paths.js";
 
 const PLUGIN_ID = "obsidian-memory-plugin";
 
 const readText = (file) => { try { return fs.readFileSync(file, "utf8"); } catch { return null; } };
 const readJson = (file) => { try { return JSON.parse(fs.readFileSync(file, "utf8")); } catch { return null; } };
 const physical = (p) => { try { return realpathSync(p); } catch { return p; } };
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Session digest status from ~/.laya (read only: no migration, no lock). */
+export function digestStatus(dir, now = Date.now()) {
+  const queue = [];
+  try {
+    for (const name of fs.readdirSync(path.join(dir, "capture-queue"))) {
+      if (!/^[0-9a-f]{16}\.jsonl$/u.test(name)) continue;
+      try { queue.push(fs.statSync(path.join(dir, "capture-queue", name)).mtimeMs); } catch {}
+    }
+  } catch {}
+  const log = (readText(path.join(dir, "digest-log.jsonl")) ?? "").split("\n").filter(Boolean)
+    .map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+  const recent = log.filter((r) => now - Date.parse(r.ts) < 7 * DAY_MS);
+  const waiter = readJson(path.join(dir, "state", "digest-waiter.json"));
+  let waiterAlive = false;
+  if (waiter?.pid) { try { process.kill(waiter.pid, 0); waiterAlive = true; } catch (err) { waiterAlive = err?.code === "EPERM"; } }
+  return {
+    queuedSessions: queue.length,
+    oldestQueuedMs: queue.length ? now - Math.min(...queue) : null,
+    waiterAlive,
+    lastRun: log.at(-1)?.ts ?? null,
+    written7d: recent.reduce((n, r) => n + (Array.isArray(r.written) ? r.written.length : 0), 0),
+    errors7d: recent.filter((r) => (r.skipped ?? []).some((x) => String(x).startsWith("error:") || x === "vault_unreadable" || x === "stale_queue_dropped")).length
+  };
+}
+
+/** OpenClaw can load the plugin straight from a directory (plugins.load.paths) instead of an extension copy. */
+function openClawLoadPath(config) {
+  for (const dir of config?.plugins?.load?.paths ?? []) {
+    const pkg = readJson(path.join(dir, "package.json"));
+    const manifest = readJson(path.join(dir, "openclaw.plugin.json"));
+    if (pkg?.name === PLUGIN_ID || manifest?.id === PLUGIN_ID) return { installed: true, dir, linkedTo: null, loadPath: true, version: pkg?.version ?? null };
+  }
+  return null;
+}
 
 function installInfo(dir, versionOf) {
   let stat;
@@ -63,14 +101,15 @@ export function collect({ home = os.homedir(), env = process.env, packageVersion
 
   // OpenClaw: plugins.entries.<id>.config.{vaultPath, agentConfigs.*.vaultPath}
   const ocConfigPath = env.OPENCLAW_CONFIG_PATH?.trim() || path.join(home, ".openclaw", "openclaw.json");
-  const ocEntry = readJson(ocConfigPath)?.plugins?.entries?.[PLUGIN_ID] ?? null;
+  const ocConfig = readJson(ocConfigPath);
+  const ocEntry = ocConfig?.plugins?.entries?.[PLUGIN_ID] ?? null;
   const ocVaults = [];
   if (ocEntry?.config?.vaultPath) ocVaults.push({ where: `${ocConfigPath} (config.vaultPath)`, path: ocEntry.config.vaultPath });
   for (const [agent, cfg] of Object.entries(ocEntry?.config?.agentConfigs ?? {})) {
     if (cfg?.vaultPath) ocVaults.push({ where: `${ocConfigPath} (agent "${agent}")`, path: cfg.vaultPath });
   }
   hosts.push({ host: "OpenClaw", enabled: ocEntry ? ocEntry.enabled !== false : false, vaults: ocVaults,
-    install: installInfo(path.join(home, ".openclaw", "extensions", PLUGIN_ID), versionFromJson("package.json")) });
+    install: openClawLoadPath(ocConfig) ?? installInfo(path.join(home, ".openclaw", "extensions", PLUGIN_ID), versionFromJson("package.json")) });
 
   // Codex: managed block in AGENTS.override.md (when non-empty) or AGENTS.md; marketplace install in the plugin cache.
   const override = path.join(codexHome, "AGENTS.override.md");
@@ -86,7 +125,21 @@ export function collect({ home = os.homedir(), env = process.env, packageVersion
     install: codexVersions.length
       ? { installed: true, dir: path.join(cacheRoot, codexVersions.at(-1)), linkedTo: null, version: codexVersions.at(-1) }
       : { installed: false, dir: cacheRoot },
-    duplicateHook: codexEnabled && /codex-hook\.mjs/u.test(userHooks) });
+    // The plugin's hooks (hooks/hooks.json) run once approved on the plugin page / via /hooks; Codex records
+    // [hooks.state."obsidian-memory@obsidian-memory:hooks/hooks.json:<event>:i:j"]. A user-level copy in
+    // ~/.codex/hooks.json ("setup-codex --hooks") is the fallback, recorded under the hooks.json path.
+    hooks: ["UserPromptSubmit", "Stop"].map((event) => {
+      const script = event === "Stop" ? "codex-stop-hook.mjs" : "codex-hook.mjs";
+      const snake = event === "Stop" ? "stop" : "user_prompt_submit";
+      const trustedUnder = (prefix) => codexToml.split("[hooks.state.").some((block) => block.startsWith(`"${prefix}:${snake}:`) && /trusted_hash\s*=/u.test(block));
+      const installed = codexVersions.length ? readText(path.join(cacheRoot, codexVersions.at(-1), "hooks", "hooks.json")) ?? "" : "";
+      const inPlugin = installed.includes(`"${event}"`) && installed.includes(script);
+      const inUser = new RegExp(`"${event}"[\\s\\S]*?${script.replace(".", "\\.")}`, "u").test(userHooks);
+      return {
+        event, inPlugin, inUser,
+        trusted: (inPlugin && trustedUnder("obsidian-memory@obsidian-memory:hooks/hooks.json")) || (inUser && trustedUnder(path.join(codexHome, "hooks.json")))
+      };
+    }) });
 
   // Antigravity: managed block in ~/.gemini/GEMINI.md; plugin in ~/.gemini/config/plugins/<id>.
   const gemini = path.join(home, ".gemini", "GEMINI.md");
@@ -103,7 +156,7 @@ export function collect({ home = os.homedir(), env = process.env, packageVersion
   const envVault = env.OBSIDIAN_MEMORY_VAULT?.trim() || null;
 
   // Laya
-  const layaDir = path.join(env.LAYA_HOME?.trim() || home, ".laya");
+  const layaDir = layaHome({ env, homedir: () => home });
   const service = readJson(path.join(layaDir, "service.json"));
   let cli = null;
   try { cli = fs.readlinkSync(path.join(home, ".local", "bin", "laya")); } catch {}
@@ -113,6 +166,7 @@ export function collect({ home = os.homedir(), env = process.env, packageVersion
     labels: (() => { try { return fs.readdirSync(layaDir).filter((f) => /^labels.*\.jsonl$/u.test(f)); } catch { return []; } })(),
     cli
   };
+  const digest = digestStatus(layaDir);
 
   // Findings
   const issues = [];
@@ -126,10 +180,21 @@ export function collect({ home = os.homedir(), env = process.env, packageVersion
       issues.push(`${h.host}: installed ${h.install.version}, this package is ${packageVersion}`);
     }
     if (h.enabled && h.vaults.length === 0 && !envVault) issues.push(`${h.host}: enabled but no Vault path configured`);
-    if (h.duplicateHook) issues.push("Codex: codex-hook.mjs is registered both by the plugin and in ~/.codex/hooks.json (runs twice)");
+    if (h.host === "Codex" && h.enabled && h.hooks) {
+      const missing = h.hooks.filter((x) => !x.inPlugin && !x.inUser).map((x) => x.event);
+      const pending = h.hooks.filter((x) => (x.inPlugin || x.inUser) && !x.trusted).map((x) => x.event);
+      const twice = h.hooks.filter((x) => x.inPlugin && x.inUser).map((x) => x.event);
+      if (missing.length) issues.push(`Codex: ${missing.join(" and ")} hook missing from the installed plugin; update the plugin (codex plugin marketplace upgrade)`);
+      if (pending.length) issues.push(`Codex: ${pending.join(" and ")} hook not approved yet; in the Codex app open Plugins > Obsidian Memory and choose "Trust all" under Hooks (or /hooks in the Codex CLI). Until then ${pending.includes("UserPromptSubmit") ? "Codex gets no memory hints" : ""}${pending.length > 1 ? " and " : ""}${pending.includes("Stop") ? "nothing is captured at the end of a Codex turn" : ""}`);
+      if (twice.length) issues.push(`Codex: ${twice.join(" and ")} hook registered both by the plugin and in ~/.codex/hooks.json (runs twice); remove the obsidian-memory entries from ~/.codex/hooks.json`);
+    }
   }
+  if (digest.queuedSessions && digest.oldestQueuedMs > DAY_MS && !digest.waiterAlive) {
+    issues.push(`Session digest: ${digest.queuedSessions} queued session(s), oldest ${Math.round(digest.oldestQueuedMs / 3600000)} h, and no digest is waiting; run 'laya digest' to process them`);
+  }
+  if (digest.errors7d) issues.push(`Session digest: ${digest.errors7d} run(s) in the last 7 days could not finish (see ${path.join(layaDir, "digest-log.jsonl")})`);
   if (laya.cli && !fs.existsSync(path.resolve(path.join(home, ".local", "bin"), laya.cli))) issues.push(`laya CLI points to a missing file: ${laya.cli}`);
-  return { packageVersion, envVault, hosts, laya, issues };
+  return { packageVersion, envVault, hosts, laya, digest, issues };
 }
 
 function render(report, stdout) {
@@ -138,7 +203,7 @@ function render(report, stdout) {
   w(`OBSIDIAN_MEMORY_VAULT: ${report.envVault ?? "(not set)"}`);
   for (const h of report.hosts) {
     const inst = h.install.installed
-      ? `${h.install.version ?? "?"}${h.install.linkedTo ? ` (symlink -> ${h.install.linkedTo})` : ""}`
+      ? `${h.install.version ?? "?"}${h.install.linkedTo ? ` (symlink -> ${h.install.linkedTo})` : ""}${h.install.loadPath ? ` (loaded from ${h.install.dir})` : ""}`
       : "not installed";
     w(`\n${h.host}: plugin ${inst}${h.enabled ? ", enabled" : ""}`);
     if (h.vaults.length === 0) w("  Vault: (none)");
@@ -147,6 +212,9 @@ function render(report, stdout) {
   const l = report.laya;
   w(`\nLaya: service ${l.service ? `registered at ${l.service.endpoint} (pid ${l.service.pid})` : "not running"}; ` +
     `recall head ${l.userHead ?? "bundled / zero-shot"}; labels ${l.labels.length ? l.labels.join(", ") : "none"}; CLI -> ${l.cli ?? "(not linked)"}`);
+  const d = report.digest;
+  w(`Session digest: ${d.queuedSessions} queued session(s)${d.waiterAlive ? ", waiting to digest" : ""}; last run ${d.lastRun ?? "never"}; ` +
+    `${d.written7d} candidate(s) staged in the last 7 days`);
   w(report.issues.length ? `\n${report.issues.length} issue(s):` : "\nNo issues found.");
   for (const i of report.issues) w(`  - ${i}`);
 }

@@ -150,10 +150,12 @@ def _evaluate_router(user_message: str, project_id: str | None, mode: str, turn:
         }
 
     cli_path = Path(__file__).parent / "lib" / "memory-router" / "cli.js"
+    turn = dict(turn) if turn else None
+    auto_capture = turn.pop("autoCapture", None) if turn else None
     request: dict[str, Any] = {
         "text": user_message,
         "projectId": project_id,
-        "config": {"mode": mode}
+        "config": {"mode": mode, **({"autoCapture": auto_capture} if auto_capture in ("digest", "revise", "remind", "off") else {})}
     }
     if turn:
         request["turn"] = turn
@@ -218,6 +220,64 @@ def _evaluate_router(user_message: str, project_id: str | None, mode: str, turn:
         }
 
 
+QUEUE_REPLY_MIN_CHARS = 200
+
+
+def _enqueue_turn(payload: dict[str, Any]) -> bool:
+    """Hand one finished turn to the Node capture queue (lib/memory-router/cli.js --enqueue-turn)."""
+    import shutil
+    import subprocess
+
+    node_bin = shutil.which("node")
+    if not node_bin:
+        return False
+    cli_path = Path(__file__).parent / "lib" / "memory-router" / "cli.js"
+    try:
+        proc = subprocess.run(
+            [node_bin, str(cli_path), "--enqueue-turn", "--stdin"],
+            input=json.dumps(payload),
+            text=True,
+            capture_output=True,
+            timeout=HOST_HOOK_TIMEOUT_SECONDS,
+        )
+        return proc.returncode == 0 and json.loads(proc.stdout or "{}").get("queued") is True
+    except Exception as exc:  # observer hook: never disturb the turn
+        LOGGER.debug("Obsidian Memory capture queue failed: %s", exc)
+        return False
+
+
+def on_post_llm_call(ctx: Any = None, *, session_id: str = "", user_message: str = "", assistant_response: str = "", **kwargs: Any) -> None:
+    """Hermes post_llm_call (observer): queue the finished turn for the background session digest.
+
+    No model call and nothing the agent has to do; a local digest later stages a few pending-ingest
+    Inbox candidates per idle session. Disabled with auto_capture: off or memory_router_mode: off.
+    """
+    try:
+        get_config = _config_getter(ctx)
+        mode = (os.environ.get("OBSIDIAN_MEMORY_ROUTER_MODE") or get_config("memory_router_mode", "auto") or "auto").strip()
+        auto = (os.environ.get("OBSIDIAN_MEMORY_AUTO_CAPTURE") or get_config("auto_capture", "digest") or "digest").strip()
+        if mode == "off" or auto != "digest":
+            return None
+        if not isinstance(assistant_response, str) or len(assistant_response.strip()) < QUEUE_REPLY_MIN_CHARS:
+            return None
+        if not isinstance(session_id, str) or not session_id:
+            return None
+        settings = _settings(ctx)
+        turn: dict[str, Any] = {"host": "hermes", "sessionKey": session_id, "cwd": os.getcwd()}
+        if isinstance(settings.get("vaultPath"), str):
+            turn["vaultPath"] = settings["vaultPath"]
+        if isinstance(settings.get("projectId"), str):
+            turn["projectId"] = settings["projectId"]
+        _enqueue_turn({
+            "prompt": user_message if isinstance(user_message, str) else "",
+            "reply": assistant_response,
+            "turn": turn,
+        })
+    except Exception as exc:
+        LOGGER.debug("Obsidian Memory post_llm_call failed: %s", exc)
+    return None
+
+
 def on_pre_llm_call(ctx: Any = None, *, user_message: str = "", session_id: str = "", **kwargs: Any) -> dict[str, Any]:
     """Hermes pre_llm_call hook: run Fast-Path/Laya routing and inject guidance into user message."""
     get_config = _config_getter(ctx)
@@ -250,6 +310,7 @@ def on_pre_llm_call(ctx: Any = None, *, user_message: str = "", session_id: str 
         turn["sessionKey"] = session_id
     if isinstance(settings.get("vaultPath"), str):
         turn["vaultPath"] = settings["vaultPath"]
+    turn["autoCapture"] = (os.environ.get("OBSIDIAN_MEMORY_AUTO_CAPTURE") or get_config("auto_capture", "digest") or "digest").strip()
     result = _evaluate_router(user_message, project_id, effective_mode, turn)
     trace = result.get("trace") or {
         "route": "fallback",
@@ -309,7 +370,8 @@ def register(ctx: Any) -> None:
     register_hook = getattr(ctx, "register_hook", None)
     if callable(register_hook):
         register_hook("pre_llm_call", lambda **kwargs: on_pre_llm_call(ctx=ctx, **kwargs))
-        LOGGER.info("Registered Obsidian Memory pre_llm_call hook for Hermes.")
+        register_hook("post_llm_call", lambda **kwargs: on_post_llm_call(ctx=ctx, **kwargs))
+        LOGGER.info("Registered Obsidian Memory pre_llm_call and post_llm_call hooks for Hermes.")
     else:
         LOGGER.warning(
             "Host does not support register_hook(); pre_llm_call hook skipped."

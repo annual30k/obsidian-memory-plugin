@@ -31,7 +31,7 @@ export function updateAgentsContent(content, vaultPath) {
   return updateContentWithBlock(content, vaultPath, "AGENTS.md");
 }
 
-export function defaultHooksPath(codexHome = resolve(homedir(), ".codex")) {
+export function defaultHooksPath(codexHome = process.env.CODEX_HOME?.trim() || resolve(homedir(), ".codex")) {
   return resolve(codexHome, "hooks.json");
 }
 
@@ -64,23 +64,20 @@ export function buildCodexHookCommand(scriptPath) {
   return `node "${safePath}"`;
 }
 
-export function buildCodexHooksConfig(scriptPath) {
+// Codex runs the hooks bundled with the plugin (hooks/hooks.json, declared in .codex-plugin/plugin.json) and
+// shows them on the plugin page for approval. --hooks additionally registers them in ~/.codex/hooks.json for a
+// Codex that does not load the plugin's hooks; do not use both, or every hook runs twice.
+export function buildCodexHooksConfig(scriptPath, stopScriptPath = scriptPath.replace(/codex-hook\.mjs$/u, "codex-stop-hook.mjs")) {
+  const entry = (script) => [{ hooks: [{ type: "command", command: buildCodexHookCommand(script), timeout: HOST_HOOK_TIMEOUT_SECONDS }] }];
   return {
     hooks: {
-      UserPromptSubmit: [
-        {
-          hooks: [
-            {
-              type: "command",
-              command: buildCodexHookCommand(scriptPath),
-              timeout: HOST_HOOK_TIMEOUT_SECONDS
-            }
-          ]
-        }
-      ]
+      UserPromptSubmit: entry(scriptPath),
+      ...(stopScriptPath && stopScriptPath !== scriptPath ? { Stop: entry(stopScriptPath) } : {})
     }
   };
 }
+
+const scriptName = (command) => /([\w.-]+\.mjs)"?\s*$/u.exec(String(command ?? ""))?.[1] ?? null;
 
 export function mergeCodexHooks(existingConfig = {}, pluginHooksConfig = {}) {
   const merged = { ...existingConfig };
@@ -94,15 +91,16 @@ export function mergeCodexHooks(existingConfig = {}, pluginHooksConfig = {}) {
       const newInnerHooks = Array.isArray(newMatcher.hooks) ? newMatcher.hooks : [];
       let foundMatchingContainer = false;
 
+      // Our hooks are recognised by their script name (codex-hook.mjs / codex-stop-hook.mjs) and updated in
+      // place, so re-running setup never registers one twice; other hooks are left alone.
+      const ours = new Set(newInnerHooks.map((nh) => scriptName(nh.command)).filter(Boolean));
       for (const existingMatcher of existingMatchers) {
         if (Array.isArray(existingMatcher.hooks)) {
-          const hasHook = existingMatcher.hooks.some(h =>
-            typeof h?.command === "string" && h.command.includes("codex-hook.mjs")
-          );
+          const hasHook = existingMatcher.hooks.some(h => ours.has(scriptName(h?.command)));
           if (hasHook) {
             existingMatcher.hooks = existingMatcher.hooks.map(h =>
-              typeof h?.command === "string" && h.command.includes("codex-hook.mjs")
-                ? newInnerHooks.find(nh => nh.command?.includes("codex-hook.mjs")) || h
+              ours.has(scriptName(h?.command))
+                ? newInnerHooks.find(nh => scriptName(nh.command) === scriptName(h.command)) || h
                 : h
             );
             foundMatchingContainer = true;
@@ -125,7 +123,7 @@ function parseArgs(args) {
   const options = {
     agentsPath: defaultAgentsPath(),
     hooksPath: defaultHooksPath(),
-    configureHooks: false, // Default: false (plugin-bundled hooks/hooks.json is the primary source; opt-in with --hooks)
+    configureHooks: false, // The plugin's own hooks/hooks.json is the source; --hooks is the fallback
     confirm: false,
     dryRun: false
   };
@@ -162,8 +160,9 @@ Prompts for an Obsidian Vault path, validates that it is readable, then safely
 adds this plugin's managed block to the active global AGENTS file (AGENTS.override.md
 when non-empty, otherwise AGENTS.md). --yes requires --vault.
 Use --agents-file <absolute-path> only to target a different AGENTS file.
-Use --hooks to explicitly configure standalone global hooks in ~/.codex/hooks.json
-(default is false; Codex plugin-bundled hooks/hooks.json is the primary source to prevent duplicate execution).`);
+The plugin's own hooks (UserPromptSubmit, Stop) need one approval in the Codex app: open the plugin's
+page and choose "Trust all" under Hooks. --hooks also registers them in ~/.codex/hooks.json, only for a
+Codex that does not load plugin hooks (they would otherwise run twice).`);
 }
 
 function validateAgentsPath(value) {
@@ -214,9 +213,12 @@ export async function runSetup(args, { input = process.stdin, output = process.s
       const merged = mergeCodexHooks(existingHooks, pluginHooks);
       mkdirSync(dirname(hooksPath), { recursive: true });
       writeFileSync(hooksPath, JSON.stringify(merged, null, 2) + "\n", "utf8");
-      output.write(`Configured native pre-invocation hook in ${hooksPath}.\n`);
+      output.write(`Registered the UserPromptSubmit and Stop hooks in ${hooksPath}. Approve them in Codex (/hooks), and do not also enable the plugin's hooks.\n`);
     }
     output.write("Start a new Codex task to use the updated instruction.\n");
+    if (!options.configureHooks) {
+      output.write('One more step: in the Codex app open Plugins > Obsidian Memory and choose "Trust all" under Hooks (or run /hooks in the Codex CLI). Until then Codex gets no memory hints and nothing is captured at the end of a turn.\n');
+    }
   } finally {
     prompt.close();
   }

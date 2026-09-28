@@ -33,19 +33,32 @@ export function ensureLayaDir(customHome = null) {
   return dir;
 }
 
-const DEFAULT_MODELS = ["aac6fef/laya-multilingual-mlx", "convaiinnovations/laya-multilingual"];
+export const LAYA_MLX_MODEL = "aac6fef/laya-multilingual-mlx";
+export const LAYA_TORCH_MODEL = "convaiinnovations/laya-multilingual";
+// Vault retriever (sentence embeddings) beside the judge; MLX only for now. Mirrors EMBED_MODEL_DEFAULT in service.py.
+export const EMBED_MODEL = "intfloat/multilingual-e5-small";
+export const EMBED_MODEL_FILES = ["config.json", "model.safetensors", "tokenizer.json"];
+
+/** Models the service loads for a backend (the judge, plus the retriever on MLX). */
+export function modelsForBackend(backend, { model = null, embedModel = null } = {}) {
+  const judge = model || (backend === "pytorch" ? LAYA_TORCH_MODEL : LAYA_MLX_MODEL);
+  if (backend !== "mlx") return [judge];
+  const retriever = (embedModel || EMBED_MODEL).trim();
+  return /^(?:off|none|0|false)$/iu.test(retriever) ? [judge] : [judge, retriever];
+}
 
 /**
  * Environment that makes Hugging Face load an already-downloaded model without contacting the Hub.
  * Otherwise every load first calls the Hub API, which fails behind proxies the venv cannot use (e.g. a
  * SOCKS proxy without `socksio`) or offline. The Hub client is still built in offline mode and reads the
  * proxy variables, so they are blanked for the child too (it needs no network). Nothing changes when the
- * user set HF_HUB_OFFLINE or the model is not cached yet (the first download still needs the network).
+ * user set HF_HUB_OFFLINE or any listed model is not cached yet (its first download needs the network).
  */
-export function offlineModelEnv(env = process.env, models = DEFAULT_MODELS, home = os.homedir()) {
+export function offlineModelEnv(env = process.env, models = modelsForBackend(detectBackend()), home = os.homedir()) {
   if (env.HF_HUB_OFFLINE !== undefined || env.HF_OFFLINE !== undefined) return {};
   const hub = env.HF_HUB_CACHE || path.join(env.HF_HOME || path.join(env.XDG_CACHE_HOME || path.join(home, ".cache"), "huggingface"), "hub");
-  const cached = models.filter(Boolean).some((model) => {
+  const needed = models.filter(Boolean);
+  const cached = needed.length > 0 && needed.every((model) => {
     try {
       const snapshots = path.join(hub, `models--${String(model).replace(/\//gu, "--")}`, "snapshots");
       return fs.readdirSync(snapshots).length > 0;
@@ -68,7 +81,8 @@ export function getDefaultServiceFilePath(customHome = null) {
 
 export const LAYA_HF_CACHE_DIRS = [
   "models--aac6fef--laya-multilingual-mlx",
-  "models--convaiinnovations--laya-multilingual"
+  "models--convaiinnovations--laya-multilingual",
+  "models--intfloat--multilingual-e5-small"
 ];
 
 export function getDefaultPidFilePath(customHome = null) {
@@ -349,9 +363,11 @@ export async function installCommand(args = {}) {
   const shouldDownload = backend !== "mock" && !args.skipModel;
   if (shouldDownload) {
     process.stdout.write("Downloading model weights into local cache...\n");
+    // The MLX backend also fetches the Vault retriever checkpoint (three files, ~450 MB); the service
+    // runs it with lib/laya-service/bert_embed.py, so no extra package is installed.
     const downloadScript = backend === "mlx"
-      ? "import laya_mlx; laya_mlx.load('aac6fef/laya-multilingual-mlx')"
-      : "import laya; laya.load('convaiinnovations/laya-multilingual')";
+      ? `import laya_mlx; laya_mlx.load(${JSON.stringify(LAYA_MLX_MODEL)})\nfrom huggingface_hub import snapshot_download; snapshot_download(${JSON.stringify(EMBED_MODEL)}, allow_patterns=${JSON.stringify(EMBED_MODEL_FILES)})`
+      : `import laya; laya.load(${JSON.stringify(LAYA_TORCH_MODEL)})`;
     const dlRes = spawnSync(pythonBin, ["-c", downloadScript], {
       stdio: "inherit",
       windowsHide: true
@@ -424,6 +440,9 @@ export async function statusCommand(args = {}) {
   process.stdout.write(`  Model Status: ${health.model_status || health.modelStatus || "unknown"}\n`);
   const head = health.recall_head;
   process.stdout.write(`  Recall head:  ${head && typeof head.path === "string" ? `${head.path} (trained ${head.trained_at ?? "?"} on ${head.prompts ?? "?"} prompts)` : "none (zero-shot)"}\n`);
+  const durable = health.durable_head;
+  process.stdout.write(`  Durable head: ${durable && typeof durable.path === "string" ? `${durable.path} (trained ${durable.trained_at ?? "?"} on ${durable.prompts ?? "?"} prompts)` : "none (no proactive capture checks)"}\n`);
+  process.stdout.write(`  Retriever:    ${typeof health.embed_model === "string" ? `${health.embed_model} (${health.embed_status ?? "unknown"})` : "none (word-overlap Vault hints only)"}\n`);
   process.stdout.write(`  Token:        ${maskToken(token)}\n`);
   process.stdout.write("=================================\n");
   return 0;
@@ -519,6 +538,9 @@ export async function startCommand(args = {}) {
   if (args.model) {
     pyArgs.push("--model", args.model);
   }
+  if (args.embedModel) {
+    pyArgs.push("--embed-model", args.embedModel);
+  }
 
   // An explicit stop can race a background recovery attempt. Check immediately
   // before spawning; stopCommand writes the marker before inspecting service.json.
@@ -533,7 +555,7 @@ export async function startCommand(args = {}) {
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
     // Keep the installed plugin directory free of __pycache__/*.pyc.
-    env: { ...process.env, ...offlineModelEnv(process.env, args.model ? [args.model] : DEFAULT_MODELS), PYTHONDONTWRITEBYTECODE: "1", ...(args.env || {}) }
+    env: { ...process.env, ...offlineModelEnv(process.env, modelsForBackend(backend, { model: args.model, embedModel: args.embedModel })), PYTHONDONTWRITEBYTECODE: "1", ...(args.env || {}) }
   });
 
   child.unref();
@@ -844,6 +866,8 @@ export function parseArgs(argv) {
       options.port = parseInt(argv[++i], 10);
     } else if (arg === "--transport" && i + 1 < argv.length) {
       options.transport = argv[++i];
+    } else if (arg === "--embed-model" && i + 1 < argv.length) {
+      options.embedModel = argv[++i];
     } else if (arg === "--idle-unload-seconds" && i + 1 < argv.length) {
       options.idleUnloadSeconds = parseInt(argv[++i], 10);
     } else if (arg === "--preload") {
@@ -870,12 +894,14 @@ export const TOOL_COMMANDS = Object.freeze({
   bench: "bench-laya.mjs",
   tune: "tune-laya.mjs",
   "calibrate-vault": "calibrate-vault-hints.mjs",
-  doctor: "doctor.mjs"
+  doctor: "doctor.mjs",
+  digest: "memory-digest.mjs"
 });
 
 const TOOL_HELP = `Service:   laya install | start | stop | status | uninstall
 Everyday:  laya label            label logged prompts (y look up / c save / n none / x can't tell)
            laya train            retrain the recall head from your labels, then restart the service
+Memory:    laya digest           stage Inbox candidates from finished sessions now (--now, --dry-run)
 Check:     laya doctor           where each host is installed and which Vault it uses
            laya eval             accuracy on a labelled set (--data file --vault dir --errors)
 Advanced:  laya tune             compare Laya question wordings

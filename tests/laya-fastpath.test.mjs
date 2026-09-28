@@ -156,3 +156,39 @@ test("sending the agent to the knowledge base is recall; asking to keep somethin
     assert.equal(evaluateFastPath(text).reason, "explicit_remember_intent", text);
   }
 });
+
+test("looksLikeDurableStatement: rules and personal facts, never questions", async () => {
+  const { looksLikeDurableStatement: f } = await import("../lib/memory-router/fast-path.js");
+  for (const t of ["以后这个项目的 commit message 都用中文写", "我对花生过敏", "我的减脂目标是每天摄入1800大卡", "我们项目统一用 pnpm，别再用 npm", "我们约定：README 只写中文", "from now on use tabs"]) assert.equal(f(t), true, t);
+  for (const t of ["我们约定的是什么？", "以后都用什么？", "怎么统一用 pnpm", "帮我修一下这个 bug", "别再用 npm 了吗", "统一一下格式吧"]) assert.equal(f(t), false, t);
+});
+
+test("save requests win over recall rules, more phrasings are caught, and questions, quotes and code are not saves", () => {
+  const both = evaluateFastPath("记住，我们约定以后都用 pnpm");
+  assert.equal(both.reason, "explicit_remember_intent", "the save keeps its end-of-turn check");
+  assert.equal(both.alsoRecall, true);
+  for (const text of ["你记得以后提交前先跑测试", "记录下来：部署前要先备份", "以后记得先 lstat 再删", "Remember that the API is rate limited", "don't forget to bump the version", "记一下这个坑：怎么都连不上，原因是代理", "能帮我记住这个吗"]) {
+    assert.equal(evaluateFastPath(text).reason, "explicit_remember_intent", text);
+  }
+  for (const text of ["你记得上次那个方案吗", "写进记忆了吗", "你还记得我们约定的吗？"]) {
+    assert.equal(evaluateFastPath(text).reason, "explicit_recall_intent", text);
+  }
+  for (const text of ["Store this value in a variable", "Record this video at 1080p", "有哪些踩坑点？", "他说\"记住我的密码\"是什么意思", "> 记住：这是引用\n帮我看看这段话", "看看这段代码 `// 记住：先初始化` 有没有问题"]) {
+    assert.equal(evaluateFastPath(text).reason, "needs_judgment", text);
+  }
+});
+
+test("host-internal messages are skipped and never treated as the user's words", () => {
+  for (const text of ["__openclaw_memory_core_short_term_promotion_dream__", "[cron:e838772c cyber-health-nightly-review] 执行每日晚间复盘", "[OpenClaw cron wake]"]) {
+    assert.equal(evaluateFastPath(text).reason, "system_message", text);
+  }
+  assert.equal(evaluateFastPath("__init__.py 为什么没被导入").reason, "needs_judgment", "a dunder file name in a question is the user's words");
+});
+
+test("a save request is looked for only at the start and end of a long message; Codex's suggestion task is a system message", () => {
+  const filler = "Some pasted documentation line about the build.\n".repeat(40);
+  assert.equal(evaluateFastPath(`${filler}Remember that Codex can do both knowledge work and software engineering.\n${filler}`).reason, "needs_judgment");
+  assert.equal(evaluateFastPath(`记住：发布前先跑 doctor\n${filler}`).reason, "explicit_remember_intent", "a request at the start of a long message still counts");
+  assert.equal(evaluateFastPath(`${filler}以上是日志，记住这个坑`).reason, "explicit_remember_intent", "and at the end");
+  assert.equal(evaluateFastPath("# Overview\n\nGenerate 0 to 3 hyperpersonalized suggestions for what this user can do with Codex").reason, "system_message");
+});

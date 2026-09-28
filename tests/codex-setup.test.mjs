@@ -96,27 +96,32 @@ test("Codex onboarding writes and safely refreshes only its own AGENTS block", a
   }
 });
 
-test("Codex setup default does NOT write hooks.json to avoid duplicate hooks, and writes only with --hooks", async () => {
+test("Codex setup leaves hooks.json alone by default (the plugin's hooks run) and --hooks registers both once, keeping other hooks", async () => {
   const root = mkdtempSync(join(tmpdir(), "obsidian-memory-codex-hooks-"));
   try {
     const vault = join(root, "vault");
     const agents = join(root, "AGENTS.md");
     const hooksFile = join(root, "hooks.json");
     mkdirSync(vault);
+    writeFileSync(hooksFile, JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: "command", command: "echo other" }] }] } }));
 
-    // 1. Default setup: does NOT configure hooks.json (relies on plugin hooks/hooks.json as single source)
+    // Default leaves hooks.json alone.
     await runSetup(["--vault", vault, "--agents-file", agents, "--hooks-file", hooksFile, "--yes"], {
       input: new PassThrough(), output: new PassThrough()
     });
-    assert.equal(existsSync(hooksFile), false, "Default setup must NOT write hooks.json to avoid double execution");
+    assert.equal(JSON.parse(readFileSync(hooksFile, "utf8")).hooks.UserPromptSubmit, undefined);
 
-    // 2. Explicit --hooks opt-in: configures hooks.json
-    await runSetup(["--vault", vault, "--agents-file", agents, "--hooks-file", hooksFile, "--hooks", "--yes"], {
-      input: new PassThrough(), output: new PassThrough()
-    });
-    assert.equal(existsSync(hooksFile), true, "--hooks must write hooks.json");
+    // --hooks: both hooks, and running it twice does not add them twice.
+    for (let i = 0; i < 2; i++) {
+      await runSetup(["--vault", vault, "--agents-file", agents, "--hooks-file", hooksFile, "--hooks", "--yes"], {
+        input: new PassThrough(), output: new PassThrough()
+      });
+    }
     const hooksData = JSON.parse(readFileSync(hooksFile, "utf8"));
-    assert.ok(hooksData.hooks?.UserPromptSubmit);
+    const commands = (event) => hooksData.hooks[event].flatMap((m) => m.hooks.map((h) => h.command));
+    assert.equal(commands("UserPromptSubmit").filter((c) => c.includes("codex-hook.mjs")).length, 1);
+    assert.equal(commands("Stop").filter((c) => c.includes("codex-stop-hook.mjs")).length, 1);
+    assert.ok(commands("Stop").includes("echo other"), "other Stop hooks are kept");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

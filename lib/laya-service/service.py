@@ -28,6 +28,7 @@ import socket
 import stat
 import sys
 import threading
+import zlib
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -39,6 +40,17 @@ API_VERSION = "1"
 ALLOWED_LOOPBACK_HOSTS = {"127.0.0.1", "::1"}
 BUSY_WAIT_SECONDS = 1.0
 PROJECT_ID_REGEX = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+# Vault retriever: a sentence-embedding model separate from the Laya judge. The judge only sees the
+# prompt text; the retriever lets the router ask "does the Vault hold a note that matches this
+# request?" (see lib/memory-router/vault-index.js). Laya's own mean-pooled encoder states were
+# measured near random for this (AUC 0.39-0.57 on the author's Vault), so a real bi-encoder is used.
+EMBED_MODEL_DEFAULT = "intfloat/multilingual-e5-small"
+EMBED_MAX_TEXTS = 32
+EMBED_MAX_CHARS = 1200
+EMBED_MAX_LENGTH = 256
+EMBED_ROUND = 4
+MAX_EMBED_PAYLOAD_BYTES = 262144
 TASK_QUESTIONS = {
     "recall": ("requires_memory", "scope", "category"),
     "capture": ("capture", "scope", "category"),
@@ -55,6 +67,20 @@ MEMORY_NEED_QUESTION = {
     "criteria": {
         "project_history": "needs this user's or team's earlier decisions, conventions, preferences, previous sessions, or past incidents",
         "self_contained": "a general or self-contained coding, writing, or knowledge request answerable without any history",
+        "chitchat": "greeting, thanks, or small talk"
+    }
+}
+
+# Durable-statement judge (proactive capture). Asked on the bare user text, like MEMORY_NEED_QUESTION.
+# A trained head (durable-head.json) on the sentence embedding plus this score replaces the raw score.
+# "Does the user state something that should still hold after this conversation?" is a different
+# question from "does the user ask to save something" (Fast-Path) and from memory need (recall).
+DURABLE_STATEMENT_QUESTION = {
+    "type": "choice",
+    "instructions": "Classify what `text` does for future work on this user's project.",
+    "criteria": {
+        "lasting_rule": "states a rule, convention, preference, design decision, environment fact or lesson that should still apply in later sessions",
+        "one_off_task": "a request, question, bug report, feedback or answer that only concerns the current task",
         "chitchat": "greeting, thanks, or small talk"
     }
 }
@@ -180,29 +206,48 @@ SECOND_CALL_MIN_SCORE = 0.35
 # matches the loaded model. Lookup order: $LAYA_RECALL_HEAD, ~/.laya/recall-head.json (trained on your
 # own labels), the head bundled next to this file. Set LAYA_RECALL_HEAD=off to use zero-shot only.
 RECALL_HEAD_FORMAT = "laya-recall-head"
+DURABLE_HEAD_FORMAT = "laya-durable-head"
 RECALL_HEAD_VERSION = 1
 BUNDLED_RECALL_HEAD = Path(__file__).resolve().parent / "recall-head.json"
 USER_RECALL_HEAD = Path.home() / ".laya" / "recall-head.json"
+BUNDLED_DURABLE_HEAD = Path(__file__).resolve().parent / "durable-head.json"
+USER_DURABLE_HEAD = Path.home() / ".laya" / "durable-head.json"
 MAX_HEAD_BYTES = 2_000_000
 
 
 def recall_head_candidates() -> list:
-    env = os.environ.get("LAYA_RECALL_HEAD", "").strip()
+    return head_candidates("LAYA_RECALL_HEAD", USER_RECALL_HEAD, BUNDLED_RECALL_HEAD)
+
+
+def durable_head_candidates() -> list:
+    return head_candidates("LAYA_DURABLE_HEAD", USER_DURABLE_HEAD, BUNDLED_DURABLE_HEAD)
+
+
+def head_candidates(env_name: str, user_path: Path, bundled_path: Path) -> list:
+    env = os.environ.get(env_name, "").strip()
     if env.lower() in ("off", "none", "0", "false"):
         return []
     if env:
         return [Path(os.path.expanduser(env))]
-    return [USER_RECALL_HEAD, BUNDLED_RECALL_HEAD]
+    return [user_path, bundled_path]
 
 
 def load_recall_head(model_name: str, candidates: Optional[list] = None) -> Optional[Dict[str, Any]]:
+    return load_head(model_name, RECALL_HEAD_FORMAT, recall_head_candidates() if candidates is None else candidates)
+
+
+def load_durable_head(model_name: str, candidates: Optional[list] = None) -> Optional[Dict[str, Any]]:
+    return load_head(model_name, DURABLE_HEAD_FORMAT, durable_head_candidates() if candidates is None else candidates)
+
+
+def load_head(model_name: str, head_format: str, candidates: list) -> Optional[Dict[str, Any]]:
     """First valid head for this model, or None. Never raises: a bad head only disables itself."""
-    for path in recall_head_candidates() if candidates is None else candidates:
+    for path in candidates:
         try:
             if not path.is_file() or path.is_symlink() or path.stat().st_size > MAX_HEAD_BYTES:
                 continue
             head = json.loads(path.read_text(encoding="utf-8"))
-            if head.get("format") != RECALL_HEAD_FORMAT or head.get("version") != RECALL_HEAD_VERSION or head.get("model") != model_name:
+            if head.get("format") != head_format or head.get("version") != RECALL_HEAD_VERSION or head.get("model") != model_name:
                 continue
             mean, std, weights = head.get("mean"), head.get("std"), head.get("weights")
             dim = len(weights) if isinstance(weights, list) else 0
@@ -213,7 +258,11 @@ def load_recall_head(model_name: str, candidates: Optional[list] = None) -> Opti
                 continue
             calibration = head.get("calibration") or {}
             points = [calibration.get("skip"), calibration.get("recall")]
-            if not all(isinstance(pt, list) and len(pt) == 2 and all(math.isfinite(float(v)) for v in pt) for pt in points) or points[0][0] >= points[1][0]:
+            if all(isinstance(pt, list) and len(pt) == 2 and all(math.isfinite(float(v)) for v in pt) for pt in points) and points[0][0] < points[1][0]:
+                pass
+            elif isinstance(points[1], list) and len(points[1]) == 2 and all(math.isfinite(float(v)) for v in points[1]):
+                points = [None, points[1]]  # one operating point: a plain shift in logit space
+            else:
                 points = None
             return {
                 "path": str(path),
@@ -222,7 +271,7 @@ def load_recall_head(model_name: str, candidates: Optional[list] = None) -> Opti
                 # Standardisation folded into the weights: z = sum(x_i * w_i / std_i) + (b - sum(mean_i * w_i / std_i)).
                 "w": [float(w) / float(sd) for w, sd in zip(weights, std)],
                 "b": float(head.get("bias", 0.0)) - sum(float(m) * float(w) / float(sd) for m, w, sd in zip(mean, weights, std)),
-                "calibration": [[float(v) for v in pt] for pt in points] if points else None,
+                "calibration": [([float(v) for v in pt] if pt else None) for pt in points] if points else None,
                 "trained_at": head.get("trainedAt"),
                 "prompts": (head.get("trainedOn") or {}).get("prompts"),
             }
@@ -234,7 +283,10 @@ def load_recall_head(model_name: str, candidates: Optional[list] = None) -> Opti
 def _calibrate(logit_value: float, calibration: Optional[list]) -> float:
     """Monotone piecewise-linear map in logit space that puts the head's chosen skip/recall operating
     points on the router's default thresholds (0.35 / 0.5)."""
-    if calibration:
+    if calibration and calibration[0] is None:
+        (x1, y1) = calibration[1]
+        logit_value = y1 + (logit_value - x1)
+    elif calibration:
         (x0, y0), (x1, y1) = calibration
         if logit_value <= x0:
             logit_value = y0 + (logit_value - x0)
@@ -255,8 +307,21 @@ def head_score(head: Dict[str, Any], embedding: Any, zero_shot: float) -> float:
     return sanitize_score(_calibrate(z, head["calibration"]))
 
 
+def durable_statement_score(agent: Any, text: str, head: Optional[Dict[str, Any]], embedding: Any) -> float:
+    """P(the user states something that should still hold later); zero-shot, or the trained head when loaded."""
+    answers = agent.predict({"text": text}, {"durable": DURABLE_STATEMENT_QUESTION}).get("answers", {})
+    zero_shot = sanitize_score(answers.get("durable", {}).get("probabilities", {}).get("lasting_rule", 0.0))
+    if head is not None and embedding is not None:
+        try:
+            return head_score(head, embedding, zero_shot)
+        except Exception:
+            return zero_shot
+    return zero_shot
+
+
 def run_judgement(agent: Any, text: str, project_context: Optional[Dict[str, Any]], task: str,
-                  head: Optional[Dict[str, Any]] = None, embed: Any = None) -> Dict[str, Any]:
+                  head: Optional[Dict[str, Any]] = None, embed: Any = None,
+                  durable_head: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Ask the model and map its answers to the service response shape (shared by MLX and PyTorch)."""
     state: Dict[str, Any] = {"text": text, "task": task}
     project_id = clean_project_id(project_context)
@@ -269,11 +334,25 @@ def run_judgement(agent: Any, text: str, project_context: Optional[Dict[str, Any
         need_probs, confidence = _answer(need, "memory_need")
         zero_shot = sanitize_score(need_probs.get("project_history", 0.0))
         requires_memory = zero_shot
-        if head is not None and embed is not None:
+        embedding = None
+        if embed is not None and (head is not None or durable_head is not None):
             try:
-                requires_memory = head_score(head, embed([text])[0], zero_shot)
+                embedding = embed([text])[0]
+            except Exception:
+                embedding = None
+        if head is not None and embedding is not None:
+            try:
+                requires_memory = head_score(head, embedding, zero_shot)
             except Exception:
                 requires_memory = zero_shot
+        # Durable-statement score only with a trained head: zero-shot alone is too imprecise to act on
+        # (P 27% on real prompts), and the extra model call (~7 ms) is then not worth paying.
+        durable = None
+        if durable_head is not None and embedding is not None:
+            try:
+                durable = durable_statement_score(agent, text, durable_head, embedding)
+            except Exception:
+                durable = None
         # 2) scope and category, only used to shape the recall/capture hint. A clearly self-contained
         # turn gets neither hint, so skip this second model call (halves warm latency for most turns).
         if requires_memory < SECOND_CALL_MIN_SCORE:
@@ -301,6 +380,9 @@ def run_judgement(agent: Any, text: str, project_context: Optional[Dict[str, Any
     if task == "recall":
         result["zero_shot"] = zero_shot
         result["recall_head"] = head is not None and embed is not None
+        if durable is not None:
+            result["durable_statement"] = sanitize_score(durable)
+            result["durable_head"] = durable_head is not None and embedding is not None
     return result
 
 
@@ -370,8 +452,11 @@ class MockBackend(BaseBackend):
             scope_scores = {"project": 0.20, "global": 0.10, "unknown": 0.70}
             cat_scores = {"pitfall": 0.10, "decision": 0.20, "knowledge": 0.70}
 
+        durable = any(k in lower for k in ("以后", "统一", "规范", "都要", "不要再", "always", "convention", "from now on", "prefer"))
         result = {
             "requires_memory": sanitize_score(req_score),
+            "durable_statement": 0.9 if durable else 0.1,
+            "durable_head": False,
             "confidence": sanitize_score(confidence),
             "category_confidence": sanitize_score(confidence),
             "scope": {k: sanitize_score(v) for k, v in scope_scores.items()},
@@ -407,6 +492,7 @@ class LazyModelBackend(BaseBackend):
         self.idle_unload_seconds = idle_unload_seconds
         self._model_lock = threading.RLock()
         self.recall_head = load_recall_head(model_name)
+        self.durable_head = load_durable_head(model_name)
 
     def load_agent(self) -> Any:
         raise NotImplementedError
@@ -414,9 +500,15 @@ class LazyModelBackend(BaseBackend):
     def make_embed(self, agent: Any) -> Any:
         return None
 
+    def _embed_max_length(self) -> int:
+        for head in (self.recall_head, self.durable_head):
+            if head is not None:
+                return int(head["max_length"])
+        return 128
+
     def judge(self, text: str, project_context: Optional[Dict[str, Any]], task: str) -> Dict[str, Any]:
         agent = self.ensure_loaded()
-        return run_judgement(agent, text, project_context, task, self.recall_head, self.embed)
+        return run_judgement(agent, text, project_context, task, self.recall_head, self.embed, self.durable_head)
 
     def release_backend_cache(self) -> None:
         gc.collect()
@@ -434,7 +526,7 @@ class LazyModelBackend(BaseBackend):
                 self.status = "unloaded"
                 raise
             self.embed = None
-            if self.recall_head is not None:
+            if self.recall_head is not None or self.durable_head is not None:
                 try:
                     self.embed = self.make_embed(self.agent)
                 except Exception:
@@ -470,7 +562,7 @@ class MlxBackend(LazyModelBackend):
 
     def make_embed(self, agent: Any) -> Any:
         import laya_mlx
-        return laya_mlx.embed_fn_from_agent(agent, max_length=self.recall_head["max_length"])
+        return laya_mlx.embed_fn_from_agent(agent, max_length=self._embed_max_length())
 
     def release_backend_cache(self) -> None:
         super().release_backend_cache()
@@ -495,7 +587,7 @@ class PyTorchBackend(LazyModelBackend):
 
     def make_embed(self, agent: Any) -> Any:
         import laya
-        return laya.embed_fn_from_agent(agent, max_length=self.recall_head["max_length"])
+        return laya.embed_fn_from_agent(agent, max_length=self._embed_max_length())
 
     def release_backend_cache(self) -> None:
         super().release_backend_cache()
@@ -531,6 +623,154 @@ def create_backend(backend_type: str, model_name: Optional[str] = None, idle_unl
         return PyTorchBackend(model_name or "convaiinnovations/laya-multilingual", idle_unload_seconds)
     else:
         raise ValueError(f"Unknown backend type: {backend_type}")
+
+
+
+# ---------------------------------------------------------------- vault retriever (embeddings)
+
+def embed_prefix(model_name: str, kind: str) -> str:
+    """Asymmetric prefixes the e5 family was trained with; other models get none."""
+    if "e5" in model_name.lower():
+        return "query: " if kind == "query" else "passage: "
+    return ""
+
+
+def _normalize_rows(rows: Any) -> list:
+    out = []
+    for row in rows:
+        vec = [float(v) for v in row]
+        norm = math.sqrt(sum(v * v for v in vec)) or 1e-9
+        out.append([round(v / norm, EMBED_ROUND) for v in vec])
+    return out
+
+
+class BaseEmbedder:
+    """Lazily loaded sentence-embedding model with the same idle-unload contract as the judge."""
+
+    def __init__(self, model_name: str):
+        self.model_name = model_name
+        self.status = "unloaded"
+        self.dim: Optional[int] = None
+        self.last_used_at = time.monotonic()
+        self._lock = threading.RLock()
+
+    def mark_used(self) -> None:
+        self.last_used_at = time.monotonic()
+
+    def _load(self) -> None:
+        raise NotImplementedError
+
+    def _unload(self) -> None:
+        return None
+
+    def _embed(self, texts: list, kind: str) -> list:
+        raise NotImplementedError
+
+    def preload(self) -> None:
+        self.ensure_loaded()
+
+    def ensure_loaded(self) -> None:
+        with self._lock:
+            if self.status == "ready":
+                self.mark_used()
+                return
+            self.status = "loading"
+            try:
+                self._load()
+            except Exception:
+                self.status = "unloaded"
+                raise
+            self.status = "ready"
+            self.mark_used()
+
+    def embed(self, texts: list, kind: str = "query") -> list:
+        with self._lock:
+            self.ensure_loaded()
+            rows = _normalize_rows(self._embed([str(t)[:EMBED_MAX_CHARS] for t in texts], kind))
+            if rows:
+                self.dim = len(rows[0])
+            self.mark_used()
+            return rows
+
+    def unload_if_idle(self, idle_seconds: int) -> bool:
+        if idle_seconds <= 0:
+            return False
+        with self._lock:
+            if self.status != "ready" or time.monotonic() - self.last_used_at < idle_seconds:
+                return False
+            self._unload()
+            self.status = "unloaded"
+        gc.collect()
+        return True
+
+
+class MockEmbedder(BaseEmbedder):
+    """Deterministic character-bigram hashing: texts that share wording get a higher cosine."""
+
+    DIM = 32
+
+    def __init__(self, model_name: str = "mock-embed"):
+        super().__init__(model_name)
+        self.dim = self.DIM
+
+    def _load(self) -> None:
+        return None
+
+    def _embed(self, texts: list, kind: str) -> list:
+        rows = []
+        for text in texts:
+            vec = [0.0] * self.DIM
+            lowered = text.lower()
+            for i in range(max(0, len(lowered) - 1)):
+                bigram = lowered[i:i + 2]
+                if bigram.strip():
+                    vec[zlib.crc32(bigram.encode("utf-8")) % self.DIM] += 1.0
+            if not any(vec):
+                vec[0] = 1.0
+            rows.append(vec)
+        return rows
+
+
+class MlxEmbedder(BaseEmbedder):
+    """BERT-style bi-encoder on Apple Silicon (bert_embed.py beside this file: mlx + tokenizers only)."""
+
+    def __init__(self, model_name: str = EMBED_MODEL_DEFAULT):
+        super().__init__(model_name)
+        self.encoder = None
+
+    def _load(self) -> None:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from bert_embed import SentenceEncoder
+        self.encoder = SentenceEncoder(self.model_name, max_length=EMBED_MAX_LENGTH)
+
+    def _unload(self) -> None:
+        self.encoder = None
+        try:
+            import mlx.core as mx
+            mx.clear_cache()
+        except Exception:
+            pass
+
+    def _embed(self, texts: list, kind: str) -> list:
+        prefix = embed_prefix(self.model_name, kind)
+        return self.encoder.embed([prefix + t for t in texts]).tolist()
+
+
+def create_embedder(backend_type: str, model_name: Optional[str]) -> Optional[BaseEmbedder]:
+    """None when disabled ("off") or when the backend has no embedding support (PyTorch, for now)."""
+    name = (model_name or os.environ.get("LAYA_EMBED_MODEL") or EMBED_MODEL_DEFAULT).strip()
+    if name.lower() in ("off", "none", "0", "false"):
+        return None
+    if backend_type == "mock" or os.environ.get("LAYA_MOCK_BACKEND") == "1":
+        return MockEmbedder()
+    if backend_type == "mlx":
+        try:
+            import mlx.core  # noqa: F401
+            import tokenizers  # noqa: F401
+        except Exception:
+            return None
+        return MlxEmbedder(name)
+    return None
 
 
 class LayaRequestHandler(BaseHTTPRequestHandler):
@@ -595,11 +835,17 @@ class LayaRequestHandler(BaseHTTPRequestHandler):
             "api_version": API_VERSION,
             "model_status": model_status or (backend.status if backend else "loading"),
             "idle_unload_seconds": backend.idle_unload_seconds if backend else 0,
-            "capabilities": ["recall", "capture", "relation", "scope", "warmup"] + (["recall_head"] if getattr(backend, "recall_head", None) else []),
+            "capabilities": ["recall", "capture", "relation", "scope", "warmup"]
+                            + (["recall_head"] if getattr(backend, "recall_head", None) else [])
+                            + (["embed"] if getattr(self.server, "embedder", None) is not None else []),
+            "embed_model": self.server.embedder.model_name if getattr(self.server, "embedder", None) is not None else None,
+            "embed_status": self.server.embedder.status if getattr(self.server, "embedder", None) is not None else None,
             "backend": getattr(backend, "backend_type", "unknown"),
             "model": backend.model_name if backend else None,
             "recall_head": ({k: backend.recall_head.get(k) for k in ("path", "trained_at", "prompts")}
                             if getattr(backend, "recall_head", None) else None),
+            "durable_head": ({k: backend.durable_head.get(k) for k in ("path", "trained_at", "prompts")}
+                             if getattr(backend, "durable_head", None) else None),
             "instance_id": self.server.instance_id
         }
 
@@ -619,16 +865,25 @@ class LayaRequestHandler(BaseHTTPRequestHandler):
         if 0 < length <= MAX_PAYLOAD_BYTES:
             self.rfile.read(length)
         backend = self.server.backend
+        embedder = getattr(self.server, "embedder", None)
         started = False
         with self.server.warmup_lock:
-            if backend is not None and getattr(backend, "status", None) == "unloaded":
+            cold_judge = backend is not None and getattr(backend, "status", None) == "unloaded"
+            cold_embedder = embedder is not None and embedder.status == "unloaded"
+            if cold_judge or cold_embedder:
                 def load() -> None:
-                    try:
-                        backend.preload()
-                    except Exception:
-                        pass
+                    if cold_judge:
+                        try:
+                            backend.preload()
+                        except Exception:
+                            pass
+                    if cold_embedder:
+                        try:
+                            embedder.preload()
+                        except Exception:
+                            pass
                 threading.Thread(target=load, name="laya-warmup", daemon=True).start()
-                started = True
+                started = cold_judge
         info = self._status_info("loading" if started else None)
         info["warming"] = started
         self._send_json(200, info)
@@ -698,6 +953,10 @@ class LayaRequestHandler(BaseHTTPRequestHandler):
 
         if self.path == "/warmup":
             self._handle_warmup()
+            return
+
+        if self.path == "/embed":
+            self._handle_embed()
             return
 
         route = self.path
@@ -802,11 +1061,70 @@ class LayaRequestHandler(BaseHTTPRequestHandler):
                     label = "unrelated"
                 self._send_json(200, {"relation": label, "confidence": sanitize_score(relation.get("confidence", 0.0))})
             else:
+                # The router asks for the prompt's embedding in the same round trip so it can match
+                # the Vault index without a second call. A retriever failure never fails the verdict.
+                embedder = getattr(self.server, "embedder", None)
+                if payload.get("embed") is True and embedder is not None:
+                    try:
+                        result["query_embedding"] = embedder.embed([text], "query")[0]
+                        result["embed_model"] = embedder.model_name
+                    except Exception:
+                        pass
                 self._send_json(200, result)
         except Exception:
             self._send_json(500, {"error": "inference_failed"})
         finally:
             self.server.backend.mark_used()
+            self.server.inference_semaphore.release()
+
+    def _handle_embed(self) -> None:
+        """POST /embed {"texts": [...], "kind": "query"|"passage"} -> unit vectors for Vault retrieval."""
+        if not self._verify_auth():
+            self._send_json(401, {"error": "unauthorized"})
+            return
+        embedder = getattr(self.server, "embedder", None)
+        if embedder is None:
+            self._send_json(404, {"error": "embed_not_available"})
+            return
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            self._send_json(400, {"error": "invalid_content_length"})
+            return
+        if length <= 0:
+            self._send_json(400, {"error": "content_length_must_be_positive"})
+            return
+        if length > MAX_EMBED_PAYLOAD_BYTES:
+            self._send_json(413, {"error": "payload_too_large"})
+            return
+        try:
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        except Exception:
+            self._send_json(400, {"error": "invalid_json"})
+            return
+        if not isinstance(payload, dict):
+            self._send_json(400, {"error": "payload_must_be_object"})
+            return
+        texts = payload.get("texts")
+        kind = payload.get("kind", "query")
+        if kind not in ("query", "passage"):
+            self._send_json(400, {"error": "kind_must_be_query_or_passage"})
+            return
+        if not isinstance(texts, list) or not texts or len(texts) > EMBED_MAX_TEXTS:
+            self._send_json(400, {"error": f"texts_must_be_a_list_of_1_to_{EMBED_MAX_TEXTS}_strings"})
+            return
+        if not all(isinstance(t, str) and t.strip() and len(t) <= EMBED_MAX_CHARS for t in texts):
+            self._send_json(400, {"error": f"each_text_must_be_non_empty_and_at_most_{EMBED_MAX_CHARS}_chars"})
+            return
+        if not self.server.inference_semaphore.acquire(timeout=BUSY_WAIT_SECONDS):
+            self._send_json(503, {"error": "service_busy"})
+            return
+        try:
+            vectors = embedder.embed(texts, kind)
+            self._send_json(200, {"model": embedder.model_name, "dim": len(vectors[0]) if vectors else 0, "vectors": vectors})
+        except Exception:
+            self._send_json(500, {"error": "embedding_failed"})
+        finally:
             self.server.inference_semaphore.release()
 
 
@@ -858,6 +1176,9 @@ def start_idle_unload_monitor(server: LayaServer, idle_seconds: int) -> Tuple[th
                 continue
             try:
                 server.backend.unload_if_idle(idle_seconds)
+                embedder = getattr(server, "embedder", None)
+                if embedder is not None:
+                    embedder.unload_if_idle(idle_seconds)
             finally:
                 server.inference_semaphore.release()
 
@@ -1046,6 +1367,8 @@ def main() -> None:
                         help="Load model weights in the background right after the service starts listening")
     parser.add_argument("--idle-unload-seconds", type=int, default=900,
                         help="Unload model weights after this many idle seconds; 0 disables unloading (default: 900)")
+    parser.add_argument("--embed-model", type=str, default=None,
+                        help=f"Sentence-embedding model for Vault retrieval, or 'off' (default: $LAYA_EMBED_MODEL or {EMBED_MODEL_DEFAULT})")
 
     args = parser.parse_args()
 
@@ -1111,6 +1434,7 @@ def main() -> None:
     # Initialize backend
     backend = create_backend(args.backend, args.model, args.idle_unload_seconds)
     backend.idle_unload_seconds = args.idle_unload_seconds
+    embedder = create_embedder(backend.backend_type, args.embed_model)
 
     socket_path: Optional[str] = None
     if use_uds:
@@ -1149,12 +1473,14 @@ def main() -> None:
                 sys.exit(2)
             os.unlink(socket_path)
         server = LayaUnixServer(socket_path, token, backend, instance_id)
+        server.embedder = embedder
         os.chmod(socket_path, 0o600)
         socket_identity = os.lstat(socket_path)
         endpoint = f"uds:{socket_path}"
         transport = "uds"
     else:
         server = LayaServer((clean_host, args.port), token, backend, instance_id)
+        server.embedder = embedder
         bound_host, bound_port = server.server_address[:2]
         endpoint = f"http://[{bound_host}]:{bound_port}" if ":" in str(bound_host) else f"http://{bound_host}:{bound_port}"
         socket_identity = None
@@ -1198,7 +1524,7 @@ def main() -> None:
         pass
 
     # Print readiness notification to stdout (never printing the token!)
-    sys.stdout.write(f"Laya service listening on {endpoint} (PID: {pid}, Backend: {backend.backend_type})\n")
+    sys.stdout.write(f"Laya service listening on {endpoint} (PID: {pid}, Backend: {backend.backend_type}, Embedder: {embedder.model_name if embedder else 'off'})\n")
     sys.stdout.flush()
 
     # The Node launcher closes its startup pipes after the health check. Keep
@@ -1216,6 +1542,11 @@ def main() -> None:
                 backend.preload()
             except Exception:
                 pass  # the next request retries the lazy load and reports the error
+            if embedder is not None:
+                try:
+                    embedder.preload()
+                except Exception:
+                    pass
 
         threading.Thread(target=preload_model, name="laya-preload", daemon=True).start()
 

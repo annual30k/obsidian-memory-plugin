@@ -233,7 +233,7 @@ test("OpenClaw runtime: a pitfall-looking model answer adds no save hint; an exp
     assert.ok(!res.prependContext.includes("asked to save"), "the model's category answer must not produce a save hint");
 
     const explicit = await hook({ prompt: "记住：发布前必须先跑 npm test" }, { agentId: "owner", trigger: "user" });
-    assert.ok(explicit.prependContext.includes("[Obsidian Memory hint: the user asked to save something (scope: project). Read the obsidian-memory skill and follow its capture rules: stage a pending-ingest candidate in the project inbox/; do not ingest.]"));
+    assert.ok(explicit.prependContext.includes("[Obsidian Memory hint: the user asked to save something (scope: project). Read the obsidian-memory skill and follow its capture rules: stage a pending-ingest candidate in the project inbox/ before you finish this turn; do not ingest.]"));
 
     if (dispose) dispose();
   } finally {

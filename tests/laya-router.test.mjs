@@ -1440,3 +1440,19 @@ test("the model's category answer never suggests capture (even with the deprecat
   assert.equal(explicit.captureRecommended, true);
   router.dispose?.();
 });
+
+test("a save request that also points at earlier work gets both hints; with capture off it is a recall", async () => {
+  const { MemoryRouter } = await import("../lib/memory-router/router.js");
+  const { buildLayaActionNotice } = await import("../lib/prompt.js");
+  const on = new MemoryRouter({ mode: "manual", endpoint: "http://127.0.0.1:1" }, { fetch: async () => { throw new Error("no"); }, env: {} });
+  const off = new MemoryRouter({ mode: "manual", endpoint: "http://127.0.0.1:1", proactiveCapture: false }, { fetch: async () => { throw new Error("no"); }, env: {} });
+  try {
+    const d = await on.evaluateRecall("记住，我们约定以后都用 pnpm");
+    assert.equal(d.captureRecommended, true);
+    assert.equal(d.alsoRecall, true);
+    assert.match(buildLayaActionNotice(d), /asked to save something.*Recall steps/su);
+    const r = await off.evaluateRecall("记住，我们约定以后都用 pnpm");
+    assert.equal(r.recallRecommended, true);
+    assert.equal(r.captureRecommended, false);
+  } finally { on.dispose(); off.dispose(); }
+});

@@ -13,8 +13,10 @@ tags:
   - coding
 hooks:
   - pre_llm_call
+  - post_llm_call
 provides_hooks:
   - pre_llm_call
+  - post_llm_call
 config_schema:
   vault_path:
     type: str
@@ -36,6 +38,10 @@ config_schema:
     type: str
     default: ""
     description: "Optional actual code project root; never a gateway working directory by default."
+  auto_capture:
+    type: str
+    default: "digest"
+    description: "Automatic capture: digest (default; queue each turn's final reply and let a background session digest stage a few Inbox candidates) or off. Explicit remember requests always work."
   memory_router_mode:
     type: str
     default: "auto"
