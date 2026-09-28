@@ -255,7 +255,7 @@ Vault 项目 inbox/cand-<uuid>.md（origin: auto-digest，pending-ingest）
 - 2026-09-27 审计：新代码上线后四个宿主都没有真实用户回合经过这些路径；OpenClaw `agent_end` 曾把 cron 失败重试重放的旧回复入队（已修复：只收用户回合、不回找历史、按问答去重）；整理此前从未运行（已加后台等待进程）；脱敏漏掉 9 种常见密钥格式（已补齐并在写入前复查）；小项目语义匹配几乎总判强、空项目串到其他项目（已改为小范围以全库为参照、按项目限定候选）。修复后仍需在每个宿主上各做一次真实对话验收。
 - 长期规则判断头在 `digest` 模式下 ≥ 0.5 入队（折外 P≈0.53 / R≈0.47），另有确定性说法兜底；但作者的真实长期规则多夹在任务请求里（"整个 app 的字体大小要统一风格……"），确定性说法在 520 条真实提问上命中 0 条，主要靠判断头。
 - 2026-09-28 发现：9-24 为支持 `hermes plugins install` 给根 `plugin.json` 加了 Agent Plugins `$schema` 之后，Codex（0.155 起）改按 Agent Plugins 清单读取根清单，而 Codex 读这种清单时不读钩子（顶层 `hooks`、数组写法、`extensions["com.openai"].hooks` 均无效），插件钩子从此不运行、插件页也不显示待批准的钩子。已去掉 `$schema`，Codex 回到读取 `.codex-plugin/plugin.json`；代价是 Hermes 改用 `git clone` + `hermes plugins enable` 安装。若 Codex 将来支持 Agent Plugins 清单里的钩子，可恢复 `$schema`。
-- Windows 上的新功能（`~/.laya` 路径、后台整理进程）未经实机验证；CI 已覆盖 Ubuntu / Windows / macOS 并安装 PyYAML（2026-09-28 前 CI 因缺 PyYAML 一直失败）。
+- Windows 为实验性支持：未经实机验证。2026-09-28 CI 首次在 Windows 上跑到测试阶段（此前 `service.py` 因缺少 `AF_UNIX` 在加载时即崩溃，已修复），仍有约 15 项未通过：多为测试假设 POSIX 路径、`0600` 权限、CRLF 与文件锁，另有自动重启、"是否已写入"判断和 Antigravity 安装试运行需在 Windows 上排查。CI 的 Windows 任务只报告、不阻断；Ubuntu 与 macOS 必须通过。macOS CI 上服务启动曾因 HTTPServer 的反向 DNS 查询慢约 30 秒，已改为跳过该查询。
 - 2026-09-28 补齐的已知问题：整理期间结束的回合被一起删除（改为领取式队列）；显式"记住"在 agent 不照做或宿主不支持回合结束控制时丢失（改为交给整理兜底）；"是否已写入"用目录签名误判（改为比较候选文件时间）；无项目会话的结论被丢弃（改为暂存区 + 询问用户）；Antigravity 会话最后一轮永不入队（改为从会话记录补记）；Hermes 入队绕过会话状态（改走同一路径）；内存紧张时 Laya 被换出导致超时（服务对最近用过的模型定期轻触，保持常驻）；整理时模型已卸载导致打不出分（整理前先唤醒，最多等 45 秒）；补算笔记向量无熔断（改为有预算、失败后跨进程暂停 10 分钟）；索引超 2000 篇静默丢整个项目（改为按项目公平分配、最新优先并在 doctor 报告）；显式召回不走语义检索（补一次查询向量）；各宿主配置项不一致（统一环境变量）；`LAYA_HOME` 下找不到服务文件；`proactiveCapture: false` 仍入队"已解决"并调度整理；写满 2 MB 的队列静默丢弃（doctor 报告）。
 
 ---
