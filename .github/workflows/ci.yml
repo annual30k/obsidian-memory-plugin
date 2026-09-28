@@ -13,6 +13,10 @@ jobs:
   verify:
     name: Verify plugin
     runs-on: ${{ matrix.os }}
+    env:
+      # The tests start Python through scripts/python.mjs; point it at the interpreter set up below
+      # (on Windows the `py` launcher would otherwise pick another preinstalled Python without PyYAML).
+      PYTHON: python
     strategy:
       # Report every platform: one failing OS must not cancel the others.
       fail-fast: false
@@ -36,6 +40,21 @@ jobs:
       - name: Install Python test dependencies
         # Hermes loads its plugin settings from config.yaml with PyYAML (bundled with Hermes itself).
         run: python -m pip install pyyaml
+
+      - name: Diagnose Laya service start-up (macOS)
+        # The service tests time out on the macOS runner without output; show what one start-up does.
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        shell: bash
+        run: |
+          D=$(mktemp -d)
+          python -X importtime -B lib/laya-service/service.py --backend mock --service-file "$D/service.json" --token diag-token --port 0 > "$D/out" 2> "$D/err" &
+          PID=$!
+          for i in $(seq 1 60); do [ -f "$D/service.json" ] && break; sleep 0.5; done
+          echo "service.json after ${i} polls: $(ls "$D")"
+          python -c "import sys; print(sys.version, sys.executable)"
+          sort -t'|' -k2 -n "$D/err" | tail -25
+          kill $PID 2>/dev/null || true
 
       - name: Check syntax
         run: npm run check

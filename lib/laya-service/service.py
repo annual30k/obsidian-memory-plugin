@@ -1166,8 +1166,13 @@ class LayaServer(ThreadingHTTPServer):
 
 
 class LayaUnixServer(ThreadingHTTPServer):
-    """HTTP-compatible server over a private Unix domain socket."""
-    address_family = socket.AF_UNIX
+    """HTTP-compatible server over a private Unix domain socket (POSIX only).
+
+    Windows Python builds have no socket.AF_UNIX: reading the attribute at class definition crashed the
+    whole service at import there, so it is looked up lazily; `--transport auto` never picks UDS on
+    Windows and an explicit `--transport uds` is refused before this class is used.
+    """
+    address_family = getattr(socket, "AF_UNIX", socket.AF_INET)
     daemon_threads = True
     request_queue_size = 128
     MAX_CONCURRENT_REQUESTS = 16

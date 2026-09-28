@@ -69,7 +69,9 @@ try {
   assert.equal(report.plugin?.id, "obsidian-memory-plugin");
   assert.equal(report.plugin.version, packedManifest.version);
   assert.equal(report.plugin.status, "loaded", JSON.stringify(report));
-  assert.deepEqual(report.typedHooks?.map(hook => hook.name), ["before_prompt_build"]);
+  // Prompt guidance plus the two end-of-turn hooks of the default digest mode (explicit-request check,
+  // capture queue); the same set tests/plugin.test.mjs expects from register().
+  assert.deepEqual(report.typedHooks?.map(hook => hook.name).sort(), ["agent_end", "before_agent_finalize", "before_prompt_build"]);
   assert.deepEqual(report.tools, []);
   assert.deepEqual(report.services, []);
   assert.deepEqual(report.mcpServers, []);
@@ -91,7 +93,7 @@ try {
   }
   console.log(JSON.stringify({
     version, pluginVersion: report.plugin.version, pluginId: report.plugin.id, status: report.plugin.status,
-    hook: "before_prompt_build",
+    hooks: report.typedHooks.map(hook => hook.name).sort(),
     skillSource: "extracted tarball",
     verifiedSkillFiles: skillFiles.length,
     liveGatewayChanged: false, syntheticVaultOnly: true,

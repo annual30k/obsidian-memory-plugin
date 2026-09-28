@@ -377,7 +377,8 @@ test("the service touches a loaded, recently used model to keep it resident, wit
   const { spawnSync } = await import("node:child_process");
   const python = findPython();
   if (!python) return t.skip("no Python");
-  const servicePy = new URL("../lib/laya-service/service.py", import.meta.url).pathname;
+  const { fileURLToPath } = await import("node:url");
+  const servicePy = fileURLToPath(new URL("../lib/laya-service/service.py", import.meta.url));
   const script = `
 import importlib.util, threading, time, sys
 spec = importlib.util.spec_from_file_location("svc", ${JSON.stringify(servicePy)})
