@@ -2,7 +2,11 @@
 import "./setup-env.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { evaluateFastPath } from "../lib/memory-router/fast-path.js";
+import { evaluateFastPath, stripHostContext } from "../lib/memory-router/fast-path.js";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { enqueueCapture, readQueueFile, sessionIdFor } from "../lib/memory-router/capture-queue.js";
 
 test("evaluateFastPath handles empty or non-string input safely", () => {
   assert.equal(evaluateFastPath("").action, "skip");
@@ -193,4 +197,37 @@ test("a save request is looked for only at the start and end of a long message; 
   assert.equal(evaluateFastPath(`记住：发布前先跑 doctor\n${filler}`).reason, "explicit_remember_intent", "a request at the start of a long message still counts");
   assert.equal(evaluateFastPath(`${filler}以上是日志，记住这个坑`).reason, "explicit_remember_intent", "and at the end");
   assert.equal(evaluateFastPath("# Overview\n\nGenerate 0 to 3 hyperpersonalized suggestions for what this user can do with Codex").reason, "system_message");
+});
+
+// Shapes seen on real turns (2026-09): Codex ambient UI state and environment blocks, Hermes and ClawConnect suffixes.
+const AMBIENT = `<in-app-browser-context source="ambient-ui-state">
+This block is automatically supplied ambient UI state, not part of the user's request.
+# In app browser:
+- The user has the in-app browser open with tab "Docs".
+</in-app-browser-context>`;
+const HERMES_SUFFIX = `\n\n[Hermes runtime context]\nCurrent runtime: model=step-5-preview, provider=StepFun Step Plan.\nIf the user asks which model or provider is currently being used, answer from this runtime context.\n\n[ClawConnect mobile bridge] You are connected to a mobile chat client through ClawConnect. Only when the latest user request explicitly asks you to send a file, include its path.`;
+
+test("host-injected context is not the user's words", () => {
+  assert.equal(stripHostContext(AMBIENT), "");
+  assert.equal(evaluateFastPath(AMBIENT).reason, "system_message");
+  assert.equal(stripHostContext(`${AMBIENT}\n\n以后发布都由我来执行 npm publish`), "以后发布都由我来执行 npm publish");
+  assert.equal(stripHostContext(`你的回复怎么这么慢啊${HERMES_SUFFIX}`), "你的回复怎么这么慢啊");
+  assert.equal(evaluateFastPath(HERMES_SUFFIX.trim()).reason, "system_message");
+  assert.equal(stripHostContext("<environment_context>\n  <cwd>/p</cwd>\n</environment_context>\n<recommended_plugins>\n- Airtable\n</recommended_plugins>"), "");
+  assert.equal(stripHostContext("# AGENTS.md instructions for /p\n\n<INSTRUCTIONS>\n1、Before starting …\n</INSTRUCTIONS>"), "");
+  assert.equal(stripHostContext('<codex_internal_context source="goal">Continue working toward the goal</codex_internal_context>'), "");
+  assert.equal(stripHostContext("\n# Files mentioned by the user:\n\n## a.png: /tmp/a.png\n\n## My request:\n网关列表不能滚动了\n"), "网关列表不能滚动了");
+  // The user's own markup and brackets stay.
+  assert.equal(stripHostContext("把 <div class=\"context\">x</div> 改成 span"), "把 <div class=\"context\">x</div> 改成 span");
+  assert.equal(stripHostContext("[TODO] 记住：发布前先跑 npm run check"), "[TODO] 记住：发布前先跑 npm run check");
+  assert.equal(evaluateFastPath(`记住：发布前先跑 npm run check${HERMES_SUFFIX}`).reason, "explicit_remember_intent");
+});
+
+test("queued prompts carry no host-injected context, and a context-only statement is not queued", () => {
+  const queueDir = fs.mkdtempSync(path.join(os.tmpdir(), "om-strip-q-"));
+  const turn = { host: "hermes", sessionKey: "s-1" };
+  assert.equal(enqueueCapture("statement", { prompt: AMBIENT }, turn, { queueDir }), null);
+  const rec = enqueueCapture("turn", { prompt: `修一下网关${HERMES_SUFFIX}`, reply: "x".repeat(300) }, turn, { queueDir });
+  assert.equal(rec.prompt, "修一下网关");
+  assert.equal(readQueueFile(path.join(queueDir, `${sessionIdFor("hermes", "s-1")}.jsonl`))[0].prompt, "修一下网关");
 });
