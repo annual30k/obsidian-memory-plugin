@@ -12,7 +12,7 @@ import { buildLayaActionNotice, buildGuidance } from "../lib/prompt.js";
 import { enrichDecision, enqueueTurnEnd } from "../lib/memory-router/turn-context.js";
 import { decideStop } from "../scripts/codex-stop-hook.mjs";
 import { previousExchange } from "../scripts/antigravity-hook.mjs";
-import { parseArgs as digestArgs, waitAndDigest } from "../scripts/memory-digest.mjs";
+import { parseArgs as digestArgs, waitAndDigest, digestExtractor } from "../scripts/memory-digest.mjs";
 import { runCli } from "../lib/memory-router/cli.js";
 import { createOpenClawPlugin, lastExchange } from "../index.js";
 import { parseMemoryJudgeConfig } from "../lib/config.js";
@@ -161,8 +161,16 @@ test("the digest never guesses a scope and honours the Vault's rules", async () 
   enqueueCapture("turn", { prompt: "q", reply: REPLY() }, turn(e), { queueDir: e.queueDir });
   const re = await runDigest({ queueDir: e.queueDir, stateDir: e.stateDir, force: true, dryRun: true });
   assert.equal(re.written.length, 1);
+  assert.ok(re.written[0].content.includes(REPLY().slice(0, 20)), "a dry run reports what it would write");
   assert.equal(inbox(e).length, 0);
   assert.equal(listQueue(e.queueDir).length, 1);
+  // A dry run reports a held finding's text too, and holds nothing.
+  const f = setup();
+  enqueueCapture("turn", { prompt: "q", reply: REPLY() }, { ...turn(f), cwd: "/somewhere/else" }, { queueDir: f.queueDir });
+  const rf = await runDigest({ queueDir: f.queueDir, stateDir: f.stateDir, force: true, dryRun: true });
+  assert.equal(rf.held[0].kind, "turn");
+  assert.equal(rf.held[0].text, REPLY());
+  assert.equal(fs.existsSync(path.join(f.stateDir, "held")), false);
 });
 
 test("user statements become candidates: cross-project ones in Global, others in the project", async () => {
@@ -551,4 +559,84 @@ test("CLI --enqueue-turn (Hermes post_llm_call) queues one turn and reports it",
   out = "";
   await runCli(["--enqueue-turn", "--stdin"], { stdin: Readable.from(["not json"]), stdout, queueDir: v.queueDir, scheduleDigest: () => false });
   assert.deepEqual(JSON.parse(out), { queued: false });
+});
+
+// ---------------------------------------------------------------- model extraction
+
+test("with an extractor the model's items become candidates; statements and Laya scores are not used", async () => {
+  const v = setup();
+  enqueueCapture("turn", { prompt: "以后 npm 发布我自己来", reply: REPLY(1) }, turn(v), { queueDir: v.queueDir, now: Date.parse("2026-10-01T01:00:00Z") });
+  enqueueCapture("turn", { prompt: "已暂存的那一轮", reply: REPLY(2), staged: true }, turn(v), { queueDir: v.queueDir, now: Date.parse("2026-10-01T01:05:00Z") });
+  enqueueCapture("statement", { prompt: "这个拉长了怎么下面不显示了", score: 0.9 }, turn(v), { queueDir: v.queueDir });
+  const seen = [];
+  const extract = async (session) => {
+    seen.push(session);
+    return { extractor: "codex/test-model", calls: 1, items: [
+      { kind: "convention", scope: "project", title: "npm 发布由用户执行", statement: "ClawConnect 的 npm publish 由用户执行，代理只打包和验证。", evidence: "以后 npm 发布我自己来", turn: 1 },
+      { kind: "preference", scope: "global", title: "回复用中文", statement: "用户希望所有回复都用中文。", evidence: "用中文", turn: 1 }
+    ] };
+  };
+  const summary = await runDigest({ queueDir: v.queueDir, stateDir: v.stateDir, force: true, extract, score: async () => { throw new Error("no Laya scoring with an extractor"); } });
+  assert.equal(seen.length, 1);
+  assert.deepEqual(seen[0].turns.map((t) => t.prompt), ["以后 npm 发布我自己来"], "a staged turn is not sent to the model");
+  assert.equal(seen[0].projectId, PID);
+  assert.equal(summary.written.length, 2);
+  const [file] = inbox(v);
+  const text = fs.readFileSync(path.join(v.root, "20-Projects", PID, "inbox", file), "utf8");
+  assert.match(text, /npm 发布由用户执行/u);
+  assert.match(text, /auto_kind: "?session-convention"?/u);
+  assert.match(text, /extractor: "?codex\/test-model"?/u);
+  assert.match(text, /以后 npm 发布我自己来/u, "the evidence and the request are quoted");
+  assert.doesNotMatch(text, /拉长了/u, "queued statements are not candidates");
+  assert.equal(inbox(v, "global").length, 1, "a personal preference goes to Global");
+  const log = fs.readFileSync(path.join(v.stateDir, "digest-log.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l)).at(-1);
+  assert.deepEqual([log.extractor, log.extracted, log.calls], ["codex/test-model", 2, 1]);
+});
+
+test("a failed extraction keeps the queue for the next run; explicit requests are still written", async () => {
+  const v = setup();
+  enqueueCapture("turn", { prompt: "q", reply: REPLY() }, turn(v), { queueDir: v.queueDir });
+  enqueueCapture("explicit", { prompt: "记住：发布前先跑 npm run check" }, turn(v), { queueDir: v.queueDir });
+  const failing = async () => { throw new Error("codex exec exited 1"); };
+  const first = await runDigest({ queueDir: v.queueDir, stateDir: v.stateDir, force: true, extract: failing });
+  assert.deepEqual(first.skipped.map((s) => s.reason), ["extract_failed"]);
+  assert.equal(first.written.length, 1, "the explicit request is written anyway");
+  assert.equal(listQueue(v.queueDir).length, 1, "the queue is kept for a retry");
+  const log = fs.readFileSync(path.join(v.stateDir, "digest-log.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l)).at(-1);
+  assert.match(log.extractError, /exited 1/u);
+  assert.equal(log.kept, true);
+  // The retry succeeds with nothing to keep: the explicit request is not written twice, the queue is consumed.
+  const second = await runDigest({ queueDir: v.queueDir, stateDir: v.stateDir, force: true, extract: async () => ({ items: [], calls: 1 }) });
+  assert.equal(second.written.length, 0);
+  assert.ok(second.skipped.some((s) => s.reason === "already_digested"));
+  assert.equal(listQueue(v.queueDir).length, 0);
+  assert.equal(inbox(v).length, 1);
+});
+
+test("the extractor's global scope does not override project wording, and a run touches its lock", async () => {
+  const v = setup();
+  enqueueCapture("turn", { prompt: "q", reply: REPLY() }, turn(v), { queueDir: v.queueDir });
+  const extract = async () => ({ items: [{ kind: "preference", scope: "global", title: "t", statement: "这个项目的提交信息都用中文写。", evidence: "", turn: 1 }] });
+  let beats = 0;
+  await runDigest({ queueDir: v.queueDir, stateDir: v.stateDir, force: true, extract, heartbeat: () => { beats++; } });
+  assert.equal(inbox(v).length, 1);
+  assert.equal(inbox(v, "global").length, 0);
+  assert.equal(beats, 1);
+  const release = acquireDigestLock(v.stateDir, Date.now());
+  const lock = path.join(v.stateDir, "digest.lock");
+  const t = new Date(Date.now() - 3600_000);
+  fs.utimesSync(lock, t, t);
+  release.touch();
+  assert.ok(Date.now() - fs.statSync(lock).mtimeMs < 60_000, "touch refreshes the lock");
+  release();
+});
+
+test("digestExtractor follows OBSIDIAN_MEMORY_DIGEST_EXTRACTOR and labels the model", async () => {
+  const asked = [];
+  const resolve = ({ preference }) => { asked.push(preference); return preference === "off" ? null : { name: "codex", model: "m-1", run: async () => JSON.stringify({ items: [] }) }; };
+  assert.equal(digestExtractor({ OBSIDIAN_MEMORY_DIGEST_EXTRACTOR: "off" }, resolve), null);
+  const extract = digestExtractor({}, resolve);
+  assert.deepEqual(await extract({ turns: [{ prompt: "p", reply: "r" }] }), { items: [], dropped: [], calls: 1, extractor: "codex/m-1" });
+  digestExtractor({ OBSIDIAN_MEMORY_DIGEST_EXTRACTOR: "bogus" }, resolve);
+  assert.deepEqual(asked, ["off", "auto", "auto"]);
 });

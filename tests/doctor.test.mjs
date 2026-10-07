@@ -92,3 +92,19 @@ test("doctor sees an OpenClaw load path, an unapproved Codex Stop hook and a stu
   r = collect({ home, env: {}, packageVersion: "0.8.0" });
   assert.match(r.issues.join("\n"), /registered both by the plugin and in ~\/\.codex\/hooks\.json/u);
 });
+
+test("doctor names the digest's extraction model, or says that capture falls back to keyword selection", () => {
+  const { home } = fakeHome();
+  const noCli = collect({ home, env: { PATH: "", CODEX_BIN: path.join(home, "missing") }, packageVersion: "0.7.1" });
+  assert.equal(noCli.digest.extractor, null);
+  assert.match(noCli.issues.join("\n"), /falls back to keyword selection/u);
+  const off = collect({ home, env: { PATH: "", CODEX_BIN: path.join(home, "missing"), OBSIDIAN_MEMORY_DIGEST_EXTRACTOR: "off" }, packageVersion: "0.7.1" });
+  assert.doesNotMatch(off.issues.join("\n"), /keyword selection/u);
+  const bin = path.join(home, "codex-bin");
+  fs.writeFileSync(bin, "#!/bin/sh\n", { mode: 0o755 });
+  fs.writeFileSync(path.join(home, ".codex", "auth.json"), "{}");
+  fs.writeFileSync(path.join(home, ".codex", "config.toml"), 'model = "m-1"\n' + fs.readFileSync(path.join(home, ".codex", "config.toml"), "utf8"));
+  const ok = collect({ home, env: { PATH: "", CODEX_BIN: bin }, packageVersion: "0.7.1" });
+  assert.equal(ok.digest.extractor, "codex/m-1");
+  assert.doesNotMatch(ok.issues.join("\n"), /keyword selection/u);
+});

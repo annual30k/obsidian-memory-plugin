@@ -527,7 +527,7 @@ Laya 只看提示文本，不知道 Vault 里已经有哪些笔记。插件会�
 分两条路（详见 [ARCHITECTURE.md](ARCHITECTURE.md#写入由谁决定)）：
 
 - **显式要求**（"记住……""记一下这个坑"）：回合内同步完成，agent 按 Skill 写 inbox 候选。OpenClaw / Codex 在回合结束时检查 inbox 里有没有这一轮新写或更新的候选，没有就要求模型补一轮（每次请求最多一次）。回合结束时仍没写入的（agent 没照做，或 Antigravity / Hermes 这类没有回合结束控制的宿主），由后台整理把你的原话写成候选，不会丢。
-- **自动暂存**（`autoCapture: "digest"`，默认）：回合结束时钩子只把本轮提问和最终回复（≥ 200 字，脱敏后）追加到本地队列，不调用模型、不让你等。会话空闲 20 分钟后，后台的会话整理按会话合并、按话题只取最后一轮结论，每个会话最多写 2 条候选（外加最多 2 条你说过的长期规则，如"以后……都……""统一用……""我对……过敏"），标 `origin: auto-digest`，内容是原话证据。你不再聊天也会整理（后台等待进程），下一轮 agent 会用一句话告诉你暂存了几条；`npm run doctor` 能看到队列积压和上次整理时间。OpenClaw 的定时任务、心跳和模型报错的回合不入队。Vault 未初始化、项目 `rules.md` 里写了 `no-auto-capture`、含凭据时都不写；项目内容不会进 Global。**会话没有对应项目时不猜范围**：结论先放在 Vault 之外的暂存区，下一轮 agent 会问你归到哪个项目、Global 还是丢弃（关于你本人的偏好，如"我对花生过敏"，直接进 Global）；30 天未处理自动过期。四个宿主都覆盖：Codex `Stop`、OpenClaw `agent_end`、Hermes `post_llm_call`、Antigravity 在下一轮开始时补记上一轮、会话空闲后从会话记录补记最后一轮。
+- **自动暂存**（`autoCapture: "digest"`，默认）：回合结束时钩子只把本轮提问和最终回复（≥ 200 字，脱敏后）追加到本地队列，不调用模型、不让你等。会话空闲 20 分钟后，后台的会话整理把整个会话交给本机的一个大模型 CLI（优先已登录的 Codex，用你在 Codex 里配置的模型；没有就用 Hermes），由它挑出以后的会话还用得上、代码里又看不出来的内容：决策和原因、你定下的做法、你本人的偏好、环境事实，只在会反复踩到时才记技术坑；进度汇报、普通 bug 修复、你的提问本身都不记。每个会话最多 3～5 条（按会话长度），每条是一句能独立看懂的陈述加会话里的原话证据，标 `origin: auto-digest`。调用在后台进行（每个会话约 10～30 秒），关闭钩子和插件、不留会话记录；失败时保留队列下次重试。本机两个 CLI 都没有时，退回按结论词和 Laya 分选轮次的旧办法（原话证据，质量明显较差，`npm run doctor` 会提示）。你不再聊天也会整理（后台等待进程），下一轮 agent 会用一句话告诉你暂存了几条；`npm run doctor` 能看到队列积压和上次整理时间。OpenClaw 的定时任务、心跳和模型报错的回合不入队。Vault 未初始化、项目 `rules.md` 里写了 `no-auto-capture`、含凭据时都不写；项目内容不会进 Global。**会话没有对应项目时不猜范围**：结论先放在 Vault 之外的暂存区，下一轮 agent 会问你归到哪个项目、Global 还是丢弃（关于你本人的偏好，如"我对花生过敏"，直接进 Global）；30 天未处理自动过期。四个宿主都覆盖：Codex `Stop`、OpenClaw `agent_end`、Hermes `post_llm_call`、Antigravity 在下一轮开始时补记上一轮、会话空闲后从会话记录补记最后一轮。
 
 ```sh
 laya digest              # 立即整理已空闲的会话
@@ -539,7 +539,7 @@ laya digest --dry-run    # 只报告会写什么
 
 | 模式 | 回合内等待 | 额外大模型调用 | 适合 |
 |---|---|---|---|
-| `digest`（默认） | 钩子毫秒级 | 无 | 多进 inbox、自己整理 |
+| `digest`（默认） | 钩子毫秒级 | 会话空闲后在后台每个会话一次（Codex / Hermes CLI） | 多进 inbox、自己整理 |
 | `revise` | 触发时 4～66 秒，平均每回合约 15～20 秒 | 约 45% 的回合一次 | 希望候选当场由模型整理好 |
 | `remind` | 无 | 无 | 只提醒，下一轮由 agent 决定 |
 | `off` | 无 | 无 | 只保留显式要求 |
@@ -550,6 +550,7 @@ OpenClaw 在 `memoryJudge.autoCapture` 设置；Hermes 在插件设置 `auto_cap
 |---|---|---|
 | `OBSIDIAN_MEMORY_JUDGE_MODE`（Hermes 旧名 `OBSIDIAN_MEMORY_ROUTER_MODE` 同样有效） | `mode` | `off` / `auto` / `strict` / `manual` |
 | `OBSIDIAN_MEMORY_AUTO_CAPTURE` | `autoCapture` | `digest` / `revise` / `remind` / `off` |
+| `OBSIDIAN_MEMORY_DIGEST_EXTRACTOR`（仅后台整理） | — | `auto`（默认：Codex，再 Hermes）/ `codex` / `hermes` / `off`（用结论词选轮次） |
 | `OBSIDIAN_MEMORY_PROACTIVE_CAPTURE` | `proactiveCapture` | `1` / `0`（也接受 on/off、true/false） |
 | `OBSIDIAN_MEMORY_VAULT_HINTS`、`OBSIDIAN_MEMORY_VAULT_SEMANTIC` | `vaultHints`、`vaultSemantic` | 同上 |
 | `OBSIDIAN_MEMORY_DECISION_LOG` | `decisionLog` | 同上 |

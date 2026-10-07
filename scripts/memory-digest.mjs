@@ -17,15 +17,18 @@
  * 24 hours, so a session is digested even when no host runs another hook. At most one waiter runs.
  *
  * Before digesting, it collects the final turn of idle conversations from hosts without an end-of-turn hook
- * (Antigravity transcripts registered by its hook), and wakes the local model so replies with few
- * conclusion words can still be scored. Uses the local Laya service when it runs (capture score, and the
- * retriever for topic grouping, related notes and near-duplicate checks); works without it.
+ * (Antigravity transcripts registered by its hook). What a session concluded is extracted by a model through
+ * a host CLI on this machine (Codex, else Hermes; OBSIDIAN_MEMORY_DIGEST_EXTRACTOR = auto | codex | hermes |
+ * off). Without one ("off", or none installed) it picks turns by conclusion words and the local Laya score.
+ * Uses the local Laya service when it runs (related notes, near-duplicate checks; the scores and topic
+ * grouping of the keyword selection); works without it.
  */
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { memoryJudgeFromEnv } from "../lib/config.js";
 import { createMemoryRouter } from "../lib/memory-router/router.js";
+import { resolveExtractor, extractSession, EXTRACTORS } from "../lib/memory-router/llm-extract.js";
 import {
   runDigest, acquireDigestLock, claimWaiter, releaseWaiter, nextDigestDelay, DIGEST_IDLE_MS,
   listHeld, fileHeld, discardHeld, digestStats
@@ -115,6 +118,15 @@ export async function waitAndDigest({ digestOnce, queueDir, idleMs = DIGEST_IDLE
   return runs;
 }
 
+/** The model extraction for runDigest, or null for the keyword selection (see the header). */
+export function digestExtractor(env = process.env, resolve = resolveExtractor) {
+  const wanted = env.OBSIDIAN_MEMORY_DIGEST_EXTRACTOR?.trim().toLowerCase() || "auto";
+  const extractor = resolve({ preference: EXTRACTORS.includes(wanted) ? wanted : "auto", env });
+  if (!extractor) return null;
+  const label = extractor.model ? `${extractor.name}/${extractor.model}` : extractor.name;
+  return async (session) => ({ ...(await extractSession(session, extractor.run)), extractor: label });
+}
+
 async function digestWithLock(args) {
   const release = acquireDigestLock();
   if (!release) return null;
@@ -125,11 +137,14 @@ async function digestWithLock(args) {
     router = config.mode === "off" ? null : createMemoryRouter(config, { useCache: true });
     // Background work may wait for the model; a user's turn never does.
     if (router) await router.ensureModelReady({ waitMs: MODEL_WAIT_MS });
+    const extract = digestExtractor();
     return await runDigest({
       force: args.force,
       dryRun: args.dryRun,
       sessions: args.sessions,
       readySessions,
+      heartbeat: release.touch,
+      ...(extract ? { extract } : {}),
       score: router ? (text) => router.captureScoreFor(text) : null,
       embed: router ? (texts, kind) => router.embedTexts(texts, kind) : null
     });

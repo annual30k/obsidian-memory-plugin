@@ -18,6 +18,7 @@ import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { vaultPathFromRuleText } from "../lib/memory-router/vault-index.js";
 import { layaHome } from "../lib/memory-router/paths.js";
+import { resolveExtractor, EXTRACTORS } from "../lib/memory-router/llm-extract.js";
 
 const PLUGIN_ID = "obsidian-memory-plugin";
 
@@ -64,6 +65,8 @@ export function digestStatus(dir, now = Date.now()) {
     lastRun: runs.at(-1)?.ts ?? null,
     written7d: recent.reduce((n, r) => n + (Array.isArray(r.written) ? r.written.length : 0), 0),
     errors7d: recent.filter((r) => (r.skipped ?? []).some((x) => String(x).startsWith("error:") || x === "vault_unreadable" || x === "stale_queue_dropped")).length,
+    extractFailures7d: recent.filter((r) => r.extractError).length,
+    lastExtractError: recent.filter((r) => r.extractError).at(-1)?.extractError ?? null,
     held,
     backfillPausedUntil: typeof backfill?.pausedUntil === "number" && backfill.pausedUntil > now ? new Date(backfill.pausedUntil).toISOString() : null,
     indexTruncated: index?.truncated && typeof index.truncated === "object" ? index.truncated : null
@@ -186,6 +189,11 @@ export function collect({ home = os.homedir(), env = process.env, packageVersion
     cli
   };
   const digest = digestStatus(layaDir);
+  // Which model the digest extracts with (see scripts/memory-digest.mjs): none means the keyword selection.
+  const wanted = env.OBSIDIAN_MEMORY_DIGEST_EXTRACTOR?.trim().toLowerCase() || "auto";
+  const extractor = resolveExtractor({ preference: EXTRACTORS.includes(wanted) ? wanted : "auto", env: { ...env, HOME: home }, codexHome: env.CODEX_HOME || path.join(home, ".codex") });
+  digest.extractor = extractor ? (extractor.model ? `${extractor.name}/${extractor.model}` : extractor.name) : null;
+  digest.extractorSetting = wanted;
 
   // Findings
   const issues = [];
@@ -212,6 +220,8 @@ export function collect({ home = os.homedir(), env = process.env, packageVersion
     issues.push(`Session digest: ${digest.queuedSessions} queued session(s), oldest ${Math.round(digest.oldestQueuedMs / 3600000)} h, and no digest is waiting; run 'laya digest' to process them`);
   }
   if (digest.errors7d) issues.push(`Session digest: ${digest.errors7d} run(s) in the last 7 days could not finish (see ${path.join(layaDir, "digest-log.jsonl")})`);
+  if (!digest.extractor && wanted !== "off" && hosts.some((h) => h.enabled || h.install.installed)) issues.push("Session digest: no Codex (logged in) or Hermes CLI found for model extraction, so automatic capture falls back to keyword selection (mostly status reports); install or log in to one, or set OBSIDIAN_MEMORY_DIGEST_EXTRACTOR=off to accept that");
+  if (digest.extractFailures7d) issues.push(`Session digest: model extraction failed ${digest.extractFailures7d} time(s) in the last 7 days (queues are kept and retried); last error: ${digest.lastExtractError}`);
   if (digest.held) issues.push(`Session digest: ${digest.held} finding(s) held because their session had no project; list them with 'laya digest --held', then file or discard each`);
   if (digest.oversizedQueues) issues.push(`Session digest: ${digest.oversizedQueues} session queue(s) reached 2 MB and stopped taking turns; run 'laya digest --now'`);
   if (digest.indexTruncated) issues.push(`Vault index: over 2000 notes, so some were left out of Vault hints (${Object.entries(digest.indexTruncated).map(([id, n]) => `${id} ${n}`).join(", ")}); newest notes of every project are kept`);
@@ -236,7 +246,8 @@ function render(report, stdout) {
     `recall head ${l.userHead ?? "bundled / zero-shot"}; labels ${l.labels.length ? l.labels.join(", ") : "none"}; CLI -> ${l.cli ?? "(not linked)"}`);
   const d = report.digest;
   w(`Session digest: ${d.queuedSessions} queued session(s)${d.waiterAlive ? ", waiting to digest" : ""}; last run ${d.lastRun ?? "never"}; ` +
-    `${d.written7d} candidate(s) staged in the last 7 days${d.held ? `; ${d.held} held (no project)` : ""}`);
+    `${d.written7d} candidate(s) staged in the last 7 days${d.held ? `; ${d.held} held (no project)` : ""}; ` +
+    `extraction: ${d.extractor ?? (d.extractorSetting === "off" ? "off (keyword selection)" : "none found (keyword selection)")}`);
   if (d.backfillPausedUntil) w(`Vault embeddings: backfill paused until ${d.backfillPausedUntil} after a slow or failed retriever call`);
   w(report.issues.length ? `\n${report.issues.length} issue(s):` : "\nNo issues found.");
   for (const i of report.issues) w(`  - ${i}`);
