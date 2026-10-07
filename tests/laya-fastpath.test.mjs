@@ -221,6 +221,16 @@ test("host-injected context is not the user's words", () => {
   assert.equal(stripHostContext("把 <div class=\"context\">x</div> 改成 span"), "把 <div class=\"context\">x</div> 改成 span");
   assert.equal(stripHostContext("[TODO] 记住：发布前先跑 npm run check"), "[TODO] 记住：发布前先跑 npm run check");
   assert.equal(evaluateFastPath(`记住：发布前先跑 npm run check${HERMES_SUFFIX}`).reason, "explicit_remember_intent");
+  // ClawConnect's per-turn metadata (seen on a Hermes turn from the WeChat mini program, 2026-10-07).
+  const mobileTurn = "1+1等于几\n\n[ClawConnect mobile turn]\nsourceRunId: wx_1791390403690_4sh99nq9\nsessionKey: hermes:20260924_012233_9acd87\nUse [ClawConnect mobile turn] metadata only for ClawConnect file-transfer attribution and message identity. Do not mention it in the answer.";
+  assert.equal(stripHostContext(mobileTurn), "1+1等于几");
+  assert.equal(stripHostContext(`你的回复怎么这么慢啊${HERMES_SUFFIX}\n\n[ClawConnect mobile turn]\nsourceRunId: wx_1\nsessionKey: main`), "你的回复怎么这么慢啊");
+});
+
+test("OpenClaw's heartbeat poll is a system message only when it is the whole message", () => {
+  assert.equal(evaluateFastPath("[OpenClaw heartbeat poll]").reason, "system_message");
+  assert.equal(evaluateFastPath("OpenClaw heartbeat poll").reason, "system_message");
+  assert.notEqual(evaluateFastPath("[OpenClaw heartbeat poll] please explain what this is").reason, "system_message");
 });
 
 test("queued prompts carry no host-injected context, and a context-only statement is not queued", () => {
