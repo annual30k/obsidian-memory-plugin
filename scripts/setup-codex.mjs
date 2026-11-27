@@ -14,6 +14,7 @@ import {
   validateVaultPath
 } from "../lib/managed-block.js";
 import { linkOmem } from "../lib/cli-link.js";
+import { templateNotice } from "../lib/vault-templates.js";
 
 export { END_MARKER, managedBlock, START_MARKER, TRIGGER_INSTRUCTION, validateVaultPath };
 
@@ -218,6 +219,8 @@ export async function runSetup(args, { input = process.stdin, output = process.s
     }
     output.write("Start a new Codex task to use the updated instruction.\n");
     linkOmem(output);
+    const templates = templateNotice(vaultPath);
+    if (templates) output.write(`${templates}\n`);
     if (!options.configureHooks) {
       output.write('One more step: in the Codex app open Plugins > Obsidian Memory and choose "Trust all" under Hooks (or run /hooks in the Codex CLI). Until then Codex gets no memory hints and nothing is captured at the end of a turn.\n');
     }

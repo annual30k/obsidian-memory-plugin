@@ -13,6 +13,7 @@ export const OMEM_COMMANDS = Object.freeze({
   export: "export-vault.mjs",
   import: "import-vault.mjs",
   projects: "projects-vault.mjs",
+  templates: "templates-vault.mjs",
   search: "search-vault.mjs",
   index: "index-vault.mjs",
   doctor: "doctor.mjs",
@@ -25,6 +26,7 @@ export const OMEM_HELP = `omem — Obsidian Memory tools (the Laya service is ma
 Move:    omem export             pack the Vault + your Laya labels/heads into one file (--encrypt, --project)
          omem import <file>      dry-run an import into this machine's Vault (--vault, --map id=dir, --yes)
          omem projects           list projects; bind <id> [dir] adds this machine's checkout; backfill-remotes
+Vault:   omem templates          are the Vault's templates this plugin's? install | update [--replace-custom]
 Recall:  omem search "<query>"   search Vault sections (file, ## section and line range)
          omem index              embed every Vault note now (needs the Laya service: laya start)
 Capture: omem digest             stage Inbox candidates from finished sessions now (--now, --dry-run)

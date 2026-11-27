@@ -50,7 +50,8 @@ Agent 会检查整套技能的实际来源与可用性；
 - 私有项目隔离；敏感资料需显式保留授权；不保存密码/Token 等凭据值。
 - 先判断范围；Global 偏好无需代码目录，不受默认 projectId 强制覆盖。
 - 候选 ID、Raw 路径和 ingest 日志标记稳定；中断后检查已有产物再续做。
-- 优先兼容已有 Vault 模板；缺失时用内置模板，不自动迁移或覆盖旧库。
+- 优先兼容已有 Vault 模板；缺失时用内置模板，不自动迁移或覆盖旧库。模板由 `omem templates` 按原样安装和检查，
+  不由 Agent 手写，所以每台电脑、每个宿主装出来的模板逐字节一致。
 
 插件本体不含 MCP、数据库、后台记录或独立 I/O 引擎，也不占用 OpenClaw
 的 memory 插槽。可选的 [Laya 本地召回裁决服务](#laya-本地召回裁决服务-laya-memory-judge)
@@ -381,6 +382,7 @@ npm run check:antigravity
 | `omem import <文件>` | 把导出包合并进本机 Vault；默认只预演，加 `--yes` 才写入 | 不需要 |
 | `omem projects` | 列出项目及其在本机的路径和 Git remote；`bind` 把本机的代码目录绑到已有项目 | 不需要 |
 
+| `omem templates` | 检查 `00-System/templates/` 的 14 个模板：当前版 / 旧版未改动 / 改过但字段齐全 / 缺核心字段 / 缺失；`install` 补缺失的，`update` 再升级旧版，`--replace-custom` 连改过的也换掉（先备份） | 不需要 |
 | `omem digest` / `omem doctor` | 立即整理已结束的会话 / 只读检查四个宿主的安装和 Vault 路径 | 不需要 |
 
 命令分两组：**`omem`** 是记忆库工具，不依赖 Laya（只有 `omem index` 要用 Laya 服务的检索模型）；
@@ -427,6 +429,9 @@ omem import ~/Downloads/obsidian-memory-export-20261127-100000.tar.gz.enc --vaul
   由 Agent 按入库规则合并。两台电脑都在用时，可以互相导出导入。
 - 代码在本机另一个路径的项目：Git 项目第一次在该仓库里工作时自动认出；其他项目用
   `--map <项目id>=<本机目录>` 指定，或之后运行 `omem projects bind <项目id> <目录> --yes`。
+- 只差换行符（Windows 的 CRLF 与 LF）的文件视为相同。模板不算冲突：本地是未改动的旧版就换成导入的当前版；
+  本地改过或是手写的（例如缺核心字段）默认保留并列出，加 `--use-incoming-templates` 换成导入的（先备份到
+  `00-System/template-backups/<时间>/`）。
 - 写入后会列出还指向其他 Vault 的宿主及重新配置的命令，再运行 `omem index` 补语义向量；
   合并了标注时可运行 `laya train`。
 - 包的格式与系统无关（纯 Node 实现，不依赖系统 `tar`），macOS、Windows、Linux 之间可以互相导入；

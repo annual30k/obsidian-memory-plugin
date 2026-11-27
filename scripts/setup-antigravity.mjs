@@ -14,6 +14,7 @@ import {
   validateVaultPath
 } from "../lib/managed-block.js";
 import { linkOmem } from "../lib/cli-link.js";
+import { templateNotice } from "../lib/vault-templates.js";
 
 export { END_MARKER, managedBlock, START_MARKER, TRIGGER_INSTRUCTION, validateVaultPath };
 
@@ -244,6 +245,8 @@ export async function runSetup(args, { input = process.stdin, output = process.s
 
     output.write("Antigravity setup complete. Start a new Antigravity session to use the updated instruction.\n");
     linkOmem(output);
+    const templates = templateNotice(vaultPath);
+    if (templates) output.write(`${templates}\n`);
   } finally {
     prompt.close();
   }

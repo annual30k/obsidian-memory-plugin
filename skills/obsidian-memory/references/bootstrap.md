@@ -21,13 +21,19 @@ supplied VAULT-BOOTSTRAP-PROMPT.md; no separate prompt copy/paste is required.
 
 Use the layout in [vault-layout.md](vault-layout.md), initially without any
 invented project. Start projects.yaml with `projects: []` if it is absent.
-Read [templates.md](templates.md). Copy its shipped templates into missing paths
-under `00-System/templates/` using the host's skills; preserve placeholders in
-template files. Instantiate actual notes according to that reference. Do not
-ask the model to invent a new baseline schema on each installation.
+Read [templates.md](templates.md). Install the templates with
+`omem templates install --vault <vault> --yes` (without the `omem` command:
+`node <plugin root>/scripts/templates-vault.mjs install --vault <vault> --yes`).
+It copies the shipped files byte for byte into missing paths under
+`00-System/templates/`, so every machine and host gets the same ones. Never
+write, rephrase or "improve" a template yourself; if the command cannot run,
+stop and report it. Instantiate actual notes according to that reference.
 
-If an existing root AGENTS or template conflicts with this workflow, describe
-the conflict and request a merge decision rather than replacing it.
+Then run `omem templates` and report its result. If existing templates are
+listed as lacking core fields, or an existing root AGENTS conflicts with this
+workflow, describe the conflict and request a decision rather than replacing
+anything (`omem templates update --replace-custom` replaces templates after
+backing them up, only on the user's approval).
 
 ## Root AGENTS contract
 
