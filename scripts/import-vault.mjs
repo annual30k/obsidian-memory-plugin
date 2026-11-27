@@ -84,7 +84,7 @@ function printPlan(plan, out, applied) {
   out.write(`Bundle: created ${m.createdAt} on ${m.source?.platform ?? "?"} from Vault "${m.source?.vaultName ?? "?"}" (plugin ${m.pluginVersion ?? "?"})${plan.encrypted ? ", encrypted" : ""}\n`);
   out.write(`Target: ${plan.target.path} (${{ missing: "new folder", empty: "empty folder", vault: "existing Vault, merging" }[plan.target.state]})\n\n`);
   const verb = applied ? "" : "would be ";
-  out.write(`Vault files: ${v.add.length} ${verb}added, ${v.same.length} already identical, ${v.merged.length} log(s) ${verb}merged, ${v.conflicts.length} conflict(s), ${v.keptLocal.length} kept local\n`);
+  out.write(`Vault files: ${v.add.length} ${verb}added, ${v.same.length} already identical, ${v.merged.length} log(s) ${verb}merged, ${v.conflicts.length} conflict(s), ${v.keptLocal.length} kept local${v.dirs.length ? `; ${v.dirs.length} folder(s) ${verb}created` : ""}\n`);
   for (const x of v.merged) out.write(`  merged  ${x.rel} (+${x.added} entries)\n`);
   for (const c of v.conflicts.slice(0, 30)) out.write(`  conflict ${c.rel}\n`);
   if (v.conflicts.length > 30) out.write(`  … and ${v.conflicts.length - 30} more\n`);

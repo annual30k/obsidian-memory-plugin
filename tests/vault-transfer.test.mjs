@@ -318,6 +318,45 @@ test("--map binds a project to this machine's checkout; a remote owned by anothe
   fs.rmSync(base, { recursive: true, force: true });
 });
 
+test("empty folders (inbox/assets, checkpoints, 30-Shared) survive export and import", () => {
+  const base = tmp("om-dirs-");
+  const vault = makeVault(path.join(base, "vault"), { projects: [{ id: "app-1", roots: [] }] });
+  for (const d of ["30-Shared", "10-Global/inbox/assets", "20-Projects/app-1/checkpoints", "20-Projects/app-1/inbox/assets", "20-Projects/app-1/wiki/pitfalls", "中文/空目录"]) {
+    fs.mkdirSync(path.join(vault, ...d.split("/")), { recursive: true });
+  }
+  const { bundle, manifest } = buildExport(vault, { layaDir: path.join(base, "none") });
+  assert.ok(manifest.dirs.includes("vault/20-Projects/app-1/inbox/assets"));
+  assert.ok(readTarGz(bundle).dirs.includes("vault/中文/空目录"), "directories are also tar entries");
+  const target = path.join(base, "new");
+  const plan = planImport(bundle, { targetVault: target, layaDir: path.join(base, "none") });
+  applyImport(plan);
+  for (const d of ["30-Shared", "10-Global/inbox/assets", "20-Projects/app-1/checkpoints", "20-Projects/app-1/inbox/assets", "20-Projects/app-1/wiki/pitfalls", "中文/空目录"]) {
+    assert.ok(fs.statSync(path.join(target, ...d.split("/"))).isDirectory(), d);
+  }
+  // Into an existing Vault only the missing folders are created; a file in the way is left alone.
+  fs.rmSync(path.join(target, "20-Projects", "app-1", "checkpoints"), { recursive: true });
+  fs.rmSync(path.join(target, "30-Shared"), { recursive: true });
+  write(path.join(target, "30-Shared"), "a file here");
+  const again = planImport(bundle, { targetVault: target, layaDir: path.join(base, "none") });
+  assert.deepEqual(again.vault.dirs, ["20-Projects/app-1/checkpoints"]);
+  assert.match(again.warnings.join("\n"), /30-Shared is a folder in the bundle but not here/u);
+  applyImport(again);
+  assert.ok(fs.existsSync(path.join(target, "20-Projects", "app-1", "checkpoints")));
+  assert.equal(read(path.join(target, "30-Shared")), "a file here");
+  // A bundle from before the folder list (no manifest.dirs) still imports.
+  const { files } = readTarGz(bundle);
+  const old = createTarGz(files.map((f) => f.name === "manifest.json"
+    ? { ...f, data: Buffer.from(JSON.stringify({ ...JSON.parse(f.data.toString("utf8")), dirs: undefined })) } : f));
+  assert.deepEqual(planImport(old, { targetVault: path.join(base, "old"), layaDir: path.join(base, "none") }).vault.dirs, []);
+  // An unsafe folder name in a crafted manifest is rejected, never created.
+  const evil = createTarGz(files.map((f) => f.name === "manifest.json"
+    ? { ...f, data: Buffer.from(JSON.stringify({ ...JSON.parse(f.data.toString("utf8")), dirs: ["vault/../escape", "other/x"] })) } : f));
+  const evilPlan = planImport(evil, { targetVault: path.join(base, "evil"), layaDir: path.join(base, "none") });
+  assert.deepEqual(evilPlan.vault.dirs, []);
+  assert.deepEqual(evilPlan.rejected.map((r) => r.name).sort(), ["other/x", "vault/../escape"]);
+  fs.rmSync(base, { recursive: true, force: true });
+});
+
 test("a tampered bundle is refused", () => {
   const base = tmp("om-tamper-");
   const vault = makeVault(path.join(base, "vault"), { projects: [] });
