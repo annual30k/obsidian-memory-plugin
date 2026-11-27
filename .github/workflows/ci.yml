@@ -13,9 +13,8 @@ jobs:
   verify:
     name: Verify plugin
     runs-on: ${{ matrix.os }}
-    # Windows support is experimental (never verified on a real machine; several tests still assume POSIX
-    # paths, file modes and file locking). Its job runs and reports, but does not fail the workflow.
-    continue-on-error: ${{ matrix.os == 'windows-latest' }}
+    # Every platform must pass: Windows has run the full suite cleanly since PR #1, so a Windows
+    # failure now fails the workflow like the others.
     env:
       # The tests start Python through scripts/python.mjs; point it at the interpreter set up below
       # (on Windows the `py` launcher would otherwise pick another preinstalled Python without PyYAML).
