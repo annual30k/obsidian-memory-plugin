@@ -119,6 +119,10 @@ function printPlan(plan, out, applied) {
       out.write(`  ${p.id}: ${detail}${p.root ? ` (${p.root})` : ""}\n`);
     }
   }
+  if (plan.duplicates?.length) {
+    out.write("\nProbably the same project under two ids (merge after importing, keeping the one with the notes):\n");
+    for (const d of plan.duplicates) out.write(`  ${d.incoming} (imported) ~ ${d.local} (here): ${d.reasons.join(", ")}\n    omem projects merge <from> <into>   e.g. omem projects merge ${d.local} ${d.incoming}\n`);
+  }
   const l = plan.laya;
   if (!l.skipped && (l.add.length || l.merged.length || l.keptLocal.length || l.same.length)) {
     out.write(`\nLaya data (${l.dir}):\n`);

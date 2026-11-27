@@ -121,7 +121,9 @@ path; direct file access is never permission to inspect unrelated Vault content.
    `checkpoints/`, `index.md` and `log.md`.
 7. Give a short first-binding receipt. Never bulk-discover projects, create a
    separate nested binding when its Git root is bound, or change an existing
-   binding without explicit user approval. Do not invent project facts.
+   binding without explicit user approval. Do not invent project facts. When
+   the same code turns out to be registered under two ids, offer
+   `omem projects merge` ([references/transfer.md](references/transfer.md)).
 
 ## Recall
 
