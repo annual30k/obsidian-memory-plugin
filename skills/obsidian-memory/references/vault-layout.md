@@ -39,7 +39,22 @@ projects:
     scope: private
 ```
 
-Use the longest physical-directory match. Never infer a code root from an
+A project may list roots from several machines (a root missing here never
+matches) and optional `remotes`: normalized Git origins such as
+`github.com/owner/repo`, which identify the same repository checked out at a
+different path:
+
+```yaml
+  - id: example-project
+    roots:
+      - /Users/me/code/example-project
+      - 'C:\Users\me\code\example-project'
+    remotes:
+      - github.com/me/example-project
+    scope: private
+```
+
+Use the longest physical-directory match, then a unique remote match. Never infer a code root from an
 Agent's generic workspace or Gateway cwd. A non-code topic may be created with
 an explicit user-approved ID and `roots: []`; it must be selected explicitly.
 

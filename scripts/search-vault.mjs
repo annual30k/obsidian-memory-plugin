@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Read-only, section-aware local Vault search CLI (`laya search`).
+ * Read-only, section-aware local Vault search CLI (`omem search`).
  *
  * Searches the scoped Vault index (lexical + optional Laya semantic embeddings over section chunks),
  * skips deprecated notes by default unless `--include-deprecated` is set, and localizes each hit to its
@@ -359,7 +359,7 @@ export function formatSearchResults(data) {
 export async function main(argv = process.argv.slice(2), out = process.stdout, err = process.stderr) {
   const opts = parseArgs(argv);
   if (opts.help) {
-    out.write(`Usage: laya search "<query>" [--project <id>] [--scope project|global|all] [--limit N] [--include-deprecated] [--no-pending] [--no-semantic] [--json] [--vault <path>]\n`);
+    out.write(`Usage: omem search "<query>" [--project <id>] [--scope project|global|all] [--limit N] [--include-deprecated] [--no-pending] [--no-semantic] [--json] [--vault <path>]\n`);
     return 0;
   }
   if (!opts.query.trim()) {

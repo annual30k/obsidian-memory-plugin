@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseConfigs } from "../lib/config.js";
 import { validateVaultPath } from "../lib/managed-block.js";
+import { linkOmem } from "../lib/cli-link.js";
 
 export const PLUGIN_ID = "obsidian-memory-plugin";
 const ENTRY_PATH = `plugins.entries.${PLUGIN_ID}`;
@@ -122,6 +123,7 @@ export async function runSetup(args, { input = process.stdin, output = process.s
     setValue(run, options.bin, ENTRY_PATH, next, previous, false);
     if (nextAllow) setValue(run, options.bin, "plugins.allow", nextAllow, oldAllow, false);
     output.write(`Configured ${PLUGIN_ID} for ${agentId}. Restart the OpenClaw Gateway and verify the skill is visible.\n`);
+    linkOmem(output);
   } finally {
     prompt.close();
   }

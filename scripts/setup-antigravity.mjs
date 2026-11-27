@@ -13,6 +13,7 @@ import {
   updateContentWithBlock,
   validateVaultPath
 } from "../lib/managed-block.js";
+import { linkOmem } from "../lib/cli-link.js";
 
 export { END_MARKER, managedBlock, START_MARKER, TRIGGER_INSTRUCTION, validateVaultPath };
 
@@ -242,6 +243,7 @@ export async function runSetup(args, { input = process.stdin, output = process.s
     }
 
     output.write("Antigravity setup complete. Start a new Antigravity session to use the updated instruction.\n");
+    linkOmem(output);
   } finally {
     prompt.close();
   }
