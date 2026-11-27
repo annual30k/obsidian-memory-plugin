@@ -1,0 +1,7 @@
+# Check out text files with LF on every platform. Windows checkouts otherwise get CRLF, which breaks the
+# line-anchored parsing of plugin.yaml, frontmatter and SKILL.md (Hermes installs with git clone).
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.tgz binary
+*.bin binary

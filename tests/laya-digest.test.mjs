@@ -59,7 +59,7 @@ test("enqueueCapture keeps long replies only, redacts credentials and writes pri
   assert.ok(rec.keywords >= 2);
   assert.ok(QUEUE_REPLY_MIN_CHARS <= REPLY().length);
   const file = path.join(v.queueDir, `${sessionIdFor("codex", "sess-1")}.jsonl`);
-  assert.equal(fs.statSync(file).mode & 0o077, 0, "queue file is private");
+  if (process.platform !== "win32") assert.equal(fs.statSync(file).mode & 0o077, 0, "queue file is private");
   assert.equal(readQueueFile(file).length, 1);
   assert.ok(enqueueCapture("statement", { prompt: "以后都用 sass", score: 0.8 }, turn(v), { queueDir: v.queueDir }));
   assert.equal(enqueueCapture("statement", { prompt: "" }, turn(v), { queueDir: v.queueDir }), null);

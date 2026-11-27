@@ -199,7 +199,7 @@ test("decision log records each turn and flags a suspected miss when the user th
   assert.equal(lines[0].text, "订单模块怎么拆的");
   assert.equal(lines[2].type, "suspect");
   assert.equal(lines[2].ref, lines[0].id);
-  assert.equal(fs.statSync(options.decisionLogPath).mode & 0o777, 0o600);
+  if (process.platform !== "win32") assert.equal(fs.statSync(options.decisionLogPath).mode & 0o777, 0o600);
 });
 
 test("the decision log can be turned off by config or environment", () => {

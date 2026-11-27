@@ -100,7 +100,8 @@ print(json.dumps({"skills": ctx.skills, "hooks": sorted(ctx.hooks), "settings": 
   assert.deepEqual(r.hooks, ["post_llm_call", "pre_llm_call"]);
   assert.equal(r.settings.vaultPath, vaultPath);
   assert.match(r.default.context, /For code tasks, use the obsidian-memory skill/);
-  assert.ok(r.default.context.includes(vaultPath));
+  // The path is written as JSON data: on Windows its backslashes are escaped.
+  assert.ok(r.default.context.includes(JSON.stringify(vaultPath).slice(1, -1)));
   assert.equal(r.skip.context, "[Obsidian Memory: not needed for this turn]");
 });
 

@@ -28,6 +28,19 @@ import { MemoryRouter } from "../lib/memory-router/router.js";
 import { LayaClient } from "../lib/memory-router/client.js";
 import { runCli } from "../lib/memory-router/cli.js";
 
+/**
+ * Stop a service process, wait until it has exited, then remove its folder. Windows cannot delete a file
+ * a process still holds open (the service's instance lock), so removing right after kill() fails with EBUSY.
+ */
+async function stopAndRemove(proc, dir) {
+  if (proc && proc.exitCode === null && proc.signalCode === null) {
+    const exited = new Promise((resolve) => proc.once("exit", resolve));
+    try { proc.kill("SIGKILL"); } catch {}
+    await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 5000))]);
+  }
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+}
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const SERVICE_PY = path.resolve(__dirname, "..", "lib", "laya-service", "service.py");
@@ -253,8 +266,7 @@ test("daemon.pid is written atomically with 0600 and only unlinked when identity
     assert.equal(remainingPid.instance_id, "foreign-instance-id");
 
   } finally {
-    try { pyProc.kill("SIGKILL"); } catch {}
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await stopAndRemove(pyProc, tmpDir);
   }
 });
 
@@ -572,8 +584,7 @@ test("Python service with mock backend starts on ephemeral port, enforces auth, 
     assert.equal(fs.existsSync(serviceFile), false, "service.json must be cleaned up on shutdown");
 
   } finally {
-    try { pyProc.kill("SIGKILL"); } catch {}
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await stopAndRemove(pyProc, tmpDir);
   }
 });
 
@@ -720,8 +731,7 @@ test("Secure token delivery via --token-file deletes temporary file on startup",
     assert.equal(res.status, 200);
 
   } finally {
-    pyProc.kill("SIGKILL");
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await stopAndRemove(pyProc, tmpDir);
   }
 });
 
@@ -1028,8 +1038,7 @@ test("Python service on shutdown only removes service.json if it matches its own
     assert.equal(remaining.token, "token-service-B");
 
   } finally {
-    try { pyProc.kill("SIGKILL"); } catch {}
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await stopAndRemove(pyProc, tmpDir);
   }
 });
 
@@ -1172,8 +1181,7 @@ test("inference semaphore queues briefly, then answers 503 quickly under a pile-
     assert.ok(okCount >= 5, `Overlapping requests should mostly queue and succeed, got ${okCount}/10`);
 
   } finally {
-    try { pyProc.kill("SIGKILL"); } catch {}
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await stopAndRemove(pyProc, tmpDir);
   }
 });
 
@@ -1215,8 +1223,7 @@ test("MemoryRouter auto mode end-to-end integration with mock service", async ()
     router.dispose();
 
   } finally {
-    pyProc.kill("SIGKILL");
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await stopAndRemove(pyProc, tmpDir);
   }
 });
 

@@ -196,7 +196,9 @@ test("auto router schedules recovery only when a previously healthy service disa
 });
 
 test("a dead trusted service PID schedules recovery without delaying this turn", async () => {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "laya-router-dead-pid-"));
+  // The long form of the temp path: on Windows os.tmpdir() can be an 8.3 short name ("RUNNER~1"), which
+  // does not compare as inside the home folder, and Windows only trusts a service file under home.
+  const tmpDir = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), "laya-router-dead-pid-"));
   const layaDir = path.join(tmpDir, ".laya");
   const serviceFile = path.join(layaDir, "service.json");
   fs.mkdirSync(layaDir, { recursive: true });
