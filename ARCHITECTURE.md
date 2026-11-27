@@ -26,7 +26,7 @@ flowchart TD
 | 记忆需求分 | Laya 给出的 0–1 分，表示本轮是否需要长期记忆。服务接口仍叫 `/judge/recall` | `lib/laya-service/service.py` |
 | 分类头（recall head） | 在 Laya 句向量上训练的逻辑回归，替代零样本打分 | `~/.laya/recall-head.json`，插件自带一份 |
 | 持久性判断头（durable head） | 在 Laya 句向量上训练的逻辑回归，判断用户这句话是不是以后也要遵守的规则/偏好/决定；用 `laya label` 的 `d` 标注积累数据，`laya train --target durable` 训练 | `~/.laya/durable-head.json`，插件自带一份 |
-| 检索器（retriever） | Laya 服务里另一个小模型（默认 `intfloat/multilingual-e5-small`，纯 MLX 实现）：把本轮提示和 Vault 笔记都变成向量，回答"Vault 里有没有一篇笔记明显对应这句话" | `lib/laya-service/bert_embed.py`，笔记向量缓存在 `~/.laya/cache/vault-embeddings.json` |
+| 检索器（retriever） | Laya 服务里另一个小模型（默认 `intfloat/multilingual-e5-small`，纯 MLX 实现）：把本轮提示和 Vault 笔记都变成向量，回答"Vault 里有没有一篇笔记明显对应这句话" | `lib/laya-service/bert_embed.py`，笔记向量缓存在 `~/.laya/cache/vault-embeddings-v<版本>.bin`（float32 二进制；文件名带格式版本，开发版与已装版互不覆盖；`laya index` 可一次补齐） |
 | 突出度（prominence） | 最相关笔记的相似度减去所有候选笔记相似度的中位数。绝对相似度分不开（同一项目的笔记和任务本来就都相似），突出度问的是"有没有一篇特别对得上" | `lib/memory-router/vault-index.js` |
 | 暂存（Capture） | Skill 把值得长期保存的内容写成 `inbox/` 下的 `pending-ingest` 候选 | `SKILL.md` |
 | 入库（Ingest） | 只在用户要求时，把候选冻结为 raw 并整理进 wiki | `SKILL.md` |
@@ -55,7 +55,7 @@ flowchart LR
    - **关键词选轮**（没有可用的 CLI，或 `OBSIDIAN_MEMORY_DIGEST_EXTRACTOR=off`）：整理前先唤醒本地模型（后台最多等 45 秒，用户的回合从不等），这样结论词不够的回复也能拿到 Laya 分。
    - **选结论**：最终回复有 ≥ 2 个结论词且其中至少一个是强结论词（根因 / 原因是 / 修法 / 已修复 / 决定 / 约定 / 规则……），或 Laya capture 分 ≥ 0.5，或之后被用户确认"好了"的回合；通用知识问答（"X 和 Y 的区别"）不算，除非用户确认了修复。
    - **按话题合并，只取最后一轮**：9 月的真实数据里，触发集中在同一个问题的连续排查中（有触发的会话平均 5.5 次，89% 的触发落在触发 ≥ 3 次的会话里），而 36 个多次触发的会话里有 12 个后来改口。所以同一话题只保留最后一轮结论；有检索器时按回复的语义相似度分话题（余弦 ≥ 0.91：在手写的结论对上，同一问题改口后的结论为 0.907～0.937，同项目不同问题为 0.85～0.911；尚未用真实数据校准），没有时整个会话算一个话题。每个会话最多 2 个话题、2 条用户陈述（分数高的优先）。
-   - **硬规则在代码里执行**：Vault 已初始化（有 `AGENTS.md` 和 `00-System/`）；项目已绑定且 inbox 存在（不创建项目结构，不猜范围，项目内容永远不进 Global）。范围按类别定：会话结论只进所属项目；用户陈述和显式请求里，带"全局/跨项目/global"整词、或说的是用户本人（"我对……过敏""回复我用中文"）的进 `10-Global/inbox/`（`globalThis` 之类不算），其余进所属项目。**解析不到项目时不猜**：按 Skill "If only one scope is unresolved, hold that part"，这些发现放进 Vault 之外的暂存区 `~/.laya/state/held/`，下一轮提示让 agent 问用户归到哪个项目、Global 还是丢弃，并用 `laya digest --held / --file <id> --project <id>|--global / --discard <id>` 执行（写入仍走整理的全部硬规则），30 天未处理自动过期；Vault 或项目的 `AGENTS.md` / `rules.md` 里有 `no-auto-capture`（或"禁止自动记录""只召回"等）就不写；含凭据的回合整条不写，写文件前再对成稿扫一遍凭据；优先用 Vault 自己的 `00-System/templates/inbox-memory-candidate.md`（`{{title}}` 和 `<…>` 两种占位写法都支持）；`cand-<uuid>` 文件名、`wx` 独占创建、路径不出 Vault；同一会话同一结论不写第二次；同样文字（忽略空白）的结论在该 inbox 已有候选（`source_hash`）就不写；与已有 auto-digest 候选余弦 ≥ 0.95 视为重复。标题取自提问，提问是"继续""好的"这类时取结论第一行。
+   - **硬规则在代码里执行**：Vault 已初始化（有 `AGENTS.md` 和 `00-System/`）；项目已绑定且 inbox 存在（不创建项目结构，不猜范围，项目内容永远不进 Global）。范围按类别定：会话结论只进所属项目；用户陈述和显式请求里，带"全局/跨项目/global"整词、或说的是用户本人（"我对……过敏""回复我用中文"）的进 `10-Global/inbox/`（`globalThis` 之类不算），其余进所属项目。**解析不到项目时不猜**：按 Skill "If only one scope is unresolved, hold that part"，这些发现放进 Vault 之外的暂存区 `~/.laya/state/held/`，下一轮提示让 agent 问用户归到哪个项目、Global 还是丢弃，并用 `laya digest --held / --file <id> --project <id>|--global / --discard <id>` 执行（写入仍走整理的全部硬规则），30 天未处理自动过期；Vault 或项目的 `AGENTS.md` / `rules.md` 里有 `no-auto-capture`（或"禁止自动记录""只召回"等）就不写；含凭据的回合整条不写，写文件前再对成稿扫一遍凭据；优先用 Vault 自己的 `00-System/templates/inbox-memory-candidate.md`（`{{title}}` 和 `<…>` 两种占位写法都支持）；`cand-<uuid>` 文件名、`wx` 独占创建、路径不出 Vault；同一会话同一结论不写第二次；同样文字（忽略空白）的结论在该 inbox 已有候选（`source_hash`）就不写；与同项目活跃 `pending-ingest` 候选或本会话时间窗内刚更新的 `wiki/` 笔记余弦 ≥ 0.95 视为重复（跳过已 `deprecated` 的旧笔记，运维/整理轮次不提取）。标题取自提问，提问是"继续""好的"这类时取结论第一行。
    - **候选内容**：模型提取时是一句能独立看懂的陈述 + 会话里的原话证据 + 那一轮的提问，`auto_kind: session-<decision|convention|preference|fact|pitfall>`，`extractor` 记下用的 CLI 和模型；关键词选轮时是提问原文 + 最后一轮结论原文。都标 `origin: auto-digest`、来源宿主和会话，附检索器找到的相关笔记；最终归纳留到用户发起 ingest 时做。
    - 处理完只删除本次领取的部分，结果记在 `~/.laya/digest-log.jsonl`（含 Vault 路径，出错的也记）。Vault 暂时读不到（此时也解析不出项目，不会误放进暂存区）或整理出错时保留已领取的部分，下次和新回合一起再试；超过 7 天的也先整理，整理不了才删除并记日志。
    - **让用户知道**：下一轮提示里告诉 agent 整理暂存了几条候选（每批只说一次），由它在回复末尾用一句话告诉用户；`npm run doctor` 显示队列积压、上次整理时间、7 天内写入数和暂存区条数，并报出卡住或写满 2 MB 的队列、暂存待定的发现、索引超上限被裁掉的笔记和没注册 / 没批准的 Codex 钩子。`laya digest --stats` 统计候选最终的去向（待审 / 已 ingest / 被删），即保留率，用来校准门槛。
@@ -71,9 +71,9 @@ Laya 的 `capture` 判断（`obsidian-memory-laya-judge --capture`）在回合�
 
 "要不要查记忆"和"查哪一篇"是两个问题。只看单句文本的模型答不了前者（真实流量里需要记忆的提问几乎都靠显式规则就能抓到，剩下的取决于 Vault 里有什么）；检索能答后者。所以路由把两者合起来：
 
-1. `fast-path.js`：含密钥 / 问候 → 跳过；明确要求保存 → *保存*；"还记得""去 obsidian 查""照老规矩" → *先查记忆*。
+1. `fast-path.js`：含密钥 / 问候 → 跳过；明确要求保存 → *保存*；"全部摄入 / 健康检查 / vault lint" → *记忆维护*；"还记得""去 obsidian 查""照老规矩" → *先查记忆*。
 2. 记忆需求分（Laya，优先用分类头），同一次调用顺带返回本轮提示的向量。通用知识、写作、询问助手本身的问题不会因分数偏高而查记忆。
-3. `vault-index.js`：用检索器给 Vault 的 wiki / inbox 笔记建向量缓存（每轮最多补 32 篇，改过的笔记自动重算），算本轮提示的突出度：
+3. `vault-index.js`：仅索引活跃 `wiki/`（含业务 `##` 节标题、折叠大代码块保留注释摘要、长文按 `##` 分段并取最高分聚合）与 `pending-ingest` 候选（排除 `index-*.md` / `raw-index.md` 与 `deprecated` 笔记，显式查历史无命中时可兜底），用检索器建向量缓存并结合文件 `stat` 签名即时失效，算本轮提示的突出度：
    - **强**（默认 ≥ 0.048）：改为 *先查记忆*，即使分数说不需要；提示里列出最相关的 1–3 篇笔记路径。
    - **弱**（≥ 0.038）：本轮不跳过，附上笔记。
    - 检索器不可用（PyTorch 后端、旧服务、`vaultSemantic: false`）时退回词重叠匹配，只补拿不准的轮次。
@@ -118,6 +118,7 @@ Laya 的 `capture` 判断（`obsidian-memory-laya-judge --capture`）在回合�
 |---|---|
 | `laya install` / `start` / `stop` / `status` | 管理本地 Laya 服务（`status` 显示分类头和检索器；`start --embed-model off` 关闭检索器） |
 | `laya digest` | 立即整理已结束的会话，把结论暂存进 inbox（`--now` 包括未空闲的会话，`--dry-run` 只报告） |
+| `laya search` | 只读分段检索 Vault（按项目隔离、默认跳过 `deprecated`，返回命中章节名与行号范围） |
 | `laya label` | 标注积累的真实提示（y 先查记忆 / c 保存 / d 陈述长期规则 / n 不需要 / x 单句判断不了）；`--review` 校对已有标注 |
 | `laya train` | 用标注训练分类头并自动重启服务；`--target durable` 训练持久性判断头 |
 | `laya doctor` | 只读体检：四个宿主的版本、安装方式、Vault 路径是否一致 |
@@ -139,6 +140,7 @@ lib/laya-service/            Laya 服务（service.py）、检索器编码器（
 index.js / __init__.py       OpenClaw / Hermes 适配器
 scripts/*-hook.mjs           Codex（提问、Stop）/ Antigravity 钩子
 scripts/memory-digest.mjs    会话整理（后台自动运行，或 laya digest）
+scripts/search-vault.mjs     只读分段检索 CLI（laya search）
 scripts/replay-digest.mjs    离线回放：用真实历史会话对比整理的选法（build / baseline / extract / pool / report）
 scripts/setup-*.mjs          各宿主配置向导
 scripts/laya-service.mjs     laya 命令入口

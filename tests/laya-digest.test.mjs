@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { enqueueCapture, readQueueFile, listQueue, sessionIdFor, QUEUE_REPLY_MIN_CHARS } from "../lib/memory-router/capture-queue.js";
-import { runDigest, selectSessionFindings, maybeScheduleDigest, acquireDigestLock, renderCandidate, candidateTemplate, waiterAlive, claimWaiter, releaseWaiter, takeStagedSinceNotice } from "../lib/memory-router/digest.js";
+import { runDigest, selectSessionFindings, maybeScheduleDigest, acquireDigestLock, renderCandidate, candidateTemplate, waiterAlive, claimWaiter, releaseWaiter, takeStagedSinceNotice, digestStats, wikiUpdatedSince } from "../lib/memory-router/digest.js";
 import { buildLayaActionNotice, buildGuidance } from "../lib/prompt.js";
 import { enrichDecision, enqueueTurnEnd } from "../lib/memory-router/turn-context.js";
 import { decideStop } from "../scripts/codex-stop-hook.mjs";
@@ -306,6 +306,25 @@ test("a turn holding a modern API key is never written to the Vault", async () =
   assert.equal(res.written.length, 0);
   assert.ok(res.skipped.some((x) => x.reason === "sensitive_content"));
   assert.equal(inbox(v).length, 0);
+});
+
+test("a conclusion whose candidate was ingested and moved to inbox/archive/ is not staged again", async () => {
+  const v = setup();
+  enqueueCapture("turn", { prompt: "修一下 setup", reply: REPLY() }, turn(v, { sessionKey: "a1" }), { queueDir: v.queueDir });
+  for (const e of listQueue(v.queueDir)) old(e.file);
+  const first = await runDigest({ queueDir: v.queueDir, stateDir: v.stateDir });
+  assert.equal(first.written.length, 1);
+  // The user ingests it and archives the candidate, as the skill says.
+  const dir = path.join(v.root, "20-Projects", PID, "inbox");
+  const [name] = inbox(v);
+  fs.mkdirSync(path.join(dir, "archive", "2026-11"), { recursive: true });
+  fs.renameSync(path.join(dir, name), path.join(dir, "archive", "2026-11", name));
+  // A later session says the same thing.
+  enqueueCapture("turn", { prompt: "继续", reply: REPLY() }, turn(v, { sessionKey: "a2" }), { queueDir: v.queueDir });
+  for (const e of listQueue(v.queueDir)) old(e.file);
+  const second = await runDigest({ queueDir: v.queueDir, stateDir: v.stateDir });
+  assert.equal(second.written.length, 0);
+  assert.ok(second.skipped.some((s) => s.reason === "duplicate"), JSON.stringify(second.skipped));
 });
 
 test("digest quality: identical conclusions once, no generic Q&A, no double write after an explicit save, useful titles, project scope for 'globalThis'", async () => {
@@ -639,4 +658,93 @@ test("digestExtractor follows OBSIDIAN_MEMORY_DIGEST_EXTRACTOR and labels the mo
   assert.deepEqual(await extract({ turns: [{ prompt: "p", reply: "r" }] }), { items: [], dropped: [], calls: 1, extractor: "codex/m-1" });
   digestExtractor({ OBSIDIAN_MEMORY_DIGEST_EXTRACTOR: "bogus" }, resolve);
   assert.deepEqual(asked, ["off", "auto", "auto"]);
+});
+
+test("maintenance turns are skipped by digest, and near-duplicate deduplicates against manual pending candidates and fresh wiki notes", async () => {
+  const v = setup();
+  const statePath = path.join(v.stateDir, "s.json");
+  const t = turn(v, { sessionKey: "maint-1", projectId: PID });
+  const opts = { now: Date.now(), env: {}, sessionStatePath: statePath, indexCachePath: path.join(v.stateDir, "vi.json"), queueDir: v.queueDir, scheduleDigest: () => false, takeStaged: () => null };
+
+  // Maintenance turn is marked and skipped in both keyword and LLM extractor modes.
+  enrichDecision({ memoryAction: "maintenance", maintenanceRecommended: true, maintenanceKind: "ingest", reason: "explicit_maintenance_intent", trace: { route: "fast_path" } }, "现在全部摄入", t, {}, opts);
+  enqueueTurnEnd({ host: "codex", sessionKey: "maint-1", assistantText: REPLY(1), sessionStatePath: statePath, queueDir: v.queueDir, scheduleDigest: () => false });
+  const maintRecs = readQueueFile(listQueue(v.queueDir)[0].file);
+  assert.equal(maintRecs[0].maintenance, true);
+  const maintSummary = await runDigest({ queueDir: v.queueDir, stateDir: v.stateDir, force: true });
+  assert.equal(maintSummary.written.length, 0);
+
+  // Near-duplicate against a manually staged (non-auto-digest) pending candidate in inbox/
+  const v2 = setup();
+  fs.writeFileSync(path.join(v2.root, "20-Projects", PID, "inbox", "cand-manual.md"),
+    `---\nid: "cand-manual"\ntitle: "Manual note"\nstatus: pending-ingest\norigin: "user-instruction"\n---\n\n# Manual note\n\n${REPLY(1)}\n`);
+  for (let i = 0; i < 5; i++) {
+    fs.mkdirSync(path.join(v2.root, "20-Projects", PID, "wiki", "knowledge"), { recursive: true });
+    fs.writeFileSync(path.join(v2.root, "20-Projects", PID, "wiki", "knowledge", `bg-${i}.md`), `---\ntitle: "Background ${i}"\n---\n\n# Background ${i}\n\nUnrelated topic ${i}.\n`);
+  }
+  const sameVec = (txt) => (txt.includes("existsSync") ? [1, 0, 0] : [0, 1, 0]);
+  enqueueCapture("turn", { prompt: "修软链接", reply: REPLY(2) }, turn(v2, { sessionKey: "dup-manual" }), { queueDir: v2.queueDir });
+  const dupRes = await runDigest({
+    queueDir: v2.queueDir, stateDir: v2.stateDir, force: true,
+    embed: async (texts) => ({ model: "toy", vectors: texts.map(sameVec) })
+  });
+  assert.ok(dupRes.skipped.some((s) => s.reason === "near_duplicate"));
+  assert.equal(dupRes.written.length, 0);
+});
+
+test("a restatement of a deprecated wiki note is not staged again", async () => {
+  const v = setup();
+  const wiki = path.join(v.root, "20-Projects", PID, "wiki", "knowledge");
+  fs.mkdirSync(wiki, { recursive: true });
+  for (let i = 0; i < 5; i++) {
+    fs.writeFileSync(path.join(wiki, `bg-${i}.md`), `---\ntitle: "Background ${i}"\n---\n\n# Background ${i}\n\nUnrelated topic ${i}.\n`);
+  }
+  const old = path.join(wiki, "old-symlink-rule.md");
+  fs.writeFileSync(old, `---\ntitle: "Old rule"\ndeprecated: true\n---\n\n# Old rule\n\n${REPLY(1)}\n`);
+  const past = new Date(Date.now() - 30 * 86400_000);
+  fs.utimesSync(old, past, past);
+  const sameVec = (txt) => (txt.includes("existsSync") ? [1, 0, 0] : [0, 1, 0]);
+  enqueueCapture("turn", { prompt: "修软链接", reply: REPLY(2) }, turn(v, { sessionKey: "dup-deprecated" }), { queueDir: v.queueDir });
+  const res = await runDigest({
+    queueDir: v.queueDir, stateDir: v.stateDir, force: true,
+    embed: async (texts) => ({ model: "toy", vectors: texts.map(sameVec) })
+  });
+  assert.ok(res.skipped.some((s) => s.reason === "near_deprecated"), JSON.stringify(res.skipped));
+  assert.equal(res.written.length, 0);
+});
+
+test("digestStats recognizes ingested candidates that were moved into inbox/archive/YYYY-MM/", () => {
+  const v = setup();
+  const logPath = path.join(v.stateDir, "digest-log.jsonl");
+  const rel = `20-Projects/${PID}/inbox/cand-archived-1.md`;
+  const archiveDir = path.join(v.root, "20-Projects", PID, "inbox", "archive", "2026-11");
+  fs.mkdirSync(archiveDir, { recursive: true });
+  fs.writeFileSync(path.join(archiveDir, "cand-archived-1.md"), '---\nstatus: ingested\nauto_kind: "session-decision"\n---\n');
+  fs.writeFileSync(logPath, JSON.stringify({ ts: new Date().toISOString(), vaultPath: v.root, written: [rel] }) + "\n");
+  const stats = digestStats({ logPath });
+  assert.equal(stats.written, 1);
+  assert.equal(stats.ingested, 1);
+  assert.equal(stats.removed, 0);
+  assert.equal(stats.retention, 1);
+});
+
+test("a wiki note counts as updated in the session by last_updated, not by a touched mtime", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "om-fresh-"));
+  try {
+    const since = Date.parse("2026-11-27T10:00:00+08:00");
+    const note = (name, fm) => { const f = path.join(dir, name); fs.writeFileSync(f, `---\ntitle: t\n${fm}---\n\n# t\n`); return f; };
+    // Synced or linted today (fresh mtime), but its content was last changed weeks ago.
+    assert.equal(wikiUpdatedSince(note("synced.md", 'last_updated: "2026-11-01T09:00:00+08:00"\n'), since), false);
+    assert.equal(wikiUpdatedSince(note("ingested.md", 'last_updated: "2026-11-27T10:30:00+08:00"\n'), since), true);
+    assert.equal(wikiUpdatedSince(note("dated.md", "updated: 2026-11-27\n"), since), true);
+    assert.equal(wikiUpdatedSince(note("old-date.md", "updated: 2026-11-20\n"), since), false);
+    // No field: the file's mtime decides.
+    const bare = note("bare.md", "");
+    assert.equal(wikiUpdatedSince(bare, Date.now() - 60_000), true);
+    const past = new Date(since - 86400_000);
+    fs.utimesSync(bare, past, past);
+    assert.equal(wikiUpdatedSince(bare, since), false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

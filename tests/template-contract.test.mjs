@@ -21,8 +21,8 @@ function frontmatter(name, content = read(name)) {
     const key = line.slice(0, separator);
     const value = line.slice(separator + 2);
     assert.ok(!Object.hasOwn(fields, key), name + ": duplicate property " + key);
-    // Quoted strings, null, integers and empty arrays are JSON-compatible YAML.
-    if (value.startsWith('"') || value === "null" || value === "[]" || /^\d+$/.test(value)) {
+    // Quoted strings, null, booleans, integers and empty arrays are JSON-compatible YAML.
+    if (value.startsWith('"') || value === "null" || value === "true" || value === "false" || value === "[]" || /^\d+$/.test(value)) {
       fields[key] = JSON.parse(value);
     } else {
       assert.match(value, /^[a-z][a-z0-9-]*$/, name + ": unsupported scalar");
@@ -87,6 +87,9 @@ test("derived templates keep the common provenance and privacy fields", () => {
       assert.ok(Object.hasOwn(fields, key), name + ": missing " + key);
     }
     assert.deepEqual(fields.sources, [], "Templates must not contain fabricated sources");
+  }
+  for (const name of ["decision.md", "pitfall.md", "knowledge.md", "checkpoint.md"]) {
+    assert.equal(frontmatter(name).deprecated, false, name + ": default deprecated flag must be false");
   }
 });
 

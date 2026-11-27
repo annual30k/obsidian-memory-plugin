@@ -195,17 +195,19 @@ export function createOpenClawPlugin(options = {}) {
 
           const fast = evaluateFastPath(text);
           if (fast.action !== "consult_laya") {
+            const maintenanceRecommended = Boolean(fast.maintenanceRecommended);
             const decision = {
               recallRecommended: fast.recallRecommended ?? false,
-              captureRecommended: (fast.captureRecommended && memoryJudge.proactiveCapture !== false) ? true : false,
+              captureRecommended: (!maintenanceRecommended && fast.captureRecommended && memoryJudge.proactiveCapture !== false) ? true : false,
               captureCategory: fast.captureCategory ?? null,
-              captureKind: (fast.captureRecommended && memoryJudge.proactiveCapture !== false) ? "explicit" : null,
+              captureKind: (!maintenanceRecommended && fast.captureRecommended && memoryJudge.proactiveCapture !== false) ? "explicit" : null,
+              ...(maintenanceRecommended ? { maintenanceRecommended: true, maintenanceKind: fast.maintenanceKind ?? "ingest" } : {}),
               scope: fast.scope ?? "project",
               blocked: false,
               reason: fast.reason,
               trace: {
                 route: "fast_path",
-                decision: fast.recallRecommended ? "recall" : (fast.captureRecommended ? "capture" : "none"),
+                decision: maintenanceRecommended ? "maintenance" : (fast.recallRecommended ? "recall" : (fast.captureRecommended ? "capture" : "none")),
                 reason: fast.reason,
                 hookExecuted: true,
                 layaAttempted: false
@@ -217,7 +219,7 @@ export function createOpenClawPlugin(options = {}) {
             }
             setTurnDecision(turnKey, decision);
             api.logger?.debug?.(`[Laya Memory Router] before_prompt_build Fast-Path Trace: ${JSON.stringify(decision.trace)}`);
-            if (decision.memoryAction === "skip" || decision.recallRecommended ||
+            if (decision.memoryAction === "skip" || decision.recallRecommended || decision.maintenanceRecommended ||
                 (decision.captureRecommended && memoryJudge.proactiveCapture !== false) || buildLayaNotice(decision)) {
               return { prependContext: buildGuidance(agentConfig, decision) };
             }

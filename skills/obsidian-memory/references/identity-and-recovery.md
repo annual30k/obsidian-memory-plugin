@@ -15,6 +15,7 @@ Within the already selected scope (`10-Global` or `20-Projects/<project_id>`):
 | Artifact | Identity/path |
 | --- | --- |
 | Inbox | `inbox/<candidate_id>.md` |
+| Archived candidate (optional) | `inbox/archive/YYYY-MM/<candidate_id>.md` (after `ingested` or `discarded`) |
 | Raw | `raw/raw-<candidate_id>.md`; `id: raw-<candidate_id>`; `candidate_id: <candidate_id>` |
 | Candidate's final Raw reference | `raw_record: "[[<scope>/raw/raw-<candidate_id>]]"` |
 | Pending attachment | `inbox/assets/<candidate_id>/<original-name>` |
@@ -48,7 +49,9 @@ was interrupted, inspect the candidate path and read it back before retrying.
 3. If Raw does not exist, re-read the candidate and freeze its factual evidence,
    original source reference, capture context, sensitivity and attachment bytes.
    `created` on Raw is the freeze time; `captured_at` is the candidate's creation
-   time. Keep conclusions out of Raw. Retain the Inbox candidate and its assets.
+   time. Keep conclusions out of Raw. Retain the Inbox candidate (in `inbox/` or
+   optionally archived to `inbox/archive/YYYY-MM/` once processed) and its assets.
+   When retrying or checking duplicates, inspect both `inbox/` and `inbox/archive/`.
 4. If Raw exists, verify its candidate identity, scope, original evidence/source
    and all retained attachments against the candidate snapshot. Reuse it only
    on a match. A partial Raw, conflicting ID, changed evidence or mismatched

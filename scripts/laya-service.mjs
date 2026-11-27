@@ -895,13 +895,17 @@ export const TOOL_COMMANDS = Object.freeze({
   tune: "tune-laya.mjs",
   "calibrate-vault": "calibrate-vault-hints.mjs",
   doctor: "doctor.mjs",
-  digest: "memory-digest.mjs"
+  digest: "memory-digest.mjs",
+  search: "search-vault.mjs",
+  index: "index-vault.mjs"
 });
 
 const TOOL_HELP = `Service:   laya install | start | stop | status | uninstall
 Everyday:  laya label            label logged prompts (y look up / c save / n none / x can't tell)
            laya train            retrain the recall head from your labels, then restart the service
-Memory:    laya digest           stage Inbox candidates from finished sessions now (--now, --dry-run)
+Memory:    laya search "<query>" search Vault sections (returns file, ## section & line range)
+           laya index            embed every Vault note now (after a migration or a large import)
+           laya digest           stage Inbox candidates from finished sessions now (--now, --dry-run)
            laya digest --held    findings held because their session had no project; file or discard them
            laya digest --stats   what became of the digest's candidates (pending / ingested / removed)
 Check:     laya doctor           where each host is installed and which Vault it uses

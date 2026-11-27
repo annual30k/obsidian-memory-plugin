@@ -16,7 +16,7 @@ import os from "node:os";
 import path from "node:path";
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { vaultPathFromRuleText } from "../lib/memory-router/vault-index.js";
+import { INDEX_CACHE_FILE, vaultPathFromRuleText } from "../lib/memory-router/vault-index.js";
 import { layaHome } from "../lib/memory-router/paths.js";
 import { resolveExtractor, EXTRACTORS } from "../lib/memory-router/llm-extract.js";
 
@@ -56,7 +56,7 @@ export function digestStatus(dir, now = Date.now()) {
   let held = 0;
   try { held = fs.readdirSync(path.join(dir, "state", "held")).filter((n) => /^held-[0-9a-f]{8}\.json$/u.test(n)).length; } catch {}
   const backfill = readJson(path.join(dir, "state", "embed-backfill.json"));
-  const index = readJson(path.join(dir, "cache", "vault-index.json"));
+  const index = readJson(path.join(dir, "cache", INDEX_CACHE_FILE));
   return {
     queuedSessions: queue.length,
     oldestQueuedMs: queue.length ? now - Math.min(...queue) : null,

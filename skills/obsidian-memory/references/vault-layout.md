@@ -53,9 +53,18 @@ At first meaningful ingest, establish the project taxonomy in its AGENTS from
 selected evidence, rather than assuming every project needs the same categories.
 
 Derived notes record at least `title`, `type`, `scope`, `project_id`, `status`,
-`created`, `last_updated`, `sensitivity` and `sources`. Sources are quoted
+`deprecated` (default `false` on new derived templates; older notes without it
+are treated as `false` without migration), `created`, `last_updated`,
+`sensitivity` and `sources`. Sources are quoted
 full-Vault-relative Wikilinks to Raw. Use the
 host's obsidian-markdown skill for formatting; this file does not duplicate it.
+
+Small projects keep a single flat `index.md`. When a project grows large (e.g.,
+`wiki/` >= 40 notes or `index.md` >= 250 lines), it may optionally split into:
+- `index.md` as a concise module routing table (plus `## Deprecated` if needed)
+- `wiki/index-<module>.md` per top-level module
+- `raw/raw-index.md` for Raw evidence links
+- `inbox/archive/` (optional) for processed candidates while preserving identity
 
 Raw immutability is a workflow rule, not a physical filesystem guarantee. Do not
 rename or rewrite Raw; report observed external corruption without guessing a

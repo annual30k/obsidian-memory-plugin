@@ -2,6 +2,110 @@ import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSyn
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeprecatedFrontmatter, parseFrontmatter } from "../lib/memory-router/vault-index.js";
+
+const SCALE_WIKI_THRESHOLD = 40;
+const SCALE_INDEX_LINES_THRESHOLD = 250;
+const INBOX_ARCHIVE_WARN_THRESHOLD = 100;
+
+const VAULT_PATH_PREFIXES = /^(?:00-System|10-Global|20-Projects|30-Shared|wiki|raw|inbox|checkpoints|path\/to|example|foo|bar|a)\//i;
+const REPO_FILE_REF_RE = /(?:^|[\s`("'(])((?:[a-zA-Z0-9_.-]+\/)+[a-zA-Z0-9_.-]+\.(?:m?js|cjs|tsx?|jsx?|py|go|rs|java|kt|swift|rb|php|sh|json|ya?ml|toml|sql|css|scss|html|vue|svelte))(?=$|[\s`)"',:;。，])/gu;
+
+export function extractRepoFileRefs(body) {
+  if (typeof body !== "string" || !body) return [];
+  const cleaned = body
+    .replace(/https?:\/\/\S+/giu, " ")
+    .replace(/\[\[[^\]\n]+\]\]/gu, " ");
+  const refs = new Set();
+  for (const match of cleaned.matchAll(REPO_FILE_REF_RE)) {
+    const rel = match[1].replace(/^\.\//u, "");
+    if (!rel || rel.startsWith("/") || rel.startsWith("~") || rel.includes("..") || VAULT_PATH_PREFIXES.test(rel)) continue;
+    refs.add(rel);
+  }
+  return [...refs];
+}
+
+/**
+ * The link target of a `superseded_by` value. Quoted "[[note]]" parses as a string; unquoted [[note]] is a
+ * YAML flow sequence and arrives as ["[note]"], so both forms (and a list of links) are accepted.
+ */
+export function supersededTarget(value) {
+  const first = Array.isArray(value) ? value.flat(Infinity).find((v) => typeof v === "string" && v.trim()) : value;
+  if (typeof first !== "string") return null;
+  const inner = /\[\[([^\]]+)\]\]/u.exec(first)?.[1] ?? first.replace(/^\[+|\]+$/gu, "");
+  const clean = inner.trim();
+  return clean || null;
+}
+
+// Required frontmatter per note kind (references/templates.md "Core frontmatter fields").
+export const CORE_FIELDS = Object.freeze({
+  candidate: ["schema_version", "id", "title", "type", "scope", "project_id", "status", "created", "sensitivity", "source_ref"],
+  raw: ["schema_version", "id", "candidate_id", "title", "type", "scope", "project_id", "status", "created", "captured_at", "sensitivity", "source_ref"],
+  derived: ["title", "type", "scope", "project_id", "status", "deprecated", "created", "last_updated", "sensitivity", "sources"]
+});
+
+export function missingCoreFields(kind, data) {
+  return (CORE_FIELDS[kind] ?? []).filter((key) => !(data && Object.prototype.hasOwnProperty.call(data, key)));
+}
+
+/** Notes of one flat directory (inbox/ or raw/) that lack core fields: [{ note, missing }]. */
+function coreFieldGaps(dir, kind, label) {
+  const gaps = [];
+  if (!existsSync(dir)) return gaps;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith(".md") || entry.name === "raw-index.md") continue;
+    const missing = missingCoreFields(kind, parseFrontmatter(readFileSync(join(dir, entry.name), "utf8")).data);
+    if (missing.length) gaps.push({ note: `${label}/${entry.name}`, missing });
+  }
+  return gaps;
+}
+
+function coreFieldWarning(scopeLabel, gaps) {
+  if (!gaps.length) return null;
+  const sample = gaps.slice(0, 3).map((g) => `${g.note} (${g.missing.join(", ")})`).join("; ");
+  return `${scopeLabel}: ${gaps.length} note(s) miss core frontmatter fields, e.g. ${sample}${gaps.length > 3 ? "; …" : ""} — fill them when the note is next edited.`;
+}
+
+function scanInboxStats(inboxDir, label) {
+  const out = { pending: 0, ingested: 0, archived: 0, nonPendingActive: 0, warnings: [] };
+  if (!existsSync(inboxDir)) return out;
+  for (const entry of readdirSync(inboxDir, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+    const txt = readFileSync(join(inboxDir, entry.name), "utf8");
+    if (/status:\s*"?pending-ingest"?/i.test(txt)) out.pending += 1;
+    else {
+      out.nonPendingActive += 1;
+      if (/status:\s*"?ingested"?/i.test(txt)) out.ingested += 1;
+    }
+  }
+  const archiveDir = join(inboxDir, "archive");
+  if (existsSync(archiveDir)) {
+    const walkArchive = (dir, relBase, depth) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        if (entry.name.startsWith(".")) continue;
+        const full = join(dir, entry.name);
+        const rel = relBase ? `${relBase}/${entry.name}` : entry.name;
+        if (entry.isDirectory()) {
+          if (depth < 2) walkArchive(full, rel, depth + 1);
+        } else if (entry.isFile() && entry.name.endsWith(".md")) {
+          out.archived += 1;
+          const txt = readFileSync(full, "utf8");
+          if (/status:\s*"?ingested"?/i.test(txt)) out.ingested += 1;
+          else if (/status:\s*"?pending-ingest"?/i.test(txt)) {
+            out.warnings.push(`Archived candidate in ${label}/archive/${rel} still has status: pending-ingest.`);
+          }
+        }
+      }
+    };
+    walkArchive(archiveDir, "", 0);
+  }
+  if (out.nonPendingActive >= INBOX_ARCHIVE_WARN_THRESHOLD) {
+    out.warnings.push(
+      `Inbox [${label}] has ${out.nonPendingActive} processed candidates; consider moving ingested/discarded files to inbox/archive/YYYY-MM/.`
+    );
+  }
+  return out;
+}
 
 export const EXPECTED_TEMPLATES = [
   "checkpoint.md",
@@ -36,7 +140,9 @@ export function parseProjectsYaml(content) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) continue;
 
-    const idMatch = line.match(/^(\s*)-\s+id:\s*["']?([a-zA-Z0-9_\-\.]+)["']?/);
+    // Any non-space id: "集团信创OA-c9a48417" is a valid project id. An ASCII-only pattern skipped such
+    // entries and appended their roots to the project above.
+    const idMatch = line.match(/^(\s*)-\s+id:\s*["']?([^"'\s#]+)["']?/u);
     if (idMatch) {
       if (current) projects.push(current);
       current = { id: idMatch[2], roots: [], scope: "private" };
@@ -130,6 +236,7 @@ export function checkVault(vaultPath) {
       log: false,
       inboxPending: 0,
       inboxIngested: 0,
+      inboxArchived: 0,
       rawCount: 0
     },
     projects: {},
@@ -194,15 +301,17 @@ export function checkVault(vaultPath) {
     result.global.index = existsSync(join(globalDir, "index.md"));
     result.global.log = existsSync(join(globalDir, "log.md"));
 
-    const globalInbox = join(globalDir, "inbox");
-    if (existsSync(globalInbox)) {
-      const files = readdirSync(globalInbox).filter(f => f.endsWith(".md"));
-      for (const f of files) {
-        const text = readFileSync(join(globalInbox, f), "utf8");
-        if (/status:\s*pending-ingest/i.test(text)) result.global.inboxPending += 1;
-        else if (/status:\s*ingested/i.test(text)) result.global.inboxIngested += 1;
-      }
-    }
+    const globalInboxStats = scanInboxStats(join(globalDir, "inbox"), "10-Global/inbox");
+    result.global.inboxPending = globalInboxStats.pending;
+    result.global.inboxIngested = globalInboxStats.ingested;
+    result.global.inboxArchived = globalInboxStats.archived;
+    result.system.warnings.push(...globalInboxStats.warnings);
+    result.global.missingCoreFields = [
+      ...coreFieldGaps(join(globalDir, "inbox"), "candidate", "inbox"),
+      ...coreFieldGaps(join(globalDir, "raw"), "raw", "raw")
+    ];
+    const globalCoreWarning = coreFieldWarning("10-Global", result.global.missingCoreFields);
+    if (globalCoreWarning) result.system.warnings.push(globalCoreWarning);
 
     const globalRaw = join(globalDir, "raw");
     if (existsSync(globalRaw)) {
@@ -211,11 +320,17 @@ export function checkVault(vaultPath) {
   }
 
   // 3. 20-Projects
+  const projectRootsById = new Map();
+  for (const proj of result.system.registeredProjects) {
+    const validRoots = (proj.roots ?? []).filter(r => existsSync(r) && statSync(r).isDirectory());
+    if (validRoots.length > 0) projectRootsById.set(proj.id, validRoots);
+  }
   const projectsDir = join(vaultPath, "20-Projects");
   if (existsSync(projectsDir)) {
     const projectFolders = readdirSync(projectsDir).filter(f => !f.startsWith(".") && statSync(join(projectsDir, f)).isDirectory());
     for (const pName of projectFolders) {
       const pDir = join(projectsDir, pName);
+      const repoRoots = projectRootsById.get(pName) ?? [];
       const stats = {
         agentsMd: existsSync(join(pDir, "AGENTS.md")),
         rulesMd: existsSync(join(pDir, "rules.md")),
@@ -224,10 +339,19 @@ export function checkVault(vaultPath) {
         schemaState: "unknown",
         inboxPending: 0,
         inboxIngested: 0,
+        inboxArchived: 0,
         rawCount: 0,
         wikiDecisions: 0,
         wikiPitfalls: 0,
         wikiKnowledge: 0,
+        wikiTotal: 0,
+        wikiCategories: {},
+        wikiDeprecated: 0,
+        indexLines: 0,
+        hasSubIndexes: false,
+        codeDrift: [],
+        missingCoreFields: [],
+        warnings: [],
         missingSources: [],
         brokenLinks: []
       };
@@ -238,19 +362,17 @@ export function checkVault(vaultPath) {
         if (m) stats.schemaState = m[1];
       }
 
-      const pInbox = join(pDir, "inbox");
-      if (existsSync(pInbox)) {
-        for (const f of readdirSync(pInbox).filter(f => f.endsWith(".md"))) {
-          const txt = readFileSync(join(pInbox, f), "utf8");
-          if (/status:\s*pending-ingest/i.test(txt)) stats.inboxPending += 1;
-          else if (/status:\s*ingested/i.test(txt)) stats.inboxIngested += 1;
-        }
-      }
+      const pInboxStats = scanInboxStats(join(pDir, "inbox"), `${pName}/inbox`);
+      stats.inboxPending = pInboxStats.pending;
+      stats.inboxIngested = pInboxStats.ingested;
+      stats.inboxArchived = pInboxStats.archived;
+      stats.warnings.push(...pInboxStats.warnings);
+      stats.missingCoreFields.push(...coreFieldGaps(join(pDir, "inbox"), "candidate", "inbox"), ...coreFieldGaps(join(pDir, "raw"), "raw", "raw"));
 
       const pRaw = join(pDir, "raw");
       const rawFiles = new Set();
       if (existsSync(pRaw)) {
-        for (const f of readdirSync(pRaw).filter(f => f.endsWith(".md"))) {
+        for (const f of readdirSync(pRaw).filter(f => f.endsWith(".md") && f !== "raw-index.md")) {
           rawFiles.add(f);
           rawFiles.add(f.replace(/\.md$/, ""));
           stats.rawCount += 1;
@@ -268,18 +390,61 @@ export function checkVault(vaultPath) {
 
       const pWiki = join(pDir, "wiki");
       const wikiFiles = new Set();
+      const subIndexStems = new Set();
+      const subIndexPaths = [];
+      const deprecatedWikiStems = new Set();
+      const supersededChecks = [];
       if (existsSync(pWiki)) {
+        for (const entry of readdirSync(pWiki, { withFileTypes: true })) {
+          if (entry.isFile() && /^index-.+\.md$/i.test(entry.name)) {
+            subIndexStems.add(entry.name.replace(/\.md$/, ""));
+            subIndexPaths.push({ label: `wiki/${entry.name}`, path: join(pWiki, entry.name) });
+          }
+        }
+        stats.hasSubIndexes = subIndexPaths.length > 0;
+
         const catDirs = readdirSync(pWiki).filter(f => !f.startsWith(".") && statSync(join(pWiki, f)).isDirectory());
         for (const cat of catDirs) {
           const catDir = join(pWiki, cat);
           const files = readdirSync(catDir).filter(f => f.endsWith(".md"));
+          stats.wikiCategories[cat] = files.length;
+          stats.wikiTotal += files.length;
           if (cat === "decisions") stats.wikiDecisions = files.length;
           else if (cat === "pitfalls") stats.wikiPitfalls = files.length;
           else if (cat === "knowledge") stats.wikiKnowledge = files.length;
 
           for (const wf of files) {
-            wikiFiles.add(wf.replace(/\.md$/, ""));
+            const stem = wf.replace(/\.md$/, "");
+            wikiFiles.add(stem);
             const txt = readFileSync(join(catDir, wf), "utf8");
+            const { data: fm, body } = parseFrontmatter(txt);
+            const missingCore = missingCoreFields("derived", fm);
+            if (missingCore.length) stats.missingCoreFields.push({ note: `wiki/${cat}/${wf}`, missing: missingCore });
+            const deprecated = isDeprecatedFrontmatter(fm);
+            if (deprecated) {
+              stats.wikiDeprecated += 1;
+              deprecatedWikiStems.add(stem);
+              const target = supersededTarget(fm.superseded_by);
+              if (target) {
+                const supStem = basename(target.split("|")[0]).replace(/\.md$/, "");
+                supersededChecks.push({ from: `${cat}/${wf}`, raw: target, stem: supStem });
+              }
+            } else if (repoRoots.length > 0) {
+              const missingPaths = [];
+              for (const rel of extractRepoFileRefs(body)) {
+                const topDir = rel.split("/")[0];
+                const anchored = repoRoots.some(r => existsSync(join(r, topDir)) && statSync(join(r, topDir)).isDirectory());
+                if (anchored && !repoRoots.some(r => existsSync(join(r, rel)))) {
+                  missingPaths.push(rel);
+                }
+              }
+              if (missingPaths.length > 0) {
+                stats.codeDrift.push({ note: `${cat}/${wf}`, missingPaths });
+                stats.warnings.push(
+                  `Code drift: ${cat}/${wf} references repo file(s) that no longer exist: ${missingPaths.join(", ")} — if they were renamed or moved, update the paths; mark the note deprecated: true only if the approach itself is obsolete.`
+                );
+              }
+            }
             const sourcesMatch = txt.match(/^sources:\s*(?:\[([^\]]*)\]|\r?\n((?:\s*-\s*[^\r\n]+\r?\n)*))/m);
             if (sourcesMatch) {
               const matchedText = sourcesMatch[0];
@@ -296,16 +461,45 @@ export function checkVault(vaultPath) {
         }
       }
 
-      if (stats.indexMd) {
-        const txt = readFileSync(join(pDir, "index.md"), "utf8");
+      for (const check of supersededChecks) {
+        if (!wikiFiles.has(check.stem)) {
+          stats.brokenLinks.push(`${check.from} -> superseded_by missing: [[${check.raw}]]`);
+        } else if (deprecatedWikiStems.has(check.stem)) {
+          stats.warnings.push(`${check.from} -> superseded_by points to another deprecated note: [[${check.raw}]]`);
+        }
+      }
+
+      const validateIndexLinks = (label, txt) => {
         const links = Array.from(txt.matchAll(/\[\[([^\]]+)\]\]/g), m => m[1]);
         for (const lk of links) {
           const cleanStem = basename(lk.split("|")[0]).replace(/\.md$/, "");
-          if (["rules", "log", "index", "AGENTS"].includes(cleanStem)) continue;
-          if (!wikiFiles.has(cleanStem) && !rawFiles.has(cleanStem) && !checkpointFiles.has(cleanStem)) {
-            stats.brokenLinks.push(`index.md -> nonexistent note: [[${lk}]]`);
+          if (["rules", "log", "index", "AGENTS", "raw-index"].includes(cleanStem)) continue;
+          if (!wikiFiles.has(cleanStem) && !rawFiles.has(cleanStem) && !checkpointFiles.has(cleanStem) && !subIndexStems.has(cleanStem)) {
+            stats.brokenLinks.push(`${label} -> nonexistent note: [[${lk}]]`);
           }
         }
+      };
+
+      if (stats.indexMd) {
+        const txt = readFileSync(join(pDir, "index.md"), "utf8");
+        stats.indexLines = txt.split(/\r?\n/).length;
+        validateIndexLinks("index.md", txt);
+      }
+      for (const sub of subIndexPaths) {
+        validateIndexLinks(sub.label, readFileSync(sub.path, "utf8"));
+      }
+      const rawIndexPath = join(pRaw, "raw-index.md");
+      if (existsSync(rawIndexPath)) {
+        validateIndexLinks("raw/raw-index.md", readFileSync(rawIndexPath, "utf8"));
+      }
+
+      const coreWarning = coreFieldWarning(`Project [${pName}]`, stats.missingCoreFields);
+      if (coreWarning) stats.warnings.push(coreWarning);
+
+      if ((stats.wikiTotal >= SCALE_WIKI_THRESHOLD || stats.indexLines >= SCALE_INDEX_LINES_THRESHOLD) && !stats.hasSubIndexes) {
+        stats.warnings.push(
+          `Project [${pName}] has ${stats.wikiTotal} wiki notes and ${stats.indexLines} index.md lines; consider splitting raw/raw-index.md and wiki/index-<module>.md.`
+        );
       }
 
       result.projects[pName] = stats;
@@ -364,7 +558,7 @@ export function formatReport(result) {
   lines.push("\n--- 2. 全局作用域 (10-Global) ---");
   if (result.global.exists) {
     lines.push(`  Core files: preferences=${result.global.preferences ? "✓" : "✗"}, index=${result.global.index ? "✓" : "✗"}, log=${result.global.log ? "✓" : "✗"}`);
-    lines.push(`  Inbox: ${result.global.inboxPending} pending, ${result.global.inboxIngested} ingested`);
+    lines.push(`  Inbox: ${result.global.inboxPending} pending, ${result.global.inboxIngested} ingested${result.global.inboxArchived ? ` (${result.global.inboxArchived} archived)` : ""}`);
     lines.push(`  Raw: ${result.global.rawCount} records`);
   } else {
     lines.push("  10-Global not initialized.");
@@ -378,9 +572,12 @@ export function formatReport(result) {
     for (const pName of pNames) {
       const p = result.projects[pName];
       lines.push(`\n  📁 Project: ${pName}`);
-      lines.push(`     Schema: ${p.schemaState} | AGENTS=${p.agentsMd ? "✓" : "✗"} rules=${p.rulesMd ? "✓" : "✗"} index=${p.indexMd ? "✓" : "✗"} log=${p.logMd ? "✓" : "✗"}`);
-      lines.push(`     Inbox: ${p.inboxPending} pending, ${p.inboxIngested} ingested | Raw: ${p.rawCount}`);
-      lines.push(`     Wiki: ${p.wikiDecisions} decisions, ${p.wikiPitfalls} pitfalls, ${p.wikiKnowledge} knowledge`);
+      lines.push(`     Schema: ${p.schemaState} | AGENTS=${p.agentsMd ? "✓" : "✗"} rules=${p.rulesMd ? "✓" : "✗"} index=${p.indexMd ? `✓ (${p.indexLines} lines)` : "✗"} log=${p.logMd ? "✓" : "✗"}`);
+      lines.push(`     Inbox: ${p.inboxPending} pending, ${p.inboxIngested} ingested${p.inboxArchived ? ` (${p.inboxArchived} archived)` : ""} | Raw: ${p.rawCount}`);
+      lines.push(`     Wiki: ${p.wikiTotal} total (${p.wikiDecisions} decisions, ${p.wikiPitfalls} pitfalls, ${p.wikiKnowledge} knowledge${p.wikiDeprecated ? `, ${p.wikiDeprecated} deprecated` : ""})`);
+      if (p.warnings?.length > 0) {
+        for (const w of p.warnings) lines.push(`     [WARN] ${w}`);
+      }
       if (p.missingSources.length > 0) {
         for (const ms of p.missingSources) lines.push(`     ⚠️ Missing source: ${ms}`);
       }

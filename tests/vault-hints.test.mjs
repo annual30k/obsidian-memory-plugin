@@ -6,7 +6,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
-  stripCodeLike, tokenize, buildVaultIndex, loadVaultIndex, matchVault, resolveProjectIdFromCwd, resolveVaultPath, parseFrontmatter
+  stripCodeLike, tokenize, buildVaultIndex, loadVaultIndex, matchVault, noteTopicText, noteEmbedChunks, allocateIndexSlots,
+  resolveProjectIdFromCwd, resolveVaultPath, parseFrontmatter
 } from "../lib/memory-router/vault-index.js";
 import { enrichDecision } from "../lib/memory-router/turn-context.js";
 import { buildLayaActionNotice } from "../lib/prompt.js";
@@ -245,4 +246,197 @@ test("resolveProjectIdFromCwd matches a cwd reported through a symlinked path", 
   assert.equal(resolveProjectIdFromCwd(vault, fs.realpathSync(real)), "linked-11111111", "physical path of the registered symlink");
   assert.equal(resolveProjectIdFromCwd(vault, path.join(fs.realpathSync(real), "src")), "linked-11111111");
   assert.equal(resolveProjectIdFromCwd(vault, os.tmpdir()), null);
+});
+
+test("index skips inactive inbox notes and sub-index files, extracts ## headings, and invalidates on in-place file edits", () => {
+  const vault = makeVault();
+  const projDir = path.join(vault, "20-Projects", "plugin-1f6a88a6");
+  // Inactive inbox candidates (ingested / discarded) and split navigation indexes must not enter the index.
+  note(path.join(projDir, "inbox"), "cand-done.md", "已入库候选不应占索引名额", "status: ingested\n");
+  note(path.join(projDir, "inbox"), "cand-drop.md", "已丢弃候选不应占索引名额", "status: discarded\n");
+  note(path.join(projDir, "wiki"), "index-portal.md", "模块子索引不应被检索", "");
+  note(path.join(projDir, "raw"), "raw-index.md", "Raw 子索引", "");
+  // Long multi-section manual: section 4 lives far beyond 600 chars.
+  const filler = "这里是前置常规巡检步骤的详细说明文字，用于模拟真实长篇运维手册的前半部分内容。".repeat(12);
+  const longManual = [
+    "---",
+    'title: "门户后台综合操作手册"',
+    "type: knowledge",
+    "status: active",
+    "deprecated: false",
+    "---",
+    "",
+    "# 门户后台综合操作手册",
+    "",
+    "## 一、基础登录与巡检",
+    filler,
+    "## 二、组织架构刷新",
+    filler,
+    "## 三、兼职信息维护",
+    "在组织人员管理中打开员工兼职信息维护页签并提交审批。"
+  ].join("\n");
+  fs.mkdirSync(path.join(projDir, "wiki", "knowledge"), { recursive: true });
+  fs.writeFileSync(path.join(projDir, "wiki", "knowledge", "portal-manual.md"), longManual);
+
+  const cachePath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "om-idx-stat-")), "vault-index.json");
+  const idx = loadVaultIndex(vault, { cachePath });
+  assert.ok(!idx.notes.some((n) => /cand-done|cand-drop|index-portal|raw-index/.test(n.path)));
+  const manualEntry = idx.notes.find((n) => n.path.endsWith("portal-manual.md"));
+  assert.ok(manualEntry);
+  assert.ok(manualEntry.embedChunks.length >= 2, "long multi-section manual produces multiple chunks");
+
+  const lateHit = matchVault(idx, "员工兼职信息维护页签怎么操作", { projectId: "plugin-1f6a88a6" });
+  assert.notEqual(lateHit.strength, "none");
+  assert.match(lateHit.hits[0].path, /portal-manual\.md$/u);
+
+  // In-place edit (toggling deprecated: true without adding/removing files) invalidates cache immediately.
+  const updatedManual = longManual.replace("deprecated: false", "deprecated: true");
+  const manualFile = path.join(projDir, "wiki", "knowledge", "portal-manual.md");
+  fs.writeFileSync(manualFile, updatedManual);
+  const future = new Date(Date.now() + 5000);
+  fs.utimesSync(manualFile, future, future);
+  const rebuilt = loadVaultIndex(vault, { cachePath });
+  assert.equal(rebuilt.notes.find((n) => n.path.endsWith("portal-manual.md")).deprecated, true);
+});
+
+test("notes with large pasted code blocks + comments keep prose symbols and fold code boilerplate in embeddings", () => {
+  const fillerVars = Array.from({ length: 45 }, (_, i) => `const dummyBoilerplateVar${i} = ${i};`).join("\n");
+  const content = [
+    "---",
+    'title: "网关重试机制与自定义退避"',
+    "type: knowledge",
+    "---",
+    "",
+    "# 网关重试机制与自定义退避",
+    "",
+    "## 核心代码与注释",
+    "",
+    "当遇到网关限流时使用 `retryWithJitter` 执行指数退避：",
+    "",
+    "```js",
+    "// 关键约束：仅对幂等 GET 请求启用指数退避，防止重复扣款",
+    fillerVars,
+    "```",
+    "",
+    "注意调用方必须传入 `idempotencyKey`。"
+  ].join("\n");
+  const topic = noteTopicText("/v/wiki/knowledge/retry.md", content);
+  assert.match(topic, /retryWithJitter/u);
+  assert.match(topic, /idempotencyKey/u);
+  const chunks = noteEmbedChunks("/v/wiki/knowledge/retry.md", content);
+  assert.match(chunks[0], /仅对幂等 GET 请求启用指数退避/u);
+  assert.doesNotMatch(chunks[0], /dummyBoilerplateVar20/u);
+});
+
+test("short code blocks are embedded as written, trailing # comments are kept, and an uncommented large block leaves its opening", () => {
+  const note = (code) => ["---", 'title: "事务回滚"', "---", "", "# 事务回滚", "", "出错时必须回滚：", "", "```python", code, "```", ""].join("\n");
+  // A short fix pattern (8 lines, no comment line of its own) stays in the vector.
+  const small = noteEmbedChunks("/v/wiki/pitfalls/tx.md", note('conn.execute("BEGIN")\ntry:\n    ...  # 业务读取与统计\n    conn.execute("COMMIT")\n    return result\nexcept Exception:\n    conn.execute("ROLLBACK")\n    raise'));
+  assert.match(small[0], /ROLLBACK/u);
+  assert.match(small[0], /业务读取与统计/u);
+
+  // A large block: whole-line and trailing comments both make the summary; "#include" is not a comment.
+  const filler = Array.from({ length: 30 }, (_, i) => `x${i} = ${i}`).join("\n");
+  const commented = noteEmbedChunks("/v/wiki/pitfalls/tx.md", note(`#include <stdio.h>\n# 整行注释：先开事务\n${filler}\nconn.commit()  # 行尾注释：最后提交`));
+  assert.match(commented[0], /\[code comments: 整行注释：先开事务; 行尾注释：最后提交\]/u);
+  assert.doesNotMatch(commented[0], /include <stdio/u);
+
+  // A large block without any comment keeps its opening instead of vanishing.
+  const bare = noteEmbedChunks("/v/wiki/pitfalls/tx.md", note(`conn.execute("BEGIN")\n${filler}`));
+  assert.match(bare[0], /\[code: conn\.execute\("BEGIN"\)/u);
+  assert.doesNotMatch(bare[0], /x29 = 29/u);
+});
+
+test("deprecated notes are skipped by default, deprioritized on slot truncation, and returned as fallback on explicit recall", () => {
+  const vault = makeVault();
+  const projDir = path.join(vault, "20-Projects", "plugin-1f6a88a6");
+  note(path.join(projDir, "wiki", "knowledge"), "old-menu.md", "旧版公文分发菜单操作指南", "deprecated: true\n", "旧版公文分发入口在系统菜单。");
+  const idx = buildVaultIndex(vault);
+
+  assert.equal(matchVault(idx, "旧版公文分发菜单怎么操作", { projectId: "plugin-1f6a88a6" }).strength, "none");
+  const withDep = matchVault(idx, "旧版公文分发菜单怎么操作", { projectId: "plugin-1f6a88a6", includeDeprecated: true });
+  assert.notEqual(withDep.strength, "none");
+  assert.equal(withDep.hits[0].deprecated, true);
+
+  // Explicit recall falls back to deprecated note and surfaces deprecation warning in prompt notice.
+  const { options } = ctx();
+  const explicit = {
+    recallRecommended: true, captureRecommended: false, reason: "explicit_recall_intent",
+    memoryAction: "recall", scope: "project", trace: { route: "fast_path", decision: "recall" }
+  };
+  enrichDecision(explicit, "回忆一下旧版公文分发菜单怎么操作", { host: "codex", vaultPath: vault, projectId: "plugin-1f6a88a6" }, {}, { ...options, vaultIndex: idx });
+  assert.ok(explicit.deprecatedNotes.some((p) => p.endsWith("old-menu.md")));
+  assert.match(buildLayaActionNotice(explicit), /marked deprecated/u);
+
+  // Truncation keeps active notes ahead of deprecated ones even if deprecated has newer mtime.
+  const { chosen } = allocateIndexSlots([
+    { projectId: "p1", file: "/a/dep.md", mtimeMs: 2000, deprecated: true },
+    { projectId: "p1", file: "/a/active.md", mtimeMs: 1000, deprecated: false }
+  ], 1);
+  assert.equal(chosen.has("/a/active.md"), true);
+  assert.equal(chosen.has("/a/dep.md"), false);
+});
+
+test("buildVaultIndex keeps wiki/archive/ notes and index-* notes below the wiki root, and skips only root sub-indexes", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "om-idx-nav-"));
+  try {
+    const wiki = path.join(root, "20-Projects", "demo-12345678", "wiki");
+    fs.mkdirSync(path.join(wiki, "archive"), { recursive: true });
+    fs.mkdirSync(path.join(wiki, "knowledge"), { recursive: true });
+    fs.writeFileSync(path.join(wiki, "index-portal.md"), "# Portal sub-index\n- [[a]]\n");
+    fs.writeFileSync(path.join(wiki, "archive", "old-scheme.md"), "---\ntitle: 旧方案\n---\n\n# 旧方案\n");
+    fs.writeFileSync(path.join(wiki, "knowledge", "index-rebuild.md"), "---\ntitle: 索引重建踩坑\n---\n\n# 索引重建\n");
+    const paths = buildVaultIndex(root).notes.map((n) => n.path).sort();
+    assert.deepEqual(paths, [
+      "20-Projects/demo-12345678/wiki/archive/old-scheme.md",
+      "20-Projects/demo-12345678/wiki/knowledge/index-rebuild.md"
+    ]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an index rebuild re-reads only notes whose mtime or size changed", () => {
+  const vault = makeVault();
+  const first = buildVaultIndex(vault);
+  assert.ok(first.fileMeta && Object.keys(first.fileMeta).length >= first.n);
+  // Mark every note of the previous index: a reused note keeps the mark, a re-read one does not.
+  const previous = { ...first, notes: first.notes.map((n) => ({ ...n, terms: { ...n.terms, reusedmark: 1 } })) };
+  const edited = first.notes.find((n) => n.path.endsWith("broken-symlink-handling.md"));
+  const file = path.join(vault, edited.path);
+  fs.writeFileSync(file, "---\ntitle: \"Symlink note rewritten\"\ndeprecated: true\n---\n\n# Symlink note rewritten\n\nNew body.\n");
+  const next = buildVaultIndex(vault, { previous });
+  const after = next.notes.find((n) => n.path === edited.path);
+  assert.equal(after.terms.reusedmark, undefined, "the edited note was read again");
+  assert.equal(after.deprecated, true, "its new frontmatter is seen");
+  assert.ok(next.notes.filter((n) => n.path !== edited.path).every((n) => n.terms.reusedmark === 1), "the others were reused");
+  assert.equal(next.n, first.n);
+  // Same answer as a full build, apart from the marks.
+  const full = buildVaultIndex(vault);
+  assert.deepEqual(full.notes.map((n) => n.path).sort(), next.notes.map((n) => n.path).sort());
+  assert.equal(full.fileSignature, next.fileSignature);
+});
+
+test("a stale note survives incremental rebuilds but not the full rebuild when the TTL runs out", () => {
+  const vault = makeVault();
+  const cachePath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "om-idx-ttl-")), "vault-index.json");
+  const first = loadVaultIndex(vault, { cachePath });
+  // Simulate what the incremental check cannot see (content changed, mtime and size restored): the cached
+  // note carries something the file does not say.
+  const rel = first.notes.find((n) => n.path.endsWith("broken-symlink-handling.md")).path;
+  const cached = JSON.parse(fs.readFileSync(cachePath, "utf8"));
+  cached.notes.find((n) => n.path === rel).terms.stalemark = 1;
+  fs.writeFileSync(cachePath, JSON.stringify(cached));
+  const stale = (index) => Boolean(index.notes.find((n) => n.path === rel).terms.stalemark);
+
+  assert.ok(stale(loadVaultIndex(vault, { cachePath, now: Date.now() + 60_000 })), "within the TTL the cache is served");
+  // An edit to another note inside the TTL is incremental: the unchanged note is reused, stale or not.
+  fs.writeFileSync(path.join(vault, "20-Projects", "plugin-1f6a88a6", "wiki", "knowledge", "vault-health-inspection-contract.md"), "---\ntitle: \"Vault 健康审计契约（修订）\"\n---\n\n# 修订\n");
+  const edited = loadVaultIndex(vault, { cachePath, now: Date.now() + 120_000 });
+  assert.ok(stale(edited));
+  assert.equal(edited.fullBuiltAt, first.fullBuiltAt, "an incremental rebuild keeps the last full read time");
+
+  const later = loadVaultIndex(vault, { cachePath, now: first.fullBuiltAt + 11 * 60 * 1000 });
+  assert.ok(!stale(later), "the full rebuild reads every file again");
+  assert.ok(later.fullBuiltAt >= first.fullBuiltAt);
 });

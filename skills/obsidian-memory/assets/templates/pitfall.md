@@ -4,6 +4,7 @@ type: pitfall
 scope: project
 project_id: "{{project_id}}"
 status: active
+deprecated: false
 created: "{{created}}"
 last_updated: "{{last_updated}}"
 sensitivity: internal

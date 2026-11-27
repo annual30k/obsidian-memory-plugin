@@ -4,6 +4,7 @@ type: checkpoint
 scope: project
 project_id: "{{project_id}}"
 status: open
+deprecated: false
 created: "{{created}}"
 last_updated: "{{last_updated}}"
 sensitivity: internal

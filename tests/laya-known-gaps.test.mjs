@@ -18,7 +18,7 @@ import { collectIdleTranscripts } from "../scripts/memory-digest.mjs";
 import { runCli } from "../lib/memory-router/cli.js";
 import { memoryJudgeFromEnv, memoryJudgeModeFromEnv, defaultServiceFilePath } from "../lib/config.js";
 import { MemoryRouter } from "../lib/memory-router/router.js";
-import { allocateIndexSlots } from "../lib/memory-router/vault-index.js";
+import { allocateIndexSlots, INDEX_CACHE_FILE } from "../lib/memory-router/vault-index.js";
 import { buildLayaActionNotice } from "../lib/prompt.js";
 import { collect } from "../scripts/doctor.mjs";
 
@@ -361,7 +361,7 @@ test("doctor reports held findings, a full queue and a truncated index", () => {
   fs.writeFileSync(path.join(laya, "capture-queue", "0123456789abcdef.jsonl"), "x".repeat(2 * 1024 * 1024 + 10));
   fs.writeFileSync(path.join(laya, "capture-queue", "fedcba9876543210.1-2.claimed.jsonl"), "{}\n");
   fs.mkdirSync(path.join(laya, "cache"), { recursive: true });
-  fs.writeFileSync(path.join(laya, "cache", "vault-index.json"), JSON.stringify({ truncated: { "big-00000000": 12 } }));
+  fs.writeFileSync(path.join(laya, "cache", INDEX_CACHE_FILE), JSON.stringify({ truncated: { "big-00000000": 12 } }));
   const r = collect({ home, env: {}, packageVersion: "0.8.0" });
   assert.equal(r.digest.queuedSessions, 2, "claimed segments count as queued sessions");
   const text = r.issues.join("\n");

@@ -237,6 +237,10 @@ test("OpenClaw runtime: a pitfall-looking model answer adds no save hint; an exp
     const explicit = await hook({ prompt: "记住：发布前必须先跑 npm test" }, { agentId: "owner", trigger: "user" });
     assert.ok(explicit.prependContext.includes("[Obsidian Memory hint: the user asked to save something (scope: project). Read the obsidian-memory skill and follow its capture rules: stage a pending-ingest candidate in the project inbox/ before you finish this turn; do not ingest.]"));
 
+    const maint = await hook({ prompt: "现在全部摄入" }, { agentId: "owner", trigger: "user" });
+    assert.ok(maint.prependContext.includes("memory maintenance operation"));
+    assert.ok(!maint.prependContext.includes("memory not needed"));
+
     if (dispose) dispose();
   } finally {
     globalThis.fetch = origFetch;

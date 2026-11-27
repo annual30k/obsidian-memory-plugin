@@ -11,7 +11,7 @@ import { findPython } from "../scripts/python.mjs";
 import { validateEmbedResponse, validateRecallResponse, validateHealthResponse, SchemaValidationError } from "../lib/memory-router/schemas.js";
 import { LayaClient, LayaHttpError } from "../lib/memory-router/client.js";
 import {
-  buildVaultIndex, loadEmbeddingCache, pendingEmbeddings, ensureVaultEmbeddings, matchVaultSemantic, noteEmbedText, MIN_SEMANTIC_CANDIDATES, SMALL_SCOPE_CANDIDATES
+  buildVaultIndex, loadEmbeddingCache, saveEmbeddingCache, pendingEmbeddings, ensureVaultEmbeddings, matchVaultSemantic, noteEmbedText, MIN_SEMANTIC_CANDIDATES, SMALL_SCOPE_CANDIDATES, EMBEDDING_CACHE_VERSION
 } from "../lib/memory-router/vault-index.js";
 import { enrichDecision } from "../lib/memory-router/turn-context.js";
 import { MemoryRouter } from "../lib/memory-router/router.js";
@@ -421,4 +421,63 @@ test("a one-shot hook process that restores health from the cache still asks for
   known.healthInfo = { capabilities: ["recall"] };
   assert.equal(known._supportsEmbed(), false);
   known.dispose();
+});
+
+test("multi-chunk semantic matching finds late sections of long manuals and excludes deprecated notes by default", async () => {
+  const vault = makeVault();
+  const wiki = path.join(vault, "20-Projects", "plugin-1f6a88a6", "wiki");
+  const filler = "General setup overview without special module terms. ".repeat(14);
+  note(path.join(wiki, "knowledge"), "long-handbook.md", "Comprehensive portal handbook", [
+    "## Section 1 Overview",
+    filler,
+    "## Section 4 Ordering Timeline",
+    "This late section explains timeline ordering behavior and server timestamp reconciliation."
+  ].join("\n\n"));
+  note(path.join(wiki, "knowledge"), "retired-ordering.md", "Old ordering notes", "deprecated: true\n\nDeprecated ordering timeline guide.");
+  // Fix frontmatter of retired-ordering.md so deprecated: true is in frontmatter
+  fs.writeFileSync(
+    path.join(wiki, "knowledge", "retired-ordering.md"),
+    "---\ntitle: \"Old ordering notes\"\ntype: knowledge\ndeprecated: true\n---\n\n# Old ordering notes\n\nDeprecated ordering timeline guide.\n"
+  );
+
+  const index = buildVaultIndex(vault);
+  const cache = loadEmbeddingCache(path.join(os.tmpdir(), "unused-chunks.json"), { vaultPath: vault, model: "toy" });
+  const res = await ensureVaultEmbeddings(index, cache, async (texts) => texts.map(toyEmbed), { maxNotes: 32 });
+  assert.equal(res.pending, 0);
+
+  const hit = matchVaultSemantic(index, cache, toyEmbed("ordering"), { projectId: "plugin-1f6a88a6" });
+  assert.ok(hit.hits.some((h) => h.path.endsWith("long-handbook.md")), "late section chunk brings long-handbook into semantic hits");
+  assert.ok(!hit.hits.some((h) => h.path.endsWith("retired-ordering.md")), "deprecated note is excluded by default");
+});
+
+test("the embedding cache round-trips through its binary file, a quarter of the JSON size", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "om-emb-bin-"));
+  const file = path.join(dir, "emb.bin");
+  const vec = (seed) => Array.from({ length: 384 }, (_, i) => Math.sin(seed * 31 + i) / 20);
+  const cache = { version: EMBEDDING_CACHE_VERSION, vaultPath: "/v", model: "m", dim: 384, entries: {
+    "20-Projects/p/wiki/a.md": { hash: "h1", v: vec(1) },
+    "20-Projects/p/wiki/long.md": { hash: "h2", v: vec(2), chunks: [vec(2), vec(3), vec(4)] }
+  } };
+  saveEmbeddingCache(file, cache);
+  const back = loadEmbeddingCache(file, { vaultPath: "/v", model: "m" });
+  assert.equal(back.dim, 384);
+  assert.equal(back.entries["20-Projects/p/wiki/a.md"].hash, "h1");
+  assert.ok(back.entries["20-Projects/p/wiki/a.md"].v instanceof Float32Array);
+  assert.equal(back.entries["20-Projects/p/wiki/long.md"].chunks.length, 3);
+  assert.ok(Math.abs(back.entries["20-Projects/p/wiki/long.md"].chunks[2][7] - vec(4)[7]) < 1e-6);
+  const jsonBytes = JSON.stringify(cache).length;
+  assert.ok(fs.statSync(file).size < jsonBytes / 2, `${fs.statSync(file).size} vs ${jsonBytes}`);
+  // Another model, Vault or a corrupt file starts empty; a JSON cache of this version still loads.
+  assert.equal(Object.keys(loadEmbeddingCache(file, { vaultPath: "/v", model: "other" }).entries).length, 0);
+  fs.writeFileSync(path.join(dir, "bad.bin"), "LAYAEMB1\u0005garbage");
+  assert.equal(Object.keys(loadEmbeddingCache(path.join(dir, "bad.bin"), { vaultPath: "/v", model: "m" }).entries).length, 0);
+  fs.writeFileSync(path.join(dir, "old.json"), JSON.stringify(cache));
+  assert.equal(Object.keys(loadEmbeddingCache(path.join(dir, "old.json"), { vaultPath: "/v", model: "m" }).entries).length, 2);
+  // Loaded Float32Array vectors score like arrays.
+  const idx = { notes: Object.keys(cache.entries).map((p) => ({ path: p, projectId: "p", hash: cache.entries[p].hash })) };
+  const many = { ...back, entries: { ...back.entries } };
+  for (let i = 0; i < 6; i++) { many.entries[`20-Projects/p/wiki/x${i}.md`] = { hash: `x${i}`, v: new Float32Array(vec(10 + i)) }; idx.notes.push({ path: `20-Projects/p/wiki/x${i}.md`, projectId: "p", hash: `x${i}` }); }
+  const m = matchVaultSemantic(idx, many, vec(3), { projectId: "p", thresholds: { weak: -1, strong: -1 } });
+  assert.equal(m.hits[0].path, "20-Projects/p/wiki/long.md", "its third chunk equals the query");
+  fs.rmSync(dir, { recursive: true, force: true });
 });

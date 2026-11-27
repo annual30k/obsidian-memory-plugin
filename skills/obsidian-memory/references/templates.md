@@ -48,10 +48,37 @@ and request a merge decision.
 - Candidate templates begin pending, with `raw_record: null`. Raw uses the same
   candidate ID and includes factual evidence, not a later summary. Attachments
   are quoted full-Vault-relative links and copied bytes, not remote placeholders.
-- Derived notes keep `title/type/status/created/last_updated/sensitivity/sources`.
+- Derived notes keep `title/type/status/created/last_updated/sensitivity/sources`,
+  and `decision`/`pitfall`/`knowledge`/`checkpoint` templates include
+  `deprecated: false` by default (older notes without `deprecated` default to
+  `false`). When marking a derived note deprecated/superseded, set
+  `deprecated: true` and optionally record `deprecated_at` (`YYYY-MM-DD`),
+  `deprecated_reason`, `superseded_by` (quoted Wikilink to the replacement note,
+  or `null`), plus a top `> [!warning]` callout in the body.
   `sources` is a YAML list of quoted full-Vault-relative Raw wikilinks. An
   ingest-created derived page needs at least one verified source; an empty
   bootstrap preference page may have `sources: []` and `status: uninitialized`.
+- Core frontmatter fields are required on every note, whatever its body looks
+  like (Lint reports missing ones; fill them when a note is next edited):
+  - candidate / credential reference: `schema_version`, `id`, `title`, `type`,
+    `scope`, `project_id`, `status`, `created`, `sensitivity`, `source_ref`;
+  - Raw: the same plus `candidate_id` and `captured_at`, with `status: frozen`;
+  - derived (`decision`/`pitfall`/`knowledge`/`checkpoint`): `title`, `type`,
+    `scope`, `project_id`, `status`, `deprecated`, `created`, `last_updated`,
+    `sensitivity`, `sources`.
+  Keep any other existing keys (`origin`, `source_hash`, `aliases`, `tags`, ...).
+- Body headings: a template's `##` sections are the default outline. A page with
+  its own natural structure (an operations manual, SOP or step-by-step guide)
+  may use domain headings instead, such as `一、操作入口` / `二、操作步骤`; keep
+  the template's names for the evidence and related-notes sections when the
+  page has them (`Supporting evidence and inference`, `Related notes`), and do
+  not add empty template sections just to match the outline.
+- For Wiki pages with code snippets or multiple screenshots:
+  - Lead the page and each `##` section with a concise plain-language summary
+    before code blocks. Keep key commented code snippets in `wiki/` using
+    fenced ` ```lang ` blocks; place full long source files or raw logs in `raw/`.
+  - For multi-image pages, maintain an attachment index table near the end:
+    `| File | Screen / Step | Key controls & details |`
 - Template `sensitivity: internal` is only a non-sensitive default. Copy a
   confidential candidate's classification to Raw and any derived content; never
   downgrade it during ingest or merge it into less-private notes. A derived page

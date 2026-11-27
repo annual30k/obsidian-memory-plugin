@@ -4,6 +4,7 @@ type: knowledge
 scope: "{{scope}}"
 project_id: null
 status: active
+deprecated: false
 created: "{{created}}"
 last_updated: "{{last_updated}}"
 sensitivity: internal

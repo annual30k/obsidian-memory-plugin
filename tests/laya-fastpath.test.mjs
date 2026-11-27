@@ -241,3 +241,55 @@ test("queued prompts carry no host-injected context, and a context-only statemen
   assert.equal(rec.prompt, "修一下网关");
   assert.equal(readQueueFile(path.join(queueDir, `${sessionIdFor("hermes", "s-1")}.jsonl`))[0].prompt, "修一下网关");
 });
+
+test("fast path recognizes explicit ingest and lint maintenance commands without false-triggering on pasted code or logs", () => {
+  for (const [text, expectedKind] of [
+    ["现在全部摄入", "ingest"],
+    ["把所有为摄入的都摄入然后进行健康度检查", "ingest_and_lint"],
+    ["处理一下 inbox 里的待审候选", "ingest"],
+    ["知识库健康度检查", "lint"],
+    ["对记忆做一次巡检", "lint"],
+    ["ingest all pending inbox candidates", "ingest"],
+    ["lint the vault", "lint"]
+  ]) {
+    const res = evaluateFastPath(text);
+    assert.equal(res.action, "force_maintenance", text);
+    assert.equal(res.maintenanceRecommended, true, text);
+    assert.equal(res.maintenanceKind, expectedKind, text);
+    assert.equal(res.recallRecommended, false, text);
+    assert.equal(res.captureRecommended, false, text);
+  }
+
+  for (const text of [
+    "我的减脂目标是每天摄入1800大卡",
+    "帮我排查订单数据入库慢的问题",
+    "这个 ETL ingest 脚本为什么 OOM",
+    "npm run lint 失败了，帮我看下报错",
+    "服务健康检查返回 500",
+    "什么是摄入和健康检查？",
+    "看看这段代码：\n```\ningest all pending inbox\n现在全部摄入\n```",
+    // Chinese "why" questions (\b never matches between CJK characters).
+    "为什么这批订单未入库",
+    // Warehouse / business "入库" is not a Vault ingest.
+    "帮我把这批货入库",
+    "请把商品入库流程写成接口",
+    "把扫描到的图片入库",
+    // "维护" / "vault" outside an imperative maintenance request.
+    "obsidian 插件的维护者是谁",
+    "HashiCorp vault 健康检查怎么配",
+    "知识库系统维护方案你给我设计一下"
+  ]) {
+    assert.notEqual(evaluateFastPath(text).action, "force_maintenance", text);
+  }
+});
+
+test("an explicit remember or recall is never swallowed by maintenance wording", () => {
+  assert.equal(evaluateFastPath("记住：我们约定把订单入库前先校验签名").action, "force_capture");
+  assert.equal(evaluateFastPath("记住这个：obsidian vault 维护脚本每周跑一次").action, "force_capture");
+  assert.equal(evaluateFastPath("你还记得上次入库的那条决策吗").action, "force_recall");
+  for (const text of ["把 inbox 候选全部入库", "把这些记忆候选入库", "帮我入库"]) {
+    assert.equal(evaluateFastPath(text).maintenanceKind, "ingest", text);
+  }
+});
+
+
