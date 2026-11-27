@@ -380,7 +380,7 @@ npm run check:antigravity
 | `omem check --vault <路径>` | 只读巡检：模板、断链、废除链接、规模预警、代码漂移、缺核心字段、明文凭据 | 不需要 |
 | `omem export` | 把 Vault 和你的 Laya 标注、判断头打成一个文件，带到另一台电脑（见下节） | 不需要 |
 | `omem import <文件>` | 把导出包合并进本机 Vault；默认只预演，加 `--yes` 才写入 | 不需要 |
-| `omem projects` | 列出项目及其在本机的路径和 Git remote；`bind` 把本机的代码目录绑到已有项目 | 不需要 |
+| `omem projects` | 列出项目及其在本机的路径和 Git remote，并提示疑似重复的项目；`bind` 把本机的代码目录绑到已有项目；`merge <旧id> <新id>` 合并同一份代码的两个项目 | 不需要 |
 
 | `omem templates` | 检查 `00-System/templates/` 的 14 个模板：当前版 / 旧版未改动 / 改过但字段齐全 / 缺核心字段 / 缺失；`install` 补缺失的，`update` 再升级旧版，`--replace-custom` 连改过的也换掉（先备份） | 不需要 |
 | `omem digest` / `omem doctor` | 立即整理已结束的会话 / 只读检查四个宿主的安装和 Vault 路径 | 不需要 |
@@ -427,6 +427,10 @@ omem import ~/Downloads/obsidian-memory-export-20261127-100000.tar.gz.enc --vaul
   新文件加入，`log.md` 追加本地没有的条目，`projects.yaml` 按项目 id 合并路径和远程地址；
   其余内容不同的笔记保留本地版本，导入的那份放到 `00-System/import-conflicts/<时间>/`，
   由 Agent 按入库规则合并。两台电脑都在用时，可以互相导出导入。
+- 同一份代码在两台电脑上各自建了项目（id 不同，常见于不是 git 仓库的目录）时，预演会提示"疑似同一个项目"
+  （名称相同、代码文件夹同名或 remote 相同）。导入后用 `omem projects merge <旧id> <新id>` 合并：
+  笔记移到保留的项目，日志条目合并，内容不同的笔记放进冲突目录，指向旧目录的链接改写，路径和 remote 合并，
+  旧条目删除；默认只预演。
 - 代码在本机另一个路径的项目：Git 项目第一次在该仓库里工作时自动认出；其他项目用
   `--map <项目id>=<本机目录>` 指定，或之后运行 `omem projects bind <项目id> <目录> --yes`。
 - 只差换行符（Windows 的 CRLF 与 LF）的文件视为相同。模板不算冲突：本地是未改动的旧版就换成导入的当前版；

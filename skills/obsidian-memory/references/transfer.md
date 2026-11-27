@@ -54,8 +54,9 @@ local templates lacking core fields. Files that differ only in line endings
 An existing Vault is merged, never overwritten: identical files are skipped,
 new files added, `log.md` entries appended, `projects.yaml` merged by id (roots
 and remotes only added), `.obsidian` kept local. A project the two machines
-created under different ids for the same repository is reported (shared
-remote); ask the user before merging such projects.
+created under different ids for the same code is reported as "probably the
+same project" (same name, a code folder of the same name, or a shared remote);
+ask the user before merging such projects.
 
 ## Projects across machines: `omem projects` (`projects-vault.mjs`)
 
@@ -65,3 +66,12 @@ remote); ask the user before merging such projects.
   existing project (see "Resolve and onboard a project").
 - `omem projects backfill-remotes --yes` records the remotes of every project
   checked out here; offer it once after an upgrade, with the user's consent.
+- `omem projects merge <from> <into>`: the same code registered under two ids
+  (each machine onboarded it under its own path). Only after the user confirms
+  which id survives (usually the one with the notes). Show the dry run, then
+  `--yes`. It moves `<from>`'s notes into `<into>` (a project with no notes
+  just loses its seed files), appends missing log entries, parks differing
+  notes in `00-System/import-conflicts/<time>-merge-<from>/` for you to merge,
+  rewrites links to the old folder, joins roots and remotes, removes the
+  `<from>` entry and logs the merge. `omem projects` lists likely duplicates;
+  `bind` refuses a directory owned by another project and suggests the merge.

@@ -489,3 +489,104 @@ test("omem dispatches the memory tools, points service commands to laya, and lin
   assert.equal(run.status, 0);
   assert.match(run.stdout, /omem projects bind/u);
 });
+
+// ---------------------------------------------------------------- duplicate projects and merge
+
+test("likely duplicates: same id stem, same code folder name, or same remote; import reports them", async () => {
+  const { likelyDuplicates, projectStem, rootNames } = await import("../lib/vault-transfer/projects.js");
+  assert.equal(projectStem("PocketClaw-d65c3b67"), "pocketclaw");
+  assert.deepEqual(rootNames({ roots: ["E:\\Project\\PocketClaw", "/Users/me/openClaw/PocketClaw/"] }), ["pocketclaw"]);
+  const projects = parseProjectsYaml([
+    "projects:",
+    "  - id: pocketclaw-bfd30cc4", "    roots:", "      - E:/Project/PocketClaw", "    scope: private",
+    "  - id: PocketClaw-d65c3b67", "    roots:", "      - /Users/me/openClaw/PocketClaw", "    scope: private",
+    "  - id: app-11111111", "    roots:", "      - /a/app-code", "    scope: private",
+    "  - id: mobile-22222222", "    roots:", "      - D:/work/app-code", "    scope: private",
+    "  - id: x-33333333", "    remotes: [github.com/me/x]", "  - id: y-44444444", "    remotes: [github.com/me/x]",
+    "  - id: unrelated-55555555", "    roots: []"
+  ].join("\n"));
+  assert.deepEqual(likelyDuplicates(projects).map((d) => [d.a, d.b]), [
+    ["pocketclaw-bfd30cc4", "PocketClaw-d65c3b67"], ["app-11111111", "mobile-22222222"], ["x-33333333", "y-44444444"]
+  ]);
+
+  // Import into a Vault that already registered the same code under its own id.
+  const base = tmp("om-dup-");
+  const mac = makeVault(path.join(base, "mac"), { projects: [{ id: "PocketClaw-d65c3b67", roots: ["/Users/me/openClaw/PocketClaw"] }] });
+  const win = makeVault(path.join(base, "win"), { projects: [{ id: "pocketclaw-bfd30cc4", roots: ["E:/Project/PocketClaw"] }] });
+  const plan = planImport(buildExport(mac, { layaDir: path.join(base, "none") }).bundle, { targetVault: win, layaDir: path.join(base, "none") });
+  assert.deepEqual(plan.duplicates, [{ incoming: "PocketClaw-d65c3b67", local: "pocketclaw-bfd30cc4", reasons: ['same name "pocketclaw"'] }]);
+  fs.rmSync(base, { recursive: true, force: true });
+});
+
+test("omem projects merge moves notes, merges logs, parks differing notes, rewrites links and the registry", async () => {
+  const { planMerge, applyMerge, rewriteProjectRefs } = await import("../lib/vault-transfer/project-merge.js");
+  const base = tmp("om-merge-proj-");
+  const v = makeVault(path.join(base, "v"), { projects: [{ id: "old-11111111", roots: ["E:/code/app"] }, { id: "app-22222222", roots: ["/Users/me/app"], remotes: ["github.com/me/app"] }] });
+  const oldDir = path.join(v, "20-Projects", "old-11111111");
+  const newDir = path.join(v, "20-Projects", "app-22222222");
+  write(path.join(oldDir, "wiki", "decisions", "only-old.md"), "---\ntitle: Only old\nproject_id: old-11111111\nsources:\n  - \"[[20-Projects/old-11111111/raw/raw-1]]\"\n---\n\nbody\n");
+  write(path.join(oldDir, "raw", "raw-1.md"), "---\nproject_id: \"old-11111111\"\n---\n\nevidence\n");
+  write(path.join(oldDir, "inbox", "assets", ".keep"), "");
+  fs.appendFileSync(path.join(oldDir, "log.md"), "\n## [2026-11-01] ingest | from old\n\n- x\n");
+  write(path.join(oldDir, "wiki", "knowledge", "note.md"), "---\ntitle: Note\n---\n\nbody\r\n".replace(/\r/gu, "") + "different on old\n");
+  write(path.join(v, "10-Global", "index.md"), "- [[20-Projects/old-11111111/wiki/decisions/only-old]]\n");
+  const now = new Date(2026, 10, 28, 10, 0, 0);
+
+  const plan = planMerge(v, "old-11111111", "app-22222222", { now });
+  assert.equal(plan.emptySource, false);
+  assert.deepEqual(plan.moved.sort(), ["inbox/assets/.keep", "raw/raw-1.md", "wiki/decisions/only-old.md"]);
+  assert.deepEqual(plan.identical, []);
+  assert.deepEqual(plan.logs, [{ rel: "log.md", added: 1 }]);
+  assert.deepEqual(plan.conflicts.map((c) => c.rel).sort(), ["20-Projects/app-22222222/AGENTS.md", "20-Projects/app-22222222/wiki/knowledge/note.md"]);
+  assert.deepEqual(plan.relinked, ["10-Global/index.md"]);
+  assert.deepEqual(plan.rootsAdded, ["E:/code/app"]);
+  assert.ok(fs.existsSync(oldDir), "planning writes nothing");
+
+  applyMerge(plan, { now });
+  assert.ok(!fs.existsSync(oldDir));
+  const moved = read(path.join(newDir, "wiki", "decisions", "only-old.md"));
+  assert.match(moved, /^project_id: app-22222222$/mu);
+  assert.match(moved, /\[\[20-Projects\/app-22222222\/raw\/raw-1\]\]/u);
+  assert.match(read(path.join(newDir, "raw", "raw-1.md")), /^project_id: "app-22222222"$/mu);
+  assert.ok(fs.existsSync(path.join(newDir, "inbox", "assets")));
+  assert.equal(read(path.join(newDir, "wiki", "knowledge", "note.md")), "---\ntitle: Note\n---\n\nbody\n", "target kept");
+  assert.match(read(path.join(v, plan.conflictsDir, "20-Projects", "app-22222222", "wiki", "knowledge", "note.md")), /different on old/u);
+  assert.match(read(path.join(v, plan.conflictsDir, "README.md")), /old-11111111 → app-22222222/u);
+  assert.equal(read(path.join(v, "10-Global", "index.md")), "- [[20-Projects/app-22222222/wiki/decisions/only-old]]\n");
+  const log = read(path.join(newDir, "log.md"));
+  assert.match(log, /## \[2026-11-01\] ingest \| from old/u);
+  assert.match(log, /## \[2026-11-28\] maintenance \| merged project old-11111111 into app-22222222/u);
+  const registry = parseProjectsYaml(read(path.join(v, "00-System", "projects.yaml")));
+  assert.deepEqual(registry.map((p) => p.id), ["app-22222222"]);
+  assert.deepEqual(registry[0].roots, ["/Users/me/app", "E:/code/app"]);
+  assert.deepEqual(registry[0].remotes, ["github.com/me/app"]);
+
+  // Only the folder prefix and the frontmatter id are rewritten.
+  assert.equal(rewriteProjectRefs("old-11111111 is mentioned; see 20-Projects/old-11111111/x", "old-11111111", "app"), "old-11111111 is mentioned; see 20-Projects/app/x");
+  assert.throws(() => planMerge(v, "app-22222222", "app-22222222"), /two different/u);
+  assert.throws(() => planMerge(v, "nope", "app-22222222"), /no project with id nope/u);
+  fs.rmSync(base, { recursive: true, force: true });
+});
+
+test("merging an empty project drops its seed files; bind suggests the merge when a directory is taken", async () => {
+  const { planMerge, applyMerge } = await import("../lib/vault-transfer/project-merge.js");
+  const base = tmp("om-merge-empty-");
+  const code = path.join(base, "PocketClaw");
+  fs.mkdirSync(code);
+  const v = makeVault(path.join(base, "v"), { projects: [{ id: "pocketclaw-bfd30cc4", roots: [code] }, { id: "PocketClaw-d65c3b67", roots: ["/Users/me/openClaw/PocketClaw"] }] });
+  // makeVault seeds a wiki note in every project; an onboarded but unused project has none.
+  fs.rmSync(path.join(v, "20-Projects", "pocketclaw-bfd30cc4", "wiki"), { recursive: true });
+  write(path.join(v, "20-Projects", "pocketclaw-bfd30cc4", "rules.md"), "# Rules for pocketclaw-bfd30cc4\n");
+  assert.match(bindProject(v, "PocketClaw-d65c3b67", code).error, /omem projects merge pocketclaw-bfd30cc4 PocketClaw-d65c3b67/u);
+  const plan = planMerge(v, "pocketclaw-bfd30cc4", "PocketClaw-d65c3b67");
+  assert.equal(plan.emptySource, true);
+  assert.deepEqual(plan.discarded, ["AGENTS.md"], "a seed the target also has is dropped");
+  assert.deepEqual(plan.moved, ["rules.md"], "one the target lacks moves in");
+  assert.deepEqual(plan.conflicts, []);
+  applyMerge(plan);
+  assert.equal(resolveProjectIdFromCwd(v, code), "PocketClaw-d65c3b67");
+  const out = sink();
+  assert.equal(projectsMain(["--vault", v], out, sink()), 0);
+  assert.doesNotMatch(out.text, /Probably the same project/u);
+  fs.rmSync(base, { recursive: true, force: true });
+});
