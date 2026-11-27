@@ -1186,7 +1186,9 @@ test("inference semaphore queues briefly, then answers 503 quickly under a pile-
 });
 
 test("MemoryRouter auto mode end-to-end integration with mock service", async () => {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "laya-router-e2e-"));
+  // The long form of the temp path: on Windows os.tmpdir() can be an 8.3 short name ("RUNNER~1"), which
+  // does not compare as inside the home folder, and the router only trusts a service file under home there.
+  const tmpDir = fs.mkdtempSync(path.join(fs.realpathSync.native(os.tmpdir()), "laya-router-e2e-"));
   const serviceFile = path.join(tmpDir, "service.json");
   const pidFile = path.join(tmpDir, "daemon.pid");
   const token = "router-e2e-token-secret-1234";
