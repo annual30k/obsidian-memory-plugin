@@ -154,7 +154,7 @@ test("pendingCaptureEnforcement fires once for an unstaged explicit request and 
   const pending = pendingCaptureEnforcement({ host: "openclaw", sessionKey: "k1", sessionStatePath: options.sessionStatePath, now: options.now + 5_000 });
   assert.ok(pending);
   assert.match(pending.instruction, /记住：发版前先跑 npm test/u);
-  assert.match(pending.instruction, /app-12345678\/inbox/u);
+  assert.match(pending.instruction, /app-12345678[\\/]inbox/u);
   assert.equal(pendingCaptureEnforcement({ host: "openclaw", sessionKey: "k1", sessionStatePath: options.sessionStatePath, now: options.now + 6_000 }), null, "at most once");
 
   enrichDecision(explicitCapture(), "记住：另一条", turn, {}, { ...options, now: options.now + 60_000 });
@@ -236,7 +236,7 @@ test("judgeTurnEndCapture fires on a long reply with conclusion words, at most o
   const verdict = judgeTurnEndCapture({ ...at(5_000), assistantText: LONG_CONCLUSION });
   assert.ok(verdict);
   assert.equal(verdict.reason, "turn_end_conclusion_words");
-  assert.match(verdict.instruction, /app-12345678\/inbox/u);
+  assert.match(verdict.instruction, /app-12345678[\\/]inbox/u);
   assert.match(verdict.instruction, /If nothing qualifies, finish as you were/u);
   assert.equal(judgeTurnEndCapture({ ...at(6_000), assistantText: LONG_CONCLUSION }), null, "same reply");
   assert.equal(judgeTurnEndCapture({ ...at(7_000), assistantText: LONG_CONCLUSION + " 补跑后又写了一段总结，根因和规则都复述了一遍。" }), null, "changed reply, same turn: locked");

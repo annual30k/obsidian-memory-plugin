@@ -746,10 +746,13 @@ test("npm pack dry run excludes __pycache__ and *.pyc files", () => {
   const cleanEnv = Object.fromEntries(
     Object.entries(process.env).filter(([k]) => !k.startsWith("npm_"))
   );
-  const out = execFileSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
+  // On Windows npm is npm.cmd, which Node only starts through a shell.
+  const win = process.platform === "win32";
+  const out = execFileSync(win ? "npm.cmd" : "npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
     cwd: root,
     encoding: "utf8",
-    env: cleanEnv
+    env: cleanEnv,
+    shell: win
   });
   const parsed = JSON.parse(out);
   const files = parsed[0]?.files || [];

@@ -110,7 +110,8 @@ test("Antigravity onboarding dry-run outputs content without modifying files", a
     await runSetup(["--vault", vault, "--gemini-file", gemini, "--dry-run"], { input: new PassThrough(), output });
     assert.equal(readFileSync(gemini, "utf8"), "# Existing rule\n");
     assert.ok(dryOutput.includes(TRIGGER_INSTRUCTION));
-    assert.ok(dryOutput.includes(vault));
+    // The path is written as JSON data: on Windows its backslashes are escaped.
+    assert.ok(dryOutput.includes(JSON.stringify(vault).slice(1, -1)));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
