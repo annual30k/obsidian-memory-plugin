@@ -367,21 +367,76 @@ npm run check:antigravity
 
 - “把 inbox 里的候选全部入库” / “做一次知识库巡检”：识别为维护操作，按技能里的入库或巡检规则执行；巡检只读，只报告问题，不改文件。
 - “这条约定已经作废了，新的做法是……”：入库时把旧页面标为 `deprecated: true` 并用 `superseded_by` 指向新页面。旧记录保留作历史，日常回忆不再把它当现行依据。
-- “之前那个审批人不在岗的处理办法是什么”这类换了说法的提问：Agent 先用 `rg` 搜原词，搜不到再用 `laya search`，只读命中的那一节。
+- “之前那个审批人不在岗的处理办法是什么”这类换了说法的提问：Agent 先用 `rg` 搜原词，搜不到再用 `omem search`，只读命中的那一节。
 - 入库或丢弃后的候选移到 `inbox/archive/YYYY-MM/`；会话整理查重时会连归档一起查，不会把同一条结论再整理一遍。
 
 ### 记忆相关命令
 
 | 命令 | 作用 | 需要 Laya 服务吗 |
 | --- | --- | --- |
-| `laya search "<提问>" --cwd <项目目录>` | 在当前项目和 Global 的笔记里检索，返回 `文件:起止行号`、`##` 节标题和摘要；默认跳过已废除笔记 | 不需要：没有服务时只做词法检索，有服务时加上语义检索 |
-| `laya index` | 一次补齐所有笔记的向量，适合迁移或大批导入之后运行（几十篇笔记只要几秒） | 需要 |
-| `npm run check:vault -- --vault <路径>` | 只读巡检：模板、断链、废除链接、规模预警、代码漂移、缺核心字段、明文凭据 | 不需要 |
+| `omem search "<提问>" --cwd <项目目录>` | 在当前项目和 Global 的笔记里检索，返回 `文件:起止行号`、`##` 节标题和摘要；默认跳过已废除笔记 | 不需要：没有服务时只做词法检索，有服务时加上语义检索 |
+| `omem index` | 一次补齐所有笔记的向量，适合迁移或大批导入之后运行（几十篇笔记只要几秒） | 需要 |
+| `omem check --vault <路径>` | 只读巡检：模板、断链、废除链接、规模预警、代码漂移、缺核心字段、明文凭据 | 不需要 |
+| `omem export` | 把 Vault 和你的 Laya 标注、判断头打成一个文件，带到另一台电脑（见下节） | 不需要 |
+| `omem import <文件>` | 把导出包合并进本机 Vault；默认只预演，加 `--yes` 才写入 | 不需要 |
+| `omem projects` | 列出项目及其在本机的路径和 Git remote；`bind` 把本机的代码目录绑到已有项目 | 不需要 |
 
-`laya` 命令随 Laya 服务一起安装。没有装 Laya 时，用插件目录里的脚本代替，参数相同：
-`node <插件目录>/scripts/search-vault.mjs "<提问>" --cwd <项目目录>`、`node <插件目录>/scripts/index-vault.mjs`。
+| `omem digest` / `omem doctor` | 立即整理已结束的会话 / 只读检查四个宿主的安装和 Vault 路径 | 不需要 |
+
+命令分两组：**`omem`** 是记忆库工具，不依赖 Laya（只有 `omem index` 要用 Laya 服务的检索模型）；
+**`laya`** 只管 Laya 服务和模型（`install`、`start`、`stop`、`status`、`label`、`train` 等）。
+`omem` 由各宿主的 setup 脚本（以及 `laya install`）链接到 `~/.local/bin`，Windows 上是同目录的 `omem.cmd`；
+`omem help` 列出全部子命令。旧写法 `laya search`、`laya export` 等仍然可用，会转给 `omem`。
+没有 `omem` 命令时，用插件目录里的脚本代替，参数相同，例如
+`node <插件目录>/scripts/omem.mjs export`，或直接 `node <插件目录>/scripts/export-vault.mjs`。
 
 没有安装 Laya 时插件照常可用：记住、回忆、入库、巡检这些明确指令，以及和笔记用词相近的提问，都会给出对应提示；只有换了说法的模糊提问要靠 Laya 的语义匹配，没有 Laya 时按默认流程处理。
+
+### 迁移到另一台电脑（导出 / 导入）
+
+Vault 本身是 Markdown 文件，难点在 `00-System/projects.yaml` 里记的是本机代码目录的绝对路径：
+换一台电脑、换个用户名或目录，项目就认不出来，Agent 还会按新路径再建一个项目。所以项目现在可以
+同时记多台机器的路径，并多记一项 Git 远程地址（`remotes`，如 `github.com/owner/repo`）。
+在另一台电脑上打开同一个仓库时，路径对不上也能按远程地址认出是同一个项目，Agent 只把新路径
+追加进去（`omem projects bind`），不会新建项目。
+
+在原来的电脑上（也可以直接对 Agent 说“导出知识库”）：
+
+```sh
+omem export --out ~/Desktop --encrypt
+```
+
+- 打包全部笔记，以及 `~/.laya` 里你的标注（`labels*.jsonl`）和训练好的判断头；不含 `.obsidian`、
+  `.git`、其他工具的隐藏目录、软链接，以及 venv、缓存、会话状态这些本机文件。
+- 只读，不改 Vault。包里的 `projects.yaml` 会补上各项目的 Git 远程地址。
+- `--encrypt` 用口令加密（scrypt + AES-256-GCM），经聊天软件或网盘传输时建议加上；口令只在终端里
+  输入，或用 `OBSIDIAN_MEMORY_PASSPHRASE` / `--passphrase-file` 提供，不接受命令行参数。
+- `--project <id>` 只导出一个项目（`--no-global` 连 Global 也不带，适合交给别人）；
+  导出时会提示疑似凭据的行（只给位置，不显示内容）。
+
+在新电脑上装好插件后（或对 Agent 说“导入这个记忆包”）：
+
+```sh
+omem import ~/Downloads/obsidian-memory-export-20261127-100000.tar.gz.enc --vault "/path/to/Vault"
+```
+
+- 默认只预演，列出要新增、合并、冲突的文件和每个项目在本机的落点；确认后加 `--yes` 写入。
+- 目标是空目录或不存在：原样还原。目标已经是 Vault：逐文件合并，**不覆盖本地内容**——相同的跳过，
+  新文件加入，`log.md` 追加本地没有的条目，`projects.yaml` 按项目 id 合并路径和远程地址；
+  其余内容不同的笔记保留本地版本，导入的那份放到 `00-System/import-conflicts/<时间>/`，
+  由 Agent 按入库规则合并。两台电脑都在用时，可以互相导出导入。
+- 代码在本机另一个路径的项目：Git 项目第一次在该仓库里工作时自动认出；其他项目用
+  `--map <项目id>=<本机目录>` 指定，或之后运行 `omem projects bind <项目id> <目录> --yes`。
+- 写入后会列出还指向其他 Vault 的宿主及重新配置的命令，再运行 `omem index` 补语义向量；
+  合并了标注时可运行 `laya train`。
+- 包的格式与系统无关（纯 Node 实现，不依赖系统 `tar`），macOS、Windows、Linux 之间可以互相导入；
+  导入时会拒绝越出 Vault 的路径、软链接和校验和对不上的文件。
+
+已在用的 Vault 可以先补一次远程地址（预演后加 `--yes`），之后每台电脑都能认出同一个仓库：
+
+```sh
+omem projects backfill-remotes
+```
 
 ## 验证和排障
 
@@ -525,7 +580,7 @@ npm run laya:uninstall
 
 ### 按 Vault 内容补判断（vaultHints / vaultSemantic）
 
-Laya 只看提示文本，不知道 Vault 里已经有哪些笔记。插件会为 Vault 建一个只读的小索引（`10-Global` 与各项目 `wiki/`、`inbox/` 笔记，缓存在 `~/.laya/cache/vault-index-v<版本>.json`，笔记或目录变化、或 10 分钟后重建，重建时只重读改动过的笔记；最多 20000 篇），并通过 Laya 服务的检索器给每篇笔记算一个向量（标题、aliases、tags、代码标识符加正文开头 600 字，长笔记按 `##` 小节再分段；缓存在同目录的 `vault-embeddings-v<版本>.bin`，每轮最多补 32 段，笔记改动后只重算那一篇；迁移或大批导入后可运行 `laya index` 一次补齐）。每轮判断时，`/judge/recall` 顺带返回本轮提示的向量，路由算它的**突出度**：最相关笔记的相似度减去所有候选笔记相似度的中位数。绝对相似度分不开（同一项目的任务和笔记本来就都相似），突出度问的是"有没有一篇特别对得上"。
+Laya 只看提示文本，不知道 Vault 里已经有哪些笔记。插件会为 Vault 建一个只读的小索引（`10-Global` 与各项目 `wiki/`、`inbox/` 笔记，缓存在 `~/.laya/cache/vault-index-v<版本>.json`，笔记或目录变化、或 10 分钟后重建，重建时只重读改动过的笔记；最多 20000 篇），并通过 Laya 服务的检索器给每篇笔记算一个向量（标题、aliases、tags、代码标识符加正文开头 600 字，长笔记按 `##` 小节再分段；缓存在同目录的 `vault-embeddings-v<版本>.bin`，每轮最多补 32 段，笔记改动后只重算那一篇；迁移或大批导入后可运行 `omem index` 一次补齐）。每轮判断时，`/judge/recall` 顺带返回本轮提示的向量，路由算它的**突出度**：最相关笔记的相似度减去所有候选笔记相似度的中位数。绝对相似度分不开（同一项目的任务和笔记本来就都相似），突出度问的是"有没有一篇特别对得上"。
 
 - **强匹配**（突出度 ≥ 0.048）：改为 `recall`，即使 Laya 分数说不需要；提示里列出最相关的 1–3 条笔记（Vault 相对路径）。
 - **弱匹配**（≥ 0.038）：本轮不再 `skip`（`skip` → `default`），附上笔记；已经明确判定的 `recall` / `capture` 保持不变，只附上相关笔记。
@@ -550,11 +605,11 @@ Laya 只看提示文本，不知道 Vault 里已经有哪些笔记。插件会�
 - **自动暂存**（`autoCapture: "digest"`，默认）：回合结束时钩子只把本轮提问和最终回复（≥ 200 字，脱敏后）追加到本地队列，不调用模型、不让你等。会话空闲 20 分钟后，后台的会话整理把整个会话交给本机的一个大模型 CLI（优先已登录的 Codex，用你在 Codex 里配置的模型；没有就用 Hermes），由它挑出以后的会话还用得上、代码里又看不出来的内容：决策和原因、你定下的做法、你本人的偏好、环境事实，只在会反复踩到时才记技术坑；进度汇报、普通 bug 修复、你的提问本身都不记。每个会话最多 3～5 条（按会话长度），每条是一句能独立看懂的陈述加会话里的原话证据，标 `origin: auto-digest`。调用在后台进行（每个会话约 10～30 秒），关闭钩子和插件、不留会话记录；失败时保留队列下次重试。本机两个 CLI 都没有时，退回按结论词和 Laya 分选轮次的旧办法（原话证据，质量明显较差，`npm run doctor` 会提示）。你不再聊天也会整理（后台等待进程），下一轮 agent 会用一句话告诉你暂存了几条；`npm run doctor` 能看到队列积压和上次整理时间。OpenClaw 的定时任务、心跳和模型报错的回合不入队。Vault 未初始化、项目 `rules.md` 里写了 `no-auto-capture`、含凭据时都不写；项目内容不会进 Global。**会话没有对应项目时不猜范围**：结论先放在 Vault 之外的暂存区，下一轮 agent 会问你归到哪个项目、Global 还是丢弃（关于你本人的偏好，如"我对花生过敏"，直接进 Global）；30 天未处理自动过期。四个宿主都覆盖：Codex `Stop`、OpenClaw `agent_end`、Hermes `post_llm_call`、Antigravity 在下一轮开始时补记上一轮、会话空闲后从会话记录补记最后一轮。
 
 ```sh
-laya digest              # 立即整理已空闲的会话
-laya digest --now        # 包括还没空闲的会话
-laya digest --held       # 因会话没有项目而暂存的发现；--file <id> --project <id>（或 --global）/ --discard <id>
-laya digest --stats      # 候选最后的去向：待审 / 已 ingest / 被删（保留率）
-laya digest --dry-run    # 只报告会写什么
+omem digest              # 立即整理已空闲的会话
+omem digest --now        # 包括还没空闲的会话
+omem digest --held       # 因会话没有项目而暂存的发现；--file <id> --project <id>（或 --global）/ --discard <id>
+omem digest --stats      # 候选最后的去向：待审 / 已 ingest / 被删（保留率）
+omem digest --dry-run    # 只报告会写什么
 ```
 
 | 模式 | 回合内等待 | 额外大模型调用 | 适合 |
@@ -576,7 +631,7 @@ OpenClaw 在 `memoryJudge.autoCapture` 设置；Hermes 在插件设置 `auto_cap
 | `OBSIDIAN_MEMORY_DECISION_LOG` | `decisionLog` | 同上 |
 | `OBSIDIAN_MEMORY_ENDPOINT`、`OBSIDIAN_MEMORY_SERVICE_FILE` | `endpoint`、`serviceFile` | 服务地址 / 服务文件（默认 `$LAYA_HOME/.laya/service.json`，未设 `LAYA_HOME` 时为 `~/.laya/service.json`） |
 
-无效的值会让钩子按严格模式的约定失败（strict 时拦截，其余放行），不会悄悄换成别的设置。`proactiveCapture: false` 关闭全部主动信号（不入队、不整理、不提示）。候选是否有用取决于你整理时留下多少：`laya digest --stats` 统计保留率，`~/.laya/digest-log.jsonl` 记录每次整理写了什么、跳过了什么。
+无效的值会让钩子按严格模式的约定失败（strict 时拦截，其余放行），不会悄悄换成别的设置。`proactiveCapture: false` 关闭全部主动信号（不入队、不整理、不提示）。候选是否有用取决于你整理时留下多少：`omem digest --stats` 统计保留率，`~/.laya/digest-log.jsonl` 记录每次整理写了什么、跳过了什么。
 
 ### 本机文件都在 `~/.laya`
 
@@ -599,7 +654,7 @@ OpenClaw 在 `memoryJudge.autoCapture` 设置；Hermes 在插件设置 `auto_cap
 
 长期规则陈述由 Laya 持久性判断头识别（作者的 520 条真实提示上折外精确率约 60%、召回约 40%）。想让它更准：`laya label` 时用 `d` 标出陈述长期规则的提示，然后 `npm run laya:train -- --target durable`。
 
-日常只需两步：`laya label` 标注新积累的提示，`laya train` 重新训练并自动重启服务（`laya help` 列出全部子命令；对应的 `npm run laya:*` 仍可用）。`laya doctor`（或 `npm run doctor`）只读地列出四个宿主各自的插件版本、安装方式和 Vault 路径，路径不一致、插件落后、软链接到开发目录、Codex 钩子重复注册都会标出来。
+日常只需两步：`laya label` 标注新积累的提示，`laya train` 重新训练并自动重启服务（`laya help` 列出 Laya 的全部子命令；对应的 `npm run laya:*` 仍可用）。`omem doctor`（或 `npm run doctor`）只读地列出四个宿主各自的插件版本、安装方式和 Vault 路径，路径不一致、插件落后、软链接到开发目录、Codex 钩子重复注册都会标出来。
 
 ```sh
 npm run laya:label -- --stats   # 统计：各判断数量、补判断次数、疑似漏判（标注时 d = 这句话陈述了长期规则）

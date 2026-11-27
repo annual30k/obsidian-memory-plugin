@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { findPython } from "./python.mjs";
 import { clearServiceStoppedMarker, markServiceStopped } from "../lib/memory-router/auto-restart.js";
 import { LayaClient } from "../lib/memory-router/client.js";
+import { linkOmem } from "../lib/cli-link.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -380,8 +381,9 @@ export async function installCommand(args = {}) {
     process.stdout.write("Skipping model download as requested (--skip-model).\n");
   }
 
-  // 4. Register global CLI symlink/cmd so `laya` works directly in terminal
+  // 4. Register global CLI symlink/cmd so `laya` (and the memory tools' `omem`) work directly in terminal
   linkGlobalCli(customHome);
+  linkOmem(process.stdout, customHome ? { home: customHome } : {});
 
   process.stdout.write("\nLaya installation complete!\n");
   return 0;
@@ -885,34 +887,32 @@ export function parseArgs(argv) {
   return { command, options };
 }
 
-// Everyday loop: `laya label` -> `laya train` (retrains and restarts the service). The rest are for
-// measuring or tuning. Each forwards its arguments to the script that `npm run laya:<name>` also runs.
+// `laya` manages the Laya service and its model. Everyday loop: `laya label` -> `laya train` (retrains and
+// restarts the service); the rest measure or tune. Each forwards its arguments to the script that
+// `npm run laya:<name>` also runs.
 export const TOOL_COMMANDS = Object.freeze({
   label: "label-laya.mjs",
   train: "train-laya.mjs",
   eval: "eval-laya.mjs",
   bench: "bench-laya.mjs",
   tune: "tune-laya.mjs",
-  "calibrate-vault": "calibrate-vault-hints.mjs",
-  doctor: "doctor.mjs",
-  digest: "memory-digest.mjs",
-  search: "search-vault.mjs",
-  index: "index-vault.mjs"
+  "calibrate-vault": "calibrate-vault-hints.mjs"
 });
 
-const TOOL_HELP = `Service:   laya install | start | stop | status | uninstall
+// The memory tools moved to `omem` (they do not need Laya). `laya <name>` keeps working for them.
+export const OMEM_ALIASES = Object.freeze(["doctor", "digest", "search", "index", "export", "import", "projects"]);
+
+const TOOL_HELP = `laya — the local Laya service and its model (memory tools are under \`omem\`)
+
+Service:   laya install | start | stop | status | uninstall
 Everyday:  laya label            label logged prompts (y look up / c save / n none / x can't tell)
            laya train            retrain the recall head from your labels, then restart the service
-Memory:    laya search "<query>" search Vault sections (returns file, ## section & line range)
-           laya index            embed every Vault note now (after a migration or a large import)
-           laya digest           stage Inbox candidates from finished sessions now (--now, --dry-run)
-           laya digest --held    findings held because their session had no project; file or discard them
-           laya digest --stats   what became of the digest's candidates (pending / ingested / removed)
-Check:     laya doctor           where each host is installed and which Vault it uses
-           laya eval             accuracy on a labelled set (--data file --vault dir --errors)
+Measure:   laya eval             accuracy on a labelled set (--data file --vault dir --errors)
 Advanced:  laya tune             compare Laya question wordings
            laya calibrate-vault  calibrate Vault-hint thresholds
            laya bench            end-to-end latency benchmark
+
+Memory tools: omem export | import | projects | search | index | digest | doctor | check  (omem help)
 `;
 
 function runTool(name, rest) {
@@ -929,6 +929,10 @@ export async function run() {
   }
   if (Object.hasOwn(TOOL_COMMANDS, first)) {
     process.exit(runTool(first, rest));
+  }
+  if (OMEM_ALIASES.includes(first)) {
+    const { runOmem } = await import("./omem.mjs");
+    process.exit(runOmem([first, ...rest]));
   }
   const { command, options } = parseArgs(process.argv.slice(2));
 

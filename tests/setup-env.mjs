@@ -22,3 +22,5 @@ process.env.CODEX_HOME = process.env.OBSIDIAN_MEMORY_TEST_CACHE;
 if (!process.env.OBSIDIAN_MEMORY_TEST_KEEP_SERVICE) {
   process.env.OBSIDIAN_MEMORY_SERVICE_FILE = join(process.env.OBSIDIAN_MEMORY_TEST_CACHE, "no-laya-service.json");
 }
+// Setup scripts and `laya install` link the `omem` command; keep it out of the real ~/.local/bin.
+process.env.OBSIDIAN_MEMORY_BIN_DIR = join(process.env.OBSIDIAN_MEMORY_TEST_CACHE, "bin");

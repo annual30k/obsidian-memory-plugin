@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 import { INDEX_CACHE_FILE, vaultPathFromRuleText } from "../lib/memory-router/vault-index.js";
 import { layaHome } from "../lib/memory-router/paths.js";
 import { resolveExtractor, EXTRACTORS } from "../lib/memory-router/llm-extract.js";
+import { binDir } from "../lib/cli-link.js";
 
 const PLUGIN_ID = "obsidian-memory-plugin";
 
@@ -217,16 +218,24 @@ export function collect({ home = os.homedir(), env = process.env, packageVersion
     }
   }
   if (digest.queuedSessions && digest.oldestQueuedMs > DAY_MS && !digest.waiterAlive) {
-    issues.push(`Session digest: ${digest.queuedSessions} queued session(s), oldest ${Math.round(digest.oldestQueuedMs / 3600000)} h, and no digest is waiting; run 'laya digest' to process them`);
+    issues.push(`Session digest: ${digest.queuedSessions} queued session(s), oldest ${Math.round(digest.oldestQueuedMs / 3600000)} h, and no digest is waiting; run 'omem digest' to process them`);
   }
   if (digest.errors7d) issues.push(`Session digest: ${digest.errors7d} run(s) in the last 7 days could not finish (see ${path.join(layaDir, "digest-log.jsonl")})`);
   if (!digest.extractor && wanted !== "off" && hosts.some((h) => h.enabled || h.install.installed)) issues.push("Session digest: no Codex (logged in) or Hermes CLI found for model extraction, so automatic capture falls back to keyword selection (mostly status reports); install or log in to one, or set OBSIDIAN_MEMORY_DIGEST_EXTRACTOR=off to accept that");
   if (digest.extractFailures7d) issues.push(`Session digest: model extraction failed ${digest.extractFailures7d} time(s) in the last 7 days (queues are kept and retried); last error: ${digest.lastExtractError}`);
-  if (digest.held) issues.push(`Session digest: ${digest.held} finding(s) held because their session had no project; list them with 'laya digest --held', then file or discard each`);
-  if (digest.oversizedQueues) issues.push(`Session digest: ${digest.oversizedQueues} session queue(s) reached 2 MB and stopped taking turns; run 'laya digest --now'`);
+  if (digest.held) issues.push(`Session digest: ${digest.held} finding(s) held because their session had no project; list them with 'omem digest --held', then file or discard each`);
+  if (digest.oversizedQueues) issues.push(`Session digest: ${digest.oversizedQueues} session queue(s) reached 2 MB and stopped taking turns; run 'omem digest --now'`);
   if (digest.indexTruncated) issues.push(`Vault index: over 2000 notes, so some were left out of Vault hints (${Object.entries(digest.indexTruncated).map(([id, n]) => `${id} ${n}`).join(", ")}); newest notes of every project are kept`);
   if (laya.cli && !fs.existsSync(path.resolve(path.join(home, ".local", "bin"), laya.cli))) issues.push(`laya CLI points to a missing file: ${laya.cli}`);
-  return { packageVersion, envVault, hosts, laya, digest, issues };
+  // The `omem` memory-tools command, linked by every host's setup (a .cmd shim on Windows).
+  const omemDir = binDir({ env, home });
+  const omem = { path: path.join(omemDir, process.platform === "win32" ? "omem.cmd" : "omem"), target: null, linked: false };
+  try {
+    if (process.platform === "win32") { omem.target = /node "([^"]+)"/u.exec(fs.readFileSync(omem.path, "utf8"))?.[1] ?? null; omem.linked = true; }
+    else { omem.target = path.resolve(omemDir, fs.readlinkSync(omem.path)); omem.linked = true; }
+  } catch {}
+  if (omem.linked && omem.target && !fs.existsSync(omem.target)) issues.push(`omem command points to a missing file: ${omem.target}; re-run a host setup script`);
+  return { packageVersion, envVault, hosts, laya, omem, digest, issues };
 }
 
 function render(report, stdout) {
@@ -244,6 +253,8 @@ function render(report, stdout) {
   const l = report.laya;
   w(`\nLaya: service ${l.service ? `registered at ${l.service.endpoint} (pid ${l.service.pid})` : "not running"}; ` +
     `recall head ${l.userHead ?? "bundled / zero-shot"}; labels ${l.labels.length ? l.labels.join(", ") : "none"}; CLI -> ${l.cli ?? "(not linked)"}`);
+  const o = report.omem;
+  if (o) w(`omem command: ${o.linked ? `${o.path} -> ${o.target ?? "?"}` : "not linked (any host setup script links it)"}`);
   const d = report.digest;
   w(`Session digest: ${d.queuedSessions} queued session(s)${d.waiterAlive ? ", waiting to digest" : ""}; last run ${d.lastRun ?? "never"}; ` +
     `${d.written7d} candidate(s) staged in the last 7 days${d.held ? `; ${d.held} held (no project)` : ""}; ` +

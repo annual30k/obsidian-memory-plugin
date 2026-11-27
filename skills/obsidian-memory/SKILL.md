@@ -98,21 +98,28 @@ path; direct file access is never permission to inspect unrelated Vault content.
    workspace (or configured `projectRoot`) to a physical path. Use its Git root
    when available, otherwise the actual project directory. Match by the longest
    configured directory root, with path-segment boundaries rather than a bare
-   string prefix. If ID and root disagree, stop and clarify.
+   string prefix. With no root match, a project whose `remotes` include the
+   checkout's Git origin is the same repository at another path (another
+   machine sharing this Vault). If ID and root disagree, stop and clarify.
 3. The OpenClaw Gateway cwd or Agent workspace is not automatically a code
    project. If the target cannot be established, ask for it instead of scanning
    other projects. Do not read unrelated private scopes to find a likely match.
-4. On first use of a confirmed, unbound code project, onboard only that project:
+4. A checkout matched only by its remote is bound, not onboarded: run
+   `omem projects bind <id> <git root> --yes`, which appends this root (and
+   remote) to that project, and give a one-line receipt. Never create a second
+   ID for a repository whose remote is already registered.
+5. On first use of a confirmed, unbound code project, onboard only that project:
    a filesystem-safe root name plus the first eight SHA-256 characters of its
    physical absolute path is the `project_id`. Append its private mapping
    without changing existing entries. If that ID belongs to another root, stop.
-5. Create missing project directories and seed AGENTS/rules/index/log from Vault
+   Then `omem projects bind <id> <git root> --yes` records its Git remote.
+6. Create missing project directories and seed AGENTS/rules/index/log from Vault
    templates, filling only known identity fields. Template selection and missing
    template handling are in [references/templates.md](references/templates.md).
    The unit contains `AGENTS.md`, `rules.md`, `inbox/assets/`, `raw/assets/`,
    baseline `wiki/decisions/`, `wiki/pitfalls/`, `wiki/knowledge/`,
    `checkpoints/`, `index.md` and `log.md`.
-6. Give a short first-binding receipt. Never bulk-discover projects, create a
+7. Give a short first-binding receipt. Never bulk-discover projects, create a
    separate nested binding when its Git root is bound, or change an existing
    binding without explicit user approval. Do not invent project facts.
 
@@ -124,7 +131,7 @@ path; direct file access is never permission to inspect unrelated Vault content.
   terms). For broad exploration read `index.md` first (a split index routes to
   one `wiki/index-<module>.md`); read only necessary results and useful linked
   evidence. When the user's wording differs from the notes' or `rg` finds
-  nothing, use `laya search` and read only the line range it returns
+  nothing, use `omem search` and read only the line range it returns
   ([references/tools.md](references/tools.md)). Use app-managed search only when
   it is explicitly needed and the CLI is available.
 - On multi-image notes read the text and attachment index first; open only the
@@ -291,10 +298,20 @@ so, and when another writer is active, defer and report the conflict.
   missing concepts and partial work.
   A request to check is read-only; apply repairs only when requested within a
   clear scope. Never automatically delete or reorganize the Vault.
-- After an ingest that added or rewrote many notes, suggest `laya index`
+- After an ingest that added or rewrote many notes, suggest `omem index`
   ([references/tools.md](references/tools.md)).
 - Index is categorized navigation; log is append-only chronology. Use headings
   `## [YYYY-MM-DD] operation | title` with actual dates.
+
+## Move the memory to another machine
+
+Only on the user's request ("导出知识库", "导入这个记忆包", "迁移到另一台电脑"):
+`omem export` packs the Vault and the user's Laya labels/heads into one file;
+`omem import <file>` merges it into this machine's Vault without overwriting
+local notes. Always show the import dry run first and apply with `--yes` only
+after the user confirms. Never ask for or type a bundle passphrase yourself.
+Steps, options and follow-up (conflict copies, project mapping, host setup) are
+in [references/transfer.md](references/transfer.md).
 
 ## Hard boundaries
 
@@ -307,7 +324,8 @@ so, and when another writer is active, defer and report the conflict.
 - Never automatically move private content into Shared. Shared needs explicit
   approval and de-identification.
 - Bootstrap may create authorized system files; first-use binding may append
-  only the current project's mapping. Otherwise write only within the current
+  only the current project's mapping (or this machine's root and remote to the
+  project its Git remote matches). Otherwise write only within the current
   project, appropriate Global, or explicitly approved Shared scope.
 - Before every filesystem operation, resolve both the Vault root and target to
   physical paths. Do not follow escaping paths/symlinks, overwrite human

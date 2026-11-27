@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 /**
- * Fill the Vault's note-vector cache in one go (`laya index`).
+ * Fill the Vault's note-vector cache in one go (`omem index`).
  *
  * Each turn's hook embeds at most one batch of 32 texts, so a large or newly migrated Vault takes hundreds
  * of turns to be fully covered, and semantic hints only see the covered part meanwhile. This runs the
  * same indexing outside a turn until nothing is pending (or the time budget runs out), with progress.
  * Read-only for the Vault; writes only the index and embedding caches under ~/.laya/cache.
  *
- *   laya index [--vault <path>] [--max-minutes 30]
+ *   omem index [--vault <path>] [--max-minutes 30]
  */
 import path from "node:path";
 import { realpathSync } from "node:fs";
@@ -70,7 +70,7 @@ export async function indexVault({
 export async function main(argv = process.argv.slice(2), out = process.stdout, err = process.stderr) {
   const opts = parseArgs(argv);
   if (opts.help) {
-    out.write("Usage: laya index [--vault <path>] [--max-minutes 30]\nEmbeds every Vault note that has no vector yet, so semantic hints cover the whole Vault now.\n");
+    out.write("Usage: omem index [--vault <path>] [--max-minutes 30]\nEmbeds every Vault note that has no vector yet, so semantic hints cover the whole Vault now.\n");
     return 0;
   }
   const vaultPath = opts.vaultPath ? path.resolve(opts.vaultPath) : resolveVaultPath();
@@ -92,7 +92,7 @@ export async function main(argv = process.argv.slice(2), out = process.stdout, e
       }
     });
     out.write(`Vault index: ${result.notes} notes; embedded ${result.embedded} notes (${result.texts} texts) in ${result.seconds.toFixed(1)} s; ${result.pending} still pending.\n`);
-    if (result.stopped === "time_budget") out.write("Stopped at the time budget; run `laya index` again to continue.\n");
+    if (result.stopped === "time_budget") out.write("Stopped at the time budget; run `omem index` again to continue.\n");
     if (result.stopped === "no_progress") { err.write("Stopped: the retriever returned no usable vectors.\n"); return 1; }
     return 0;
   } finally {

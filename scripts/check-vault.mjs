@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeprecatedFrontmatter, parseFrontmatter } from "../lib/memory-router/vault-index.js";
+import { parseProjectsYaml as parseProjectEntries } from "../lib/vault-transfer/projects.js";
 
 const SCALE_WIKI_THRESHOLD = 40;
 const SCALE_INDEX_LINES_THRESHOLD = 250;
@@ -131,58 +132,8 @@ const SECRET_PATTERNS = [
 ];
 
 export function parseProjectsYaml(content) {
-  const projects = [];
-  const lines = content.split(/\r?\n/);
-  let current = null;
-  let inRoots = false;
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-
-    // Any non-space id: "集团信创OA-c9a48417" is a valid project id. An ASCII-only pattern skipped such
-    // entries and appended their roots to the project above.
-    const idMatch = line.match(/^(\s*)-\s+id:\s*["']?([^"'\s#]+)["']?/u);
-    if (idMatch) {
-      if (current) projects.push(current);
-      current = { id: idMatch[2], roots: [], scope: "private" };
-      inRoots = false;
-      continue;
-    }
-
-    if (!current) continue;
-
-    const scopeMatch = line.match(/^\s+scope:\s*["']?([a-zA-Z0-9_\-]+)["']?/);
-    if (scopeMatch) {
-      current.scope = scopeMatch[1];
-      inRoots = false;
-      continue;
-    }
-
-    const rootsEmpty = line.match(/^\s+roots:\s*\[\s*\]/);
-    if (rootsEmpty) {
-      current.roots = [];
-      inRoots = false;
-      continue;
-    }
-
-    const rootsStart = line.match(/^\s+roots:\s*$/);
-    if (rootsStart) {
-      inRoots = true;
-      continue;
-    }
-
-    if (inRoots) {
-      const rootItem = line.match(/^\s+-\s+["']?([^"']+)["']?/);
-      if (rootItem) {
-        current.roots.push(rootItem[1].trim());
-      } else {
-        inRoots = false;
-      }
-    }
-  }
-  if (current) projects.push(current);
-  return projects;
+  // One parser for the whole package (roots, remotes, scope), in lib/vault-transfer/projects.js.
+  return parseProjectEntries(content).map(({ id, roots, remotes, scope }) => ({ id, roots, remotes, scope }));
 }
 
 export function extractVaultFromRuleFile(filePath) {
@@ -266,10 +217,10 @@ export function checkVault(vaultPath) {
       const content = readFileSync(projectsYamlPath, "utf8");
       result.system.registeredProjects = parseProjectsYaml(content);
       for (const proj of result.system.registeredProjects) {
-        for (const root of proj.roots) {
-          if (!existsSync(root)) {
-            result.system.warnings.push(`Project [${proj.id}] configured root does not exist on disk: ${root}`);
-          }
+        // A Vault shared between machines lists every machine's checkout; only a project with roots of
+        // which none exists here is worth a warning (bind this machine's copy with `omem projects bind`).
+        if (proj.roots.length > 0 && !proj.roots.some((root) => existsSync(root))) {
+          result.system.warnings.push(`Project [${proj.id}] has no configured root on this machine: ${proj.roots.join(", ")}`);
         }
       }
     } catch (error) {

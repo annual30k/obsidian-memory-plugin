@@ -13,6 +13,7 @@ import {
   updateContentWithBlock,
   validateVaultPath
 } from "../lib/managed-block.js";
+import { linkOmem } from "../lib/cli-link.js";
 
 export { END_MARKER, managedBlock, START_MARKER, TRIGGER_INSTRUCTION, validateVaultPath };
 
@@ -216,6 +217,7 @@ export async function runSetup(args, { input = process.stdin, output = process.s
       output.write(`Registered the UserPromptSubmit and Stop hooks in ${hooksPath}. Approve them in Codex (/hooks), and do not also enable the plugin's hooks.\n`);
     }
     output.write("Start a new Codex task to use the updated instruction.\n");
+    linkOmem(output);
     if (!options.configureHooks) {
       output.write('One more step: in the Codex app open Plugins > Obsidian Memory and choose "Trust all" under Hooks (or run /hooks in the Codex CLI). Until then Codex gets no memory hints and nothing is captured at the end of a turn.\n');
     }

@@ -2,14 +2,14 @@
 /**
  * Session digest runner: turns idle capture queues into pending-ingest Inbox candidates.
  *
- *   laya digest                          digest sessions idle for 20 minutes
- *   laya digest --now                    digest every queued session now
- *   laya digest --dry-run                report what would be written, write nothing, keep the queues
- *   laya digest --json                   machine-readable output
- *   laya digest --held                   findings held because their session had no project
- *   laya digest --file <id> --project <projectId> | --global     file a held finding
- *   laya digest --discard <id>           drop a held finding
- *   laya digest --stats [--days N]       what became of the digest's candidates (pending / ingested / removed)
+ *   omem digest                          digest sessions idle for 20 minutes
+ *   omem digest --now                    digest every queued session now
+ *   omem digest --dry-run                report what would be written, write nothing, keep the queues
+ *   omem digest --json                   machine-readable output
+ *   omem digest --held                   findings held because their session had no project
+ *   omem digest --file <id> --project <projectId> | --global     file a held finding
+ *   omem digest --discard <id>           drop a held finding
+ *   omem digest --stats [--days N]       what became of the digest's candidates (pending / ingested / removed)
  *
  * Hooks start it in the background with --auto (quiet). One run at a time (lock under ~/.laya/state).
  * With --wait (started by a hook while every queued session is still active) it stays in the background,
@@ -164,7 +164,7 @@ function firstLine(text, max = 90) {
 function printSummary(summary, args, out) {
   out.write(`Sessions digested: ${summary.processed}${args.dryRun ? " (dry run, nothing written)" : ""}\n`);
   for (const w of summary.written) out.write(`  + ${w.path} (${KIND_LABEL[w.kind] ?? w.kind})\n`);
-  if (summary.held.length) out.write(`  held (no project, waiting for your decision): ${summary.held.map((h) => h.id).join(", ")}; see: laya digest --held\n`);
+  if (summary.held.length) out.write(`  held (no project, waiting for your decision): ${summary.held.map((h) => h.id).join(", ")}; see: omem digest --held\n`);
   const reasons = {};
   for (const s of summary.skipped) if (s.reason !== "held_no_project") reasons[s.reason] = (reasons[s.reason] ?? 0) + 1;
   if (Object.keys(reasons).length) out.write(`  skipped: ${Object.entries(reasons).map(([k, v]) => `${k} ${v}`).join(", ")}\n`);
@@ -194,7 +194,7 @@ async function heldCommands(args, out) {
     out.write(`  ${h.id}  ${h.heldAt.slice(0, 16).replace("T", " ")}  ${h.host}  ${KIND_LABEL[h.item.kind] ?? h.item.kind}\n`);
     out.write(`      ${firstLine(h.item.kind === "turn" ? h.item.reply : h.item.prompt)}\n`);
   }
-  out.write("File one: laya digest --file <id> --project <projectId> (or --global); drop one: laya digest --discard <id>\n");
+  out.write("File one: omem digest --file <id> --project <projectId> (or --global); drop one: omem digest --discard <id>\n");
   return 0;
 }
 

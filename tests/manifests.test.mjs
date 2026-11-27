@@ -44,10 +44,13 @@ test("the always-on rule has one source and the docs quote it verbatim", async (
   assert.ok(!/TRIGGER_INSTRUCTION = \(/u.test(read("__init__.py")), "Hermes reads lib/guidance.json instead of a copy");
 });
 
-test("every `laya <tool>` subcommand forwards to an existing script that npm run also exposes", async () => {
-  const { TOOL_COMMANDS } = await import("../scripts/laya-service.mjs");
+test("every `laya <tool>` and `omem <tool>` subcommand forwards to an existing script that npm run also exposes", async () => {
+  const { TOOL_COMMANDS, OMEM_ALIASES } = await import("../scripts/laya-service.mjs");
+  const { OMEM_COMMANDS } = await import("../scripts/omem.mjs");
   const scripts = JSON.parse(read("package.json")).scripts;
-  for (const [name, file] of Object.entries(TOOL_COMMANDS)) {
+  for (const name of OMEM_ALIASES) assert.ok(Object.hasOwn(OMEM_COMMANDS, name), `laya ${name} still reaches omem ${name}`);
+  assert.equal(JSON.parse(read("package.json")).bin.omem, "./scripts/omem.mjs");
+  for (const [name, file] of [...Object.entries(TOOL_COMMANDS), ...Object.entries(OMEM_COMMANDS)]) {
     assert.ok(fs.existsSync(path.join(root, "scripts", file)), `${name} -> scripts/${file}`);
     assert.ok(Object.values(scripts).some((cmd) => cmd.includes(`scripts/${file}`)), `npm script for ${file}`);
   }
