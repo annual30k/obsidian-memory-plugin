@@ -10,6 +10,7 @@ from the plugin root (the folder that contains `skills/`, two folders above
 Only `omem index` needs the Laya service.
 
 Export, import and cross-machine project binding are in [transfer.md](transfer.md).
+Template install and checks (`omem templates`) are in [templates.md](templates.md).
 
 ## Section search: `omem search` (`search-vault.mjs`)
 
@@ -31,7 +32,8 @@ Export, import and cross-machine project binding are in [transfer.md](transfer.m
 `node <plugin root>/scripts/check-vault.mjs --vault <vault path>`
 (or `npm run check:vault -- --vault <path>` in the plugin folder)
 
-Run it first on a lint request and report its findings. It checks templates,
+Run it first on a lint request and report its findings. It checks templates
+(present, and carrying their core fields),
 broken links and sources, `superseded_by` targets of deprecated pages,
 sub-index links, scale thresholds (>= 40 Wiki notes or >= 250 `index.md` lines
 without a split), wiki references to repository files that no longer exist

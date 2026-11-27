@@ -4,6 +4,7 @@ import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeprecatedFrontmatter, parseFrontmatter } from "../lib/memory-router/vault-index.js";
 import { parseProjectsYaml as parseProjectEntries } from "../lib/vault-transfer/projects.js";
+import { TEMPLATE_NAMES, templateStatus } from "../lib/vault-templates.js";
 
 const SCALE_WIKI_THRESHOLD = 40;
 const SCALE_INDEX_LINES_THRESHOLD = 250;
@@ -108,22 +109,7 @@ function scanInboxStats(inboxDir, label) {
   return out;
 }
 
-export const EXPECTED_TEMPLATES = [
-  "checkpoint.md",
-  "credential-reference.md",
-  "decision.md",
-  "global-index.md",
-  "global-log.md",
-  "global-preferences.md",
-  "inbox-memory-candidate.md",
-  "knowledge.md",
-  "pitfall.md",
-  "project-agent.md",
-  "project-index.md",
-  "project-log.md",
-  "project-rules.md",
-  "raw-task-record.md"
-];
+export const EXPECTED_TEMPLATES = TEMPLATE_NAMES;
 
 const SECRET_PATTERNS = [
   { name: "API Key / Token", regex: /(?:api[_-]?key|secret_key|private[_-]?key|bearer)\s*[:=]\s*["']([A-Za-z0-9_\-\.]{16,})["']/i },
@@ -238,7 +224,18 @@ export function checkVault(vaultPath) {
       }
     }
     if (result.system.missingTemplates.length > 0) {
-      result.issues.push(`Missing templates in 00-System/templates: ${result.system.missingTemplates.join(", ")}`);
+      result.issues.push(`Missing templates in 00-System/templates: ${result.system.missingTemplates.join(", ")} (omem templates install --yes adds them)`);
+    }
+    // Content, not just presence: notes are created from these, so one without the core fields (or with
+    // a broken placeholder) yields notes Lint, recall and the digest cannot fully use.
+    result.system.templates = templateStatus(vaultPath).filter((t) => t.state !== "missing");
+    const incompatible = result.system.templates.filter((t) => t.state === "incompatible");
+    const outdated = result.system.templates.filter((t) => t.state === "outdated");
+    if (incompatible.length) {
+      result.issues.push(`Templates without the core fields: ${incompatible.map((t) => `${t.name} (${[...t.missingFields.map((f) => `no ${f}`), ...t.problems.map((p) => p.replace(/ \(.*\)$/u, ""))].join(", ")})`).join("; ")}. Run 'omem templates' and 'omem templates update --replace-custom' (backs them up first)`);
+    }
+    if (outdated.length) {
+      result.system.warnings.push(`Templates from an older plugin version (never edited): ${outdated.map((t) => t.name).join(", ")}; 'omem templates update --yes' upgrades them`);
     }
   } else {
     result.issues.push("Missing 00-System/templates directory");
@@ -501,7 +498,9 @@ export function formatReport(result) {
   lines.push(`  Root AGENTS.md: ${result.system.agents ? "[OK]" : "[FAIL]"}`);
   lines.push(`  Root Home.md: ${result.system.home ? "[OK]" : "[WARN]"}`);
   lines.push(`  projects.yaml: ${result.system.projectsYaml ? `[OK] (${result.system.registeredProjects.length} projects registered)` : "[FAIL]"}`);
-  lines.push(`  Templates (14 expected): ${result.system.missingTemplates.length === 0 ? "[OK] (all 14 present)" : `[FAIL] Missing: ${result.system.missingTemplates.join(", ")}`}`);
+  const tStates = (result.system.templates ?? []).reduce((m, t) => ({ ...m, [t.state]: (m[t.state] ?? 0) + 1 }), {});
+  const tSummary = Object.entries(tStates).map(([k, n]) => `${n} ${k}`).join(", ");
+  lines.push(`  Templates (14 expected): ${result.system.missingTemplates.length === 0 && !tStates.incompatible ? `[OK] (${tSummary || "all 14 present"})` : `[FAIL] ${[result.system.missingTemplates.length ? `Missing: ${result.system.missingTemplates.join(", ")}` : "", tStates.incompatible ? `${tSummary}` : ""].filter(Boolean).join("; ")}`}`);
   for (const w of result.system.warnings) {
     lines.push(`  [WARN] ${w}`);
   }

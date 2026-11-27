@@ -44,6 +44,13 @@ are `omem` subcommands and need no Laya service; without the `omem` command run
      when every pair is resolved;
    - `omem index` for semantic hints, `laya train` when labels were merged.
 
+Templates are never conflicts: an unedited older local template is upgraded to
+the bundle's current one; an edited or hand-written one is kept and listed, and
+`--use-incoming-templates` replaces it (backed up to
+`00-System/template-backups/<time>/`). Offer that flag when the dry run shows
+local templates lacking core fields. Files that differ only in line endings
+(Windows CRLF) count as identical.
+
 An existing Vault is merged, never overwritten: identical files are skipped,
 new files added, `log.md` entries appended, `projects.yaml` merged by id (roots
 and remotes only added), `.obsidian` kept local. A project the two machines

@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { validateVaultPath } from "../lib/managed-block.js";
 import { linkOmem } from "../lib/cli-link.js";
+import { templateNotice } from "../lib/vault-templates.js";
 
 export const HERMES_PLUGIN_ID = "obsidian-memory-plugin";
 export const HERMES_VAULT_KEY = `plugins.entries.${HERMES_PLUGIN_ID}.settings.vault_path`;
@@ -64,6 +65,8 @@ export async function runSetup(args, { input = process.stdin, output = process.s
     if (result.status !== 0) throw new TypeError((result.stderr || result.stdout || "Hermes rejected the configuration").trim());
     output.write("Configured Obsidian Memory for Hermes. Start a new Hermes session to use the updated guidance.\n");
     linkOmem(output);
+    const templates = templateNotice(vaultPath);
+    if (templates) output.write(`${templates}\n`);
   } finally {
     prompt.close();
   }

@@ -9,8 +9,18 @@ host's Obsidian skills.
 Use a compatible existing `00-System/templates/<name>` first. For a missing
 template, read the corresponding packaged asset below and instantiate the note
 from it through the installed skills. An ordinary capture need not modify
-`00-System/`. Only authorized initialization copies missing template files into
-that directory. Never overwrite an existing template automatically.
+`00-System/`. Only authorized initialization installs missing template files,
+with `omem templates install` (never by writing them yourself). Never overwrite
+an existing template automatically.
+
+`omem templates` (read-only) reports each template as `current`, `outdated`
+(an unedited template from an older plugin version), `custom` (edited, with
+every core field), `incompatible` (missing core fields or with an unquoted
+`{{…}}` value, which YAML reads as an object) or `missing`. `current`,
+`outdated` and `custom` are compatible. Mention `incompatible` ones to the user
+and offer `omem templates update --replace-custom` (backs them up first);
+`omem templates update --yes` alone only adds missing and upgrades `outdated`
+ones. Run it when a Lint or initialization needs to know.
 
 If a local template lacks required identity/evidence fields, add them to the
 new note while preserving local fields; do not silently migrate old notes. If

@@ -13,6 +13,7 @@ import {
   missingCoreFields,
   CORE_FIELDS
 } from "../scripts/check-vault.mjs";
+import { bundledTemplate } from "../lib/vault-templates.js";
 
 test("parseProjectsYaml parses standard projects list correctly", () => {
   const yaml = `
@@ -94,7 +95,7 @@ test("checkVault validates synthetic vault health correctly", () => {
     writeFileSync(join(vault, "00-System", "projects.yaml"), "projects:\n  - id: proj-a\n    roots: []\n    scope: private\n");
 
     for (const t of EXPECTED_TEMPLATES) {
-      writeFileSync(join(vault, "00-System", "templates", t), "# template\n");
+      writeFileSync(join(vault, "00-System", "templates", t), bundledTemplate(t));
     }
 
     writeFileSync(join(vault, "10-Global", "preferences.md"), "# Preferences\n");
@@ -133,7 +134,7 @@ test("checkVault handles hierarchical sub-indexes, deprecated superseded_by vali
   try {
     const vault = join(root, "vault");
     mkdirSync(join(vault, "00-System", "templates"), { recursive: true });
-    for (const t of EXPECTED_TEMPLATES) writeFileSync(join(vault, "00-System", "templates", t), "# t\n");
+    for (const t of EXPECTED_TEMPLATES) writeFileSync(join(vault, "00-System", "templates", t), bundledTemplate(t));
     writeFileSync(join(vault, "AGENTS.md"), "# Vault\n");
     writeFileSync(join(vault, "Home.md"), "# Home\n");
     writeFileSync(join(vault, "00-System", "projects.yaml"), "projects:\n  - id: big-proj\n    roots: []\n    scope: private\n");
@@ -195,7 +196,7 @@ test("checkVault counts inbox/archive/, warns on misplaced pending or bloated ac
 
     const vault = join(root, "vault");
     mkdirSync(join(vault, "00-System", "templates"), { recursive: true });
-    for (const t of EXPECTED_TEMPLATES) writeFileSync(join(vault, "00-System", "templates", t), "# t\n");
+    for (const t of EXPECTED_TEMPLATES) writeFileSync(join(vault, "00-System", "templates", t), bundledTemplate(t));
     writeFileSync(join(vault, "AGENTS.md"), "# Vault\n");
     writeFileSync(join(vault, "Home.md"), "# Home\n");
     writeFileSync(join(vault, "00-System", "projects.yaml"), `projects:\n  - id: repo-proj\n    roots:\n      - ${repo}\n    scope: private\n`);

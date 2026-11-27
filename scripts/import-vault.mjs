@@ -26,13 +26,15 @@ const USAGE = `Usage: omem import <bundle> [--vault <path>] [options]
   --map <project-id>=<dir>   where a project's code lives on this machine (repeatable)
   --no-laya                  leave ~/.laya untouched
   --replace-heads            use the bundle's trained Laya heads instead of the local ones
+  --use-incoming-templates   replace edited or hand-written local templates with the bundle's (backed up
+                             first); unedited older templates are upgraded without it
   --passphrase-file <file>   passphrase of an encrypted bundle (or OBSIDIAN_MEMORY_PASSPHRASE, or a prompt)
   --yes                      apply; without it only the plan is shown
   --json                     print the plan as JSON
 `;
 
 export function parseArgs(argv = []) {
-  const opts = { bundle: null, vaultPath: null, maps: {}, includeLaya: true, replaceHeads: false, passphraseFile: null, yes: false, json: false, help: false };
+  const opts = { bundle: null, vaultPath: null, maps: {}, includeLaya: true, replaceHeads: false, useIncomingTemplates: false, passphraseFile: null, yes: false, json: false, help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--vault" && argv[i + 1]) opts.vaultPath = argv[++i];
@@ -44,6 +46,7 @@ export function parseArgs(argv = []) {
     }
     else if (a === "--no-laya") opts.includeLaya = false;
     else if (a === "--replace-heads") opts.replaceHeads = true;
+    else if (a === "--use-incoming-templates") opts.useIncomingTemplates = true;
     else if (a === "--passphrase-file" && argv[i + 1]) opts.passphraseFile = argv[++i];
     else if (a === "--yes" || a === "-y") opts.yes = true;
     else if (a === "--json") opts.json = true;
@@ -89,6 +92,20 @@ function printPlan(plan, out, applied) {
   for (const c of v.conflicts.slice(0, 30)) out.write(`  conflict ${c.rel}\n`);
   if (v.conflicts.length > 30) out.write(`  … and ${v.conflicts.length - 30} more\n`);
   if (v.conflicts.length) out.write(`  Local notes kept; imported copies ${verb}put in ${plan.conflictsDir}/ (README lists them for the agent to merge).\n`);
+  const tp = plan.templates;
+  if (tp.upgraded.length || tp.replaced.length || tp.keptLocal.length) {
+    out.write("\nTemplates (00-System/templates):\n");
+    for (const n of tp.upgraded) out.write(`  ${verb}upgraded ${n} (local copy was an unedited older version)\n`);
+    for (const r of tp.replaced) out.write(`  ${verb}replaced ${r.name} (local ${r.local}, backed up to ${tp.backupDir}/)\n`);
+    for (const k of tp.keptLocal) {
+      const issues = [...(k.missingFields.length ? [`lacks ${k.missingFields.join(", ")}`] : []), ...(k.problems ?? []).map((p) => p.replace(/ \(.*\)$/u, ""))];
+      const why = k.local === "incompatible" ? `local one: ${issues.join("; ")}` : `local ${k.local}`;
+      out.write(`  kept local ${k.name} (${why}; bundle has ${k.incoming})\n`);
+    }
+    if (tp.keptLocal.some((k) => k.local === "custom" || k.local === "incompatible") && !applied) {
+      out.write("  --use-incoming-templates takes the bundle's for these (local ones backed up first); 'omem templates' checks them any time.\n");
+    }
+  }
   const pc = plan.projectChanges;
   if (pc) {
     if (pc.added.length) out.write(`\nProjects ${verb}added: ${pc.added.join(", ")}\n`);
@@ -124,6 +141,7 @@ export async function main(argv = process.argv.slice(2), out = process.stdout, e
     const passphrase = isEncrypted(buffer) ? await (deps.getPassphrase ?? getPassphrase)({ file: opts.passphraseFile }) : null;
     const plan = planImport(buffer, {
       targetVault: target, passphrase, maps: opts.maps, includeLaya: opts.includeLaya, replaceHeads: opts.replaceHeads,
+      useIncomingTemplates: opts.useIncomingTemplates,
       ...(deps.layaDir ? { layaDir: deps.layaDir } : {}), ...(deps.now ? { now: deps.now } : {})
     });
     if (opts.yes) {
