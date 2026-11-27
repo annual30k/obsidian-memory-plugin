@@ -66,6 +66,8 @@ Small projects keep a single flat `index.md`. When a project grows large (e.g.,
 - `raw/raw-index.md` for Raw evidence links
 - `inbox/archive/` (optional) for processed candidates while preserving identity
 
+Tiny sibling notes may also be consolidated into one `##`-sectioned guide.
+
 Raw immutability is a workflow rule, not a physical filesystem guarantee. Do not
 rename or rewrite Raw; report observed external corruption without guessing a
 replacement. Index is navigation; log is append-only.

@@ -363,6 +363,26 @@ npm run check:antigravity
 只说“检查知识库”时不应改文件；Vault 路径不可访问或所需写入失败时不能回答
 “已经保存”。CLI 不可用只影响需要 Obsidian 应用的操作。
 
+记忆用起来以后，还可以这样说：
+
+- “把 inbox 里的候选全部入库” / “做一次知识库巡检”：识别为维护操作，按技能里的入库或巡检规则执行；巡检只读，只报告问题，不改文件。
+- “这条约定已经作废了，新的做法是……”：入库时把旧页面标为 `deprecated: true` 并用 `superseded_by` 指向新页面。旧记录保留作历史，日常回忆不再把它当现行依据。
+- “之前那个审批人不在岗的处理办法是什么”这类换了说法的提问：Agent 先用 `rg` 搜原词，搜不到再用 `laya search`，只读命中的那一节。
+- 入库或丢弃后的候选移到 `inbox/archive/YYYY-MM/`；会话整理查重时会连归档一起查，不会把同一条结论再整理一遍。
+
+### 记忆相关命令
+
+| 命令 | 作用 | 需要 Laya 服务吗 |
+| --- | --- | --- |
+| `laya search "<提问>" --cwd <项目目录>` | 在当前项目和 Global 的笔记里检索，返回 `文件:起止行号`、`##` 节标题和摘要；默认跳过已废除笔记 | 不需要：没有服务时只做词法检索，有服务时加上语义检索 |
+| `laya index` | 一次补齐所有笔记的向量，适合迁移或大批导入之后运行（几十篇笔记只要几秒） | 需要 |
+| `npm run check:vault -- --vault <路径>` | 只读巡检：模板、断链、废除链接、规模预警、代码漂移、缺核心字段、明文凭据 | 不需要 |
+
+`laya` 命令随 Laya 服务一起安装。没有装 Laya 时，用插件目录里的脚本代替，参数相同：
+`node <插件目录>/scripts/search-vault.mjs "<提问>" --cwd <项目目录>`、`node <插件目录>/scripts/index-vault.mjs`。
+
+没有安装 Laya 时插件照常可用：记住、回忆、入库、巡检这些明确指令，以及和笔记用词相近的提问，都会给出对应提示；只有换了说法的模糊提问要靠 Laya 的语义匹配，没有 Laya 时按默认流程处理。
+
 ## 验证和排障
 
 ```sh
@@ -384,7 +404,7 @@ openclaw skills --agent main info json-canvas
 openclaw skills --agent main info defuddle
 ```
 
-- `npm run check:vault -- --vault <path>`：对目标 Obsidian Vault 进行只读健康自检，检查内置模板对齐情况、死链/失效双链、`00-System/projects.yaml` 规范以及明文敏感凭据泄露风险。
+- `npm run check:vault -- --vault <path>`：对目标 Obsidian Vault 进行只读健康自检，检查内置模板对齐情况、死链/失效双链、`00-System/projects.yaml` 规范、`superseded_by` 与子索引链接、规模预警、引用的代码文件是否还在、笔记是否缺核心 frontmatter 字段，以及明文敏感凭据泄露风险。
 - 只有本包的代码/文件验证不等于真实记忆闭环成功。
 - 单元验证覆盖配置、Hook、引用可达性和模板字段契约。隔离 smoke 验证
   tarball 在 OpenClaw 中加载，并逐文件对比其内置 Skill、参考和模板；

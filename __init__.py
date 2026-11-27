@@ -103,6 +103,17 @@ def _settings(ctx: Any) -> dict[str, str]:
     return values
 
 
+def _turn_cwd(settings: Mapping[str, str]) -> str:
+    """The directory that identifies the project: the configured project_root, else the process cwd.
+
+    The Hermes gateway rarely runs inside a project, so without this a configured project_root never
+    resolved the project and every turn was routed as if no project were known (as OpenClaw does with
+    its projectRoot setting, the configured root wins).
+    """
+    root = settings.get("projectRoot")
+    return root if isinstance(root, str) and root else os.getcwd()
+
+
 def build_guidance(settings: Mapping[str, str]) -> str:
     """Render bounded, stable guidance without reading the Vault or session cwd."""
     lines = [
@@ -262,7 +273,7 @@ def on_post_llm_call(ctx: Any = None, *, session_id: str = "", user_message: str
         if not isinstance(session_id, str) or not session_id:
             return None
         settings = _settings(ctx)
-        turn: dict[str, Any] = {"host": "hermes", "sessionKey": session_id, "cwd": os.getcwd()}
+        turn: dict[str, Any] = {"host": "hermes", "sessionKey": session_id, "cwd": _turn_cwd(settings)}
         if isinstance(settings.get("vaultPath"), str):
             turn["vaultPath"] = settings["vaultPath"]
         if isinstance(settings.get("projectId"), str):
@@ -304,7 +315,7 @@ def on_pre_llm_call(ctx: Any = None, *, user_message: str = "", session_id: str 
         )
         effective_mode = "auto"
 
-    turn = {"host": "hermes", "cwd": os.getcwd()}
+    turn = {"host": "hermes", "cwd": _turn_cwd(settings)}
     if isinstance(session_id, str) and session_id:
         turn["sessionKey"] = session_id
     if isinstance(settings.get("vaultPath"), str):
