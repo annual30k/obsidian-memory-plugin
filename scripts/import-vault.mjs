@@ -190,7 +190,7 @@ function printPlan(plan, out, applied) {
   const unchangedPart = v.unchanged?.length ? `, ${v.unchanged.length} unchanged (omitted in incremental bundle)` : "";
   const renamedPart = v.renamed?.length ? `, ${v.renamed.length} ${verb}renamed` : "";
   out.write(`Vault files: ${v.add.length} ${verb}added, ${v.same.length} already identical${unchangedPart}${renamedPart}, ${v.merged.length} log(s) ${verb}merged, ${v.conflicts.length} conflict(s), ${v.keptLocal.length} kept local${v.dirs.length ? `; ${v.dirs.length} folder(s) ${verb}created` : ""}\n`);
-  if (v.fastForward.length || v.keptNewer.length || v.deletedHere.length || v.deletedThere.length || v.renamed?.length || v.deleteConflicts?.length) {
+  if (v.fastForward.length || v.keptNewer.length || v.deletedHere.length || v.deletedThere.length || v.missingThere?.length || v.renamed?.length || v.deleteConflicts?.length) {
     out.write(`Changed on one side only since the last sync (ancestors from ${plan.sync.ancestors}):\n`);
     if (v.fastForward.length) out.write(`  ${v.fastForward.length} file(s) changed only on the other machine: ${verb}updated here\n`);
     for (const r of v.fastForward.slice(0, 15)) out.write(`    ${r}\n`);
@@ -203,6 +203,10 @@ function printPlan(plan, out, applied) {
     if (v.deletedThere.length) {
       out.write(`  Deleted on the other machine (${v.deletedThere.length} file(s) ${verb}removed here; backed up in import snapshot for rollback):\n`);
       for (const r of v.deletedThere.slice(0, 20)) out.write(`    ${r}\n`);
+    }
+    if (v.missingThere?.length) {
+      out.write(`  Not in the other machine's bundle (${v.missingThere.length} file(s) kept here: only the --base bundle lists them, so nothing shows that machine ever had them):\n`);
+      for (const r of v.missingThere.slice(0, 20)) out.write(`    ${r}\n`);
     }
     if (v.deleteConflicts?.length) {
       out.write(`  Delete/modify conflict(s) (${v.deleteConflicts.length} file(s) deleted on the other machine, modified here — local version kept):\n`);
@@ -309,7 +313,7 @@ async function runRollback(argv, out, err, deps) {
       for (const s of snaps) {
         const src = [s.bundle?.name, s.bundle?.sourceDevice ? `from ${s.bundle.sourceDevice}` : null].filter(Boolean).join(" ");
         const sum = s.summary ?? {};
-        const tag = s.rolledBackAt ? ` [rolled back ${s.rolledBackAt}]` : "";
+        const tag = (s.rolledBackAt ? ` [rolled back ${s.rolledBackAt}]` : "") + (s.status === "failed" || s.status === "incomplete" ? ` [import stopped part-way]` : "");
         out.write(`  ${s.id}  ${s.createdAt}  ${src || "import"}  (+${sum.added ?? 0} ~${sum.modified ?? 0} -${sum.removed ?? 0})${tag}\n`);
       }
       return 0;

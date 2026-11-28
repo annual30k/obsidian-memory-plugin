@@ -81,14 +81,20 @@ are `omem` subcommands and need no Laya service; without the `omem` command run
    `unchanged` list, inside the active scope, and not a protected core file such
    as `projects.yaml`, `AGENTS.md`, `Home.md`, templates, or scope index/log) is
    propagated and backed up in the pre-import snapshot; if modified locally, it
-   is kept and reported as a delete/modify conflict.
+   is kept and reported as a delete/modify conflict. Only files this machine has
+   received from that machine before are deleted or renamed: with only a `--base`
+   bundle as proof, missing files are reported and kept. A rename needs exactly
+   one old and one new path with the same content; identical copies (template
+   notes) are handled as separate deletions and additions.
 5. **Pre-import snapshot, one-click rollback, and auto-index**: every
    `omem import --yes` automatically saves a pre-import snapshot outside the
    Vault (`~/.laya/backups/imports/`, keeping the last 10 by default; `--no-backup`
    disables it) covering overwritten/deleted files, added paths, sync state, and
    Laya changes. Undo an import with `omem import rollback [snapshot-id] --yes`
    (`--list` shows snapshots; refuses to overwrite files manually edited after
-   import unless `--force`). After Vault writes or rollbacks, `omem`
+   import unless `--force`). An import that stops part-way keeps its snapshot,
+   so it can be rolled back too; a rollback restores only the sync record for
+   the machine that import came from. After Vault writes or rollbacks, `omem`
    automatically refreshes the Laya vector index (pruning stale vectors for
    deleted notes) and degrades gracefully if the Laya service is not running
    (`--no-index` skips it).
