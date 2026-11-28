@@ -3,7 +3,7 @@ version: 0.17.0
 manifest_version: 2
 api_version: 1
 description: "Explicit, self-growing Obsidian memory workflow with lightweight always-on guidance."
-author: Cyber Health
+author: Alex Q
 license: MIT
 homepage: https://github.com/annual30k/obsidian-memory-plugin
 tags:

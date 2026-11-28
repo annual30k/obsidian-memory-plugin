@@ -3,7 +3,7 @@
   "version": "0.17.0",
   "description": "Self-growing long-term memory for Obsidian. Recalls past project decisions and selectively captures durable knowledge with an explicit Inbox -> Raw -> Wiki lifecycle.",
   "author": {
-    "name": "Cyber Health Agent"
+    "name": "Alex Q"
   },
   "license": "MIT",
   "keywords": [
@@ -20,7 +20,7 @@
     "displayName": "Obsidian Memory",
     "shortDescription": "Self-growing memory for Obsidian",
     "longDescription": "Recall past project decisions, capture durable knowledge in Obsidian Vaults with an explicit Inbox -> Raw -> Wiki lifecycle using the host's installed Obsidian skills.",
-    "developerName": "Cyber Health",
+    "developerName": "Alex Q",
     "category": "Productivity",
     "capabilities": [
       "Interactive",

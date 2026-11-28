@@ -3,7 +3,7 @@
   "version": "0.17.0",
   "description": "Self-growing long-term memory for Obsidian. Recalls past project decisions and selectively captures durable knowledge with an explicit Inbox -> Raw -> Wiki lifecycle.",
   "author": {
-    "name": "Cyber Health"
+    "name": "Alex Q"
   },
   "homepage": "https://github.com/annual30k/obsidian-memory-plugin",
   "repository": "https://github.com/annual30k/obsidian-memory-plugin",
