@@ -30,7 +30,8 @@ test("Windows: an npm .cmd shim is started through Node with the script it wraps
 test("Codex is found on PATH on Linux and Windows; on macOS only the app, as before, or CODEX_BIN", () => {
   const dir = tmp();
   const codex = put(path.join(dir, "codex"), "#!/bin/sh\n", 0o755);
-  assert.equal(resolveCodexCommand({ PATH: dir }, { platform: "linux" }).command, codex);
+  // A POSIX PATH cannot hold a Windows path (its "D:" would split it), so the Linux case runs off Windows.
+  if (process.platform !== "win32") assert.equal(resolveCodexCommand({ PATH: dir }, { platform: "linux" }).command, codex);
   assert.equal(resolveCodexCommand({ PATH: dir }, { platform: "darwin" })?.file ?? null, fs.existsSync("/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex") ? "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex" : null);
   assert.equal(resolveCodexCommand({ PATH: "", CODEX_BIN: codex }, { platform: "darwin" }).command, codex);
   const win = tmp();
@@ -40,7 +41,7 @@ test("Codex is found on PATH on Linux and Windows; on macOS only the app, as bef
   // The digest then uses it once Codex is logged in.
   const codexHome = tmp();
   fs.writeFileSync(path.join(codexHome, "auth.json"), "{}");
-  if (process.platform !== "darwin") assert.equal(resolveExtractor({ env: { PATH: dir, HOME: dir }, codexHome })?.name, "codex");
+  if (process.platform === "linux") assert.equal(resolveExtractor({ env: { PATH: dir, HOME: dir }, codexHome })?.name, "codex");
 });
 
 test("Hermes installed by npm on Windows is found and its one-shot call runs through Node", async () => {
