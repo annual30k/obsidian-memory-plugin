@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import zlib from "node:zlib";
+import { pathToFileURL } from "node:url";
 import {
   addToProjectList, appendProjectEntry, filterProjectsYaml, gitRemotes, normalizeRemote, parseProjectsYaml, resolveProject
 } from "../lib/vault-transfer/projects.js";
@@ -598,7 +599,7 @@ test("a package copy in the temp folder never takes over the user's omem command
     fs.copyFileSync(new URL(`../${rel}`, import.meta.url), path.join(copy, rel));
   }
   const home = tmp("om-tmp-home-");
-  const { linkOmem } = await import(path.join(copy, "lib", "cli-link.js"));
+  const { linkOmem } = await import(pathToFileURL(path.join(copy, "lib", "cli-link.js")).href);
   const r = linkOmem(null, { env: {}, home });
   assert.equal(r.ok, false);
   assert.equal(r.reason, "temporary copy");
