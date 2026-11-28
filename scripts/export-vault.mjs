@@ -15,7 +15,7 @@ import path from "node:path";
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { resolveVaultPath } from "../lib/memory-router/vault-index.js";
-import { buildExport, defaultBundleName } from "../lib/vault-transfer/export.js";
+import { defaultBundleName, exportToFile } from "../lib/vault-transfer/export.js";
 import { getPassphrase } from "../lib/vault-transfer/passphrase.js";
 
 const USAGE = `Usage: omem export [--vault <path>] [--out <file-or-dir>] [options]
@@ -71,15 +71,16 @@ export async function main(argv = process.argv.slice(2), out = process.stdout, e
   const now = deps.now ?? new Date();
   try {
     const passphrase = opts.encrypt ? await (deps.getPassphrase ?? getPassphrase)({ file: opts.passphraseFile, confirm: true }) : null;
-    const result = buildExport(vaultPath, {
+    const file = outputPath(opts.out, Boolean(passphrase), now);
+    if (path.resolve(file).startsWith(path.resolve(vaultPath) + path.sep)) throw new Error("write the bundle outside the Vault (it would be exported next time)");
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    // Streamed to the file: memory stays flat however large the attachments are.
+    const result = await exportToFile(vaultPath, file, {
       projects: opts.projects.length ? opts.projects : null, withGlobal: opts.withGlobal, withLaya: opts.withLaya,
       withDecisions: opts.withDecisions, withObsidianConfig: opts.withObsidianConfig, passphrase, now,
       ...(deps.layaDir ? { layaDir: deps.layaDir } : {})
     });
-    const file = outputPath(opts.out, result.encrypted, now);
-    if (path.resolve(file).startsWith(path.resolve(vaultPath) + path.sep)) throw new Error("write the bundle outside the Vault (it would be exported next time)");
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, result.bundle, { mode: 0o600 });
+    result.bundle = { length: result.bytes };
     const vaultFiles = result.manifest.files.filter((f) => f.path.startsWith("vault/")).length;
     const layaFiles = result.manifest.files.filter((f) => f.path.startsWith("laya/")).map((f) => f.path.slice(5));
     if (opts.json) {
