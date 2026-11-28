@@ -590,3 +590,21 @@ test("merging an empty project drops its seed files; bind suggests the merge whe
   assert.doesNotMatch(out.text, /Probably the same project/u);
   fs.rmSync(base, { recursive: true, force: true });
 });
+
+test("a package copy in the temp folder never takes over the user's omem command", async () => {
+  const copy = tmp("om-tmp-copy-");
+  for (const rel of ["lib/cli-link.js", "scripts/omem.mjs"]) {
+    fs.mkdirSync(path.join(copy, path.dirname(rel)), { recursive: true });
+    fs.copyFileSync(new URL(`../${rel}`, import.meta.url), path.join(copy, rel));
+  }
+  const home = tmp("om-tmp-home-");
+  const { linkOmem } = await import(path.join(copy, "lib", "cli-link.js"));
+  const r = linkOmem(null, { env: {}, home });
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, "temporary copy");
+  assert.ok(!fs.existsSync(path.join(home, ".local", "bin")), "nothing linked");
+  // An explicit bin dir (tests, custom setups) is still honoured.
+  assert.equal(linkOmem(null, { env: { OBSIDIAN_MEMORY_BIN_DIR: path.join(home, "bin") }, home }).ok, true);
+  fs.rmSync(copy, { recursive: true, force: true });
+  fs.rmSync(home, { recursive: true, force: true });
+});

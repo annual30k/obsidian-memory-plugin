@@ -51,9 +51,13 @@ try {
 
   const vault = join(sandbox, "vault");
   mkdirSync(vault);
+  // Setup links the `omem` command; keep it in the sandbox, never the user's ~/.local/bin.
+  const binDir = join(sandbox, "bin");
+  const setupEnv = { ...process.env, OBSIDIAN_MEMORY_BIN_DIR: binDir };
   const agents = join(sandbox, "AGENTS.md");
   execFileSync(process.execPath, [join(root, "scripts", "setup-codex.mjs"),
-    "--vault", vault, "--agents-file", agents, "--yes"], { timeout: 15000 });
+    "--vault", vault, "--agents-file", agents, "--yes"], { timeout: 15000, env: setupEnv });
+  assert.ok(existsSync(join(binDir, process.platform === "win32" ? "omem.cmd" : "omem")), "setup linked omem in the sandbox");
   const codexRules = readFileSync(agents, "utf8");
   assert.match(codexRules, /For code tasks, use the obsidian-memory skill/);
   assert.ok(codexRules.includes(JSON.stringify(vault)));
@@ -61,7 +65,7 @@ try {
   const gemini = join(sandbox, "GEMINI.md");
   const pluginDir = join(sandbox, "plugins", "obsidian-memory-plugin");
   execFileSync(process.execPath, [join(root, "scripts", "setup-antigravity.mjs"),
-    "--vault", vault, "--gemini-file", gemini, "--plugin-dir", pluginDir, "--yes"], { timeout: 15000 });
+    "--vault", vault, "--gemini-file", gemini, "--plugin-dir", pluginDir, "--yes"], { timeout: 15000, env: setupEnv });
   const antigravityRules = readFileSync(gemini, "utf8");
   assert.match(antigravityRules, /For code tasks, use the obsidian-memory skill/);
   assert.ok(antigravityRules.includes(JSON.stringify(vault)));
