@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { validateVaultPath } from "../lib/managed-block.js";
 import { linkOmem } from "../lib/cli-link.js";
 import { templateNotice } from "../lib/vault-templates.js";
+import { commandFor, findCommand } from "../lib/find-command.js";
 
 export const HERMES_PLUGIN_ID = "obsidian-memory-plugin";
 export const HERMES_VAULT_KEY = `plugins.entries.${HERMES_PLUGIN_ID}.settings.vault_path`;
@@ -60,7 +61,10 @@ export async function runSetup(args, { input = process.stdin, output = process.s
         return;
       }
     }
-    const result = run(options.hermesBin, command, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    // On Windows `hermes` may be an npm .cmd shim, which cannot be spawned without a shell; elsewhere the
+    // system finds it on PATH as before.
+    const exe = (process.platform === "win32" ? (options.hermesBin === "hermes" ? findCommand("hermes") : commandFor(options.hermesBin)) : null) ?? { command: options.hermesBin, args: [] };
+    const result = run(exe.command, [...exe.args, ...command], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
     if (result.error) throw new TypeError(`could not run ${options.hermesBin}: ${result.error.message}`);
     if (result.status !== 0) throw new TypeError((result.stderr || result.stdout || "Hermes rejected the configuration").trim());
     output.write("Configured Obsidian Memory for Hermes. Start a new Hermes session to use the updated guidance.\n");

@@ -36,6 +36,8 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 MAX_PAYLOAD_BYTES = 65536
+# How much of an oversized body the server still reads before its 413 (see _reject_too_large).
+OVERSIZE_DRAIN_BYTES = 1024 * 1024
 SERVICE_IDENTITY = "laya-memory-judge"
 API_VERSION = "1"
 ALLOWED_LOOPBACK_HOSTS = {"127.0.0.1", "::1"}
@@ -900,7 +902,23 @@ class LayaRequestHandler(BaseHTTPRequestHandler):
         # Constant-time comparison prevents timing attacks
         return secrets.compare_digest(provided_token, self.server.auth_token)
 
-    def _send_json(self, status: int, data: Dict[str, Any]) -> None:
+    def _reject_too_large(self, length: int) -> None:
+        """413 for a body over the limit. Read (and drop) up to 1 MiB of it first and close the connection:
+        a server that answers while the client is still sending makes Windows reset the socket, so the client
+        sees "fetch failed" instead of the 413, and an unread body would be parsed as the next request."""
+        remaining = min(max(length, 0), OVERSIZE_DRAIN_BYTES)
+        try:
+            while remaining > 0:
+                chunk = self.rfile.read(min(65536, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+        except Exception:
+            pass
+        self.close_connection = True
+        self._send_json(413, {"error": "payload_too_large"}, close=True)
+
+    def _send_json(self, status: int, data: Dict[str, Any], close: bool = False) -> None:
         try:
             body = json.dumps(data, ensure_ascii=False, allow_nan=False).encode("utf-8")
         except (ValueError, TypeError):
@@ -910,6 +928,8 @@ class LayaRequestHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        if close:
+            self.send_header("Connection", "close")
         self.end_headers()
         self.wfile.write(body)
 
@@ -1081,7 +1101,7 @@ class LayaRequestHandler(BaseHTTPRequestHandler):
             return
 
         if content_length > MAX_PAYLOAD_BYTES:
-            self._send_json(413, {"error": "payload_too_large"})
+            self._reject_too_large(content_length)
             return
 
         try:
@@ -1192,7 +1212,7 @@ class LayaRequestHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"error": "content_length_must_be_positive"})
             return
         if length > MAX_EMBED_PAYLOAD_BYTES:
-            self._send_json(413, {"error": "payload_too_large"})
+            self._reject_too_large(length)
             return
         try:
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
