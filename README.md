@@ -508,8 +508,8 @@ openclaw skills --agent main info defuddle
    - 依赖极简：仅需 `mlx`, `huggingface-hub`, `numpy`, `tokenizers`，无 PyTorch / Transformers 运行时负担。检索器由插件自带的 `lib/laya-service/bert_embed.py`（约 150 行纯 MLX 的 BERT 编码器）运行，不引入 `mlx-embeddings`（它会带进 transformers / mlx-vlm 等约 600 MB 依赖）。
 2. **Windows / Linux / x64 macOS**：
    - 采用官方 [NandhaKishorM/laya](https://github.com/NandhaKishorM/laya) (>=0.3.5, Apache-2.0) 基于 PyTorch 的跨平台后端。
-   - 模型 checkpoint：`convaiinnovations/laya-multilingual`。
-   - 资源预期：磁盘权重约 1.2 GiB，内存约 1.2 GiB。
+   - 模型 checkpoint：`convaiinnovations/laya-multilingual`；检索器与 Apple Silicon 相同（`intfloat/multilingual-e5-small`，`laya install` 一并下载），用 laya 已依赖的 PyTorch + transformers 运行，不额外安装任何包。在同一台 Mac 上与 MLX 版对比：向量余弦为 1.0，两两相似度差 ≤ 0.00002，语义阈值通用。
+   - 资源预期：磁盘权重约 1.2 GiB + 450 MiB，内存约 1.2 GiB + 约 300 MiB（检索器）。
    - 该后端暂无检索器：Vault 匹配退回词重叠方式。
 3. **环境隔离与安全性**：
    - 使用 `uv` 在 `~/.laya/venv` 维护独立的 Python >=3.10 环境，不污染系统 Python。
@@ -604,7 +604,7 @@ Laya 只看提示文本，不知道 Vault 里已经有哪些笔记。插件会�
 - **强匹配**（突出度 ≥ 0.048）：改为 `recall`，即使 Laya 分数说不需要；提示里列出最相关的 1–3 条笔记（Vault 相对路径）。
 - **弱匹配**（≥ 0.038）：本轮不再 `skip`（`skip` → `default`），附上笔记；已经明确判定的 `recall` / `capture` 保持不变，只附上相关笔记。
 - 在作者的 Vault 上测得（501 条真实无关提示 + 66 条针对 Vault 内容的提问）：只用分类头时误跳过 5%、召回 86%；加上突出度后误跳过 0%、召回 98%，无关提示仍有 83% 被跳过。Laya 自己的句向量做检索接近随机（AUC 0.39～0.57），所以检索器是单独的模型。
-- 检索器不可用（PyTorch 后端、旧版服务、`laya start --embed-model off`、`vaultSemantic: false`）时退回**词重叠匹配**（中文按二字词、英文按单词，约 0.1 ms）：强匹配只在判断拿不准（`default`）时改为 `recall`，任何匹配阻止 `skip`。词重叠只是弱证据：在 520 条真实提示上，单凭匹配就强制 `recall` 时只有约十分之一是对的。
+- 检索器不可用（0.14 之前的 PyTorch 后端、旧版服务、`laya start --embed-model off`、`vaultSemantic: false`）时退回**词重叠匹配**（中文按二字词、英文按单词，约 0.1 ms）：强匹配只在判断拿不准（`default`）时改为 `recall`，任何匹配阻止 `skip`。词重叠只是弱证据：在 520 条真实提示上，单凭匹配就强制 `recall` 时只有约十分之一是对的。
 - "X 和 Y 有什么区别""默认是多少""写一篇……""你现在的版本是什么"这类不指向自己工作的通用提问不做 Vault 匹配，也不会因为 Laya 分数偏高而调取记忆。
 - 只共享一个词或一个短词组（如"软链接""Node.js"）不算匹配；当前目录能通过 `projects.yaml` 的 roots 对应到项目时，只看该项目和全局笔记，除非提示里点名了别的项目。
 - Codex / Antigravity 从 `OBSIDIAN_MEMORY_VAULT` 或 setup 写入 AGENTS.md / GEMINI.md 的受管区块读取 Vault 路径；OpenClaw / Hermes 用插件配置的 `vaultPath`。设 `vaultHints: false` 关闭。

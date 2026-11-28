@@ -26,7 +26,7 @@ flowchart TD
 | 记忆需求分 | Laya 给出的 0–1 分，表示本轮是否需要长期记忆。服务接口仍叫 `/judge/recall` | `lib/laya-service/service.py` |
 | 分类头（recall head） | 在 Laya 句向量上训练的逻辑回归，替代零样本打分 | `~/.laya/recall-head.json`，插件自带一份 |
 | 持久性判断头（durable head） | 在 Laya 句向量上训练的逻辑回归，判断用户这句话是不是以后也要遵守的规则/偏好/决定；用 `laya label` 的 `d` 标注积累数据，`laya train --target durable` 训练 | `~/.laya/durable-head.json`，插件自带一份 |
-| 检索器（retriever） | Laya 服务里另一个小模型（默认 `intfloat/multilingual-e5-small`，纯 MLX 实现）：把本轮提示和 Vault 笔记都变成向量，回答"Vault 里有没有一篇笔记明显对应这句话" | `lib/laya-service/bert_embed.py`，笔记向量缓存在 `~/.laya/cache/vault-embeddings-v<版本>.bin`（float32 二进制；文件名带格式版本，开发版与已装版互不覆盖；`omem index` 可一次补齐） |
+| 检索器（retriever） | Laya 服务里另一个小模型（默认 `intfloat/multilingual-e5-small`；Apple Silicon 上用 MLX 运行，其他平台用 PyTorch，两者向量一致）：把本轮提示和 Vault 笔记都变成向量，回答"Vault 里有没有一篇笔记明显对应这句话" | `lib/laya-service/bert_embed.py`，笔记向量缓存在 `~/.laya/cache/vault-embeddings-v<版本>.bin`（float32 二进制；文件名带格式版本，开发版与已装版互不覆盖；`omem index` 可一次补齐） |
 | 突出度（prominence） | 最相关笔记的相似度减去所有候选笔记相似度的中位数。绝对相似度分不开（同一项目的笔记和任务本来就都相似），突出度问的是"有没有一篇特别对得上" | `lib/memory-router/vault-index.js` |
 | 项目远程地址（remotes） | `projects.yaml` 里项目的可选字段，记规范化后的 Git origin（`github.com/owner/repo`）。路径匹配不上时按它认出"同一个仓库在另一台电脑的另一个路径"，只追加路径、不新建项目 | `lib/vault-transfer/projects.js` |
 | 导出包（export bundle） | `omem export` 生成的 `.tar.gz`（可加密）：`manifest.json` + `vault/` + `laya/`（标注与判断头）。`omem import` 先预演，再按文件合并进本机 Vault，不覆盖本地内容 | `lib/vault-transfer/` |
@@ -78,7 +78,7 @@ Laya 的 `capture` 判断（`obsidian-memory-laya-judge --capture`）在回合�
 3. `vault-index.js`：仅索引活跃 `wiki/`（含业务 `##` 节标题、折叠大代码块保留注释摘要、长文按 `##` 分段并取最高分聚合）与 `pending-ingest` 候选（排除 `index-*.md` / `raw-index.md` 与 `deprecated` 笔记，显式查历史无命中时可兜底），用检索器建向量缓存并结合文件 `stat` 签名即时失效，算本轮提示的突出度：
    - **强**（默认 ≥ 0.048）：改为 *先查记忆*，即使分数说不需要；提示里列出最相关的 1–3 篇笔记路径。
    - **弱**（≥ 0.038）：本轮不跳过，附上笔记。
-   - 检索器不可用（PyTorch 后端、旧服务、`vaultSemantic: false`）时退回词重叠匹配，只补拿不准的轮次。
+   - 检索器不可用（旧服务、`--embed-model off`、`vaultSemantic: false`）时退回词重叠匹配，只补拿不准的轮次。
 4. `turn-context.js`：会话延续；把判断写入本机 `~/.laya/decisions.jsonl` 供标注。
 5. 输出：分数 ≥ 0.50 或强匹配 → *先查记忆*；分数 < 0.35 且无匹配 → *不需要记忆*；其余或 Laya 不可用 → 不加提示。模式 `off` / `auto`（出错放行）/ `strict`（出错拦截，仅 Codex、OpenClaw）。
 
