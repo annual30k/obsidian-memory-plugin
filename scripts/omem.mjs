@@ -25,8 +25,8 @@ export const OMEM_COMMANDS = Object.freeze({
 
 export const OMEM_HELP = `omem — Obsidian Memory tools (the Laya service is managed with \`laya\`)
 
-Move:    omem export             pack the Vault + your Laya labels/heads into one file (--encrypt, --project)
-         omem import <file>      dry-run an import into this machine's Vault (--vault, --map id=dir, --yes)
+Move:    omem export             pack the Vault + your Laya labels/heads into one file (--encrypt, --project, --incremental)
+         omem import <file>      dry-run an import into this machine's Vault (--vault, --only-project, --no-global, --yes)
          omem projects           list projects; bind <id> [dir] adds this machine's checkout; backfill-remotes
 Vault:   omem templates          are the Vault's templates this plugin's? install | update [--replace-custom]
 Ingest:  omem ingest freeze <id>  freeze a candidate into Raw (same bytes on every machine); complete <id> after Wiki/log

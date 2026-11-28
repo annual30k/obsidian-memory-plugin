@@ -2,8 +2,9 @@
 /**
  * `omem import`: bring a bundle from `omem export` into a Vault on this machine.
  *
- *   omem import <bundle> [--vault <path>] [--map <project-id>=<dir>]... [--no-laya] [--replace-heads]
- *               [--passphrase-file <file>] [--yes] [--json]
+ *   omem import <bundle> [--vault <path>] [--map <project-id>=<dir>]...
+ *               [--only-project <id>]... [--with-global | --no-global] [--skip-project <id>]...
+ *               [--no-laya | --with-laya] [--replace-heads] [--passphrase-file <file>] [--yes] [--json]
  *
  * Without --yes it only shows the plan. An empty or missing folder receives the bundle as it is; an
  * existing Vault is merged without overwriting anything local (see lib/vault-transfer/import.js).
@@ -17,7 +18,7 @@ import { fileURLToPath } from "node:url";
 import { resolveVaultPath } from "../lib/memory-router/vault-index.js";
 import { isEncrypted } from "../lib/vault-transfer/archive.js";
 import { applyImport, openBundleFile, planImport } from "../lib/vault-transfer/import.js";
-import { ancestorsFromEntries } from "../lib/vault-transfer/sync-base.js";
+import { ancestorsFromBundle } from "../lib/vault-transfer/sync-base.js";
 import { getPassphrase } from "../lib/vault-transfer/passphrase.js";
 
 const SCRIPTS = path.dirname(fileURLToPath(import.meta.url));
@@ -26,10 +27,15 @@ const USAGE = `Usage: omem import <bundle> [--vault <path>] [options]
   --vault <path>             where to import (default: the Vault this machine's hosts use); an empty
                              or missing folder gets a fresh copy, an existing Vault is merged
   --map <project-id>=<dir>   where a project's code lives on this machine (repeatable)
-  --no-laya                  leave ~/.laya untouched
-  --replace-heads            use the bundle's trained Laya heads instead of the local ones
+  --only-project <id>        import only this project's notes, folders, and projects.yaml entry (repeatable);
+                             skips 10-Global (unless --with-global) and ~/.laya (unless --with-laya).
+                             Cannot be combined with --skip-project
   --skip-project <id>        leave this project out entirely: its notes and its projects.yaml entry
                              (repeatable), e.g. private material that should stay on the other machine
+  --no-global                skip 10-Global/ (global preferences, index, log, Inbox/Raw)
+  --with-global              include 10-Global/ when using --only-project
+  --no-laya / --with-laya    leave ~/.laya untouched / include ~/.laya (default: on normally, off with --only-project)
+  --replace-heads            use the bundle's trained Laya heads instead of the local ones
   --base <older bundle>      the bundle both machines last started from (e.g. the export this Vault was
                              copied from): a file only one side changed since then is not a conflict.
                              Needed once for Vaults synced before 0.13.1; later imports remember it
@@ -41,7 +47,11 @@ const USAGE = `Usage: omem import <bundle> [--vault <path>] [options]
 `;
 
 export function parseArgs(argv = []) {
-  const opts = { bundle: null, vaultPath: null, maps: {}, includeLaya: true, replaceHeads: false, useIncomingTemplates: false, base: null, skipProjects: [], passphraseFile: null, yes: false, json: false, help: false };
+  const opts = {
+    bundle: null, vaultPath: null, maps: {}, includeLaya: undefined, withGlobal: undefined,
+    replaceHeads: false, useIncomingTemplates: false, base: null,
+    skipProjects: [], onlyProjects: [], passphraseFile: null, yes: false, json: false, help: false
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--vault" && argv[i + 1]) opts.vaultPath = argv[++i];
@@ -51,17 +61,36 @@ export function parseArgs(argv = []) {
       if (eq <= 0 || eq === v.length - 1) throw new Error(`--map needs <project-id>=<dir>, got ${v}`);
       opts.maps[v.slice(0, eq)] = path.resolve(v.slice(eq + 1));
     }
-    else if (a === "--no-laya") opts.includeLaya = false;
+    else if (a === "--no-laya") {
+      if (opts.includeLaya === true) throw new Error("--no-laya and --with-laya cannot be used together");
+      opts.includeLaya = false;
+    }
+    else if (a === "--with-laya") {
+      if (opts.includeLaya === false) throw new Error("--no-laya and --with-laya cannot be used together");
+      opts.includeLaya = true;
+    }
+    else if (a === "--no-global") {
+      if (opts.withGlobal === true) throw new Error("--no-global and --with-global cannot be used together");
+      opts.withGlobal = false;
+    }
+    else if (a === "--with-global") {
+      if (opts.withGlobal === false) throw new Error("--no-global and --with-global cannot be used together");
+      opts.withGlobal = true;
+    }
     else if (a === "--replace-heads") opts.replaceHeads = true;
     else if (a === "--use-incoming-templates") opts.useIncomingTemplates = true;
     else if (a === "--base" && argv[i + 1]) opts.base = argv[++i];
     else if (a === "--skip-project" && argv[i + 1]) opts.skipProjects.push(argv[++i]);
+    else if (a === "--only-project" && argv[i + 1]) opts.onlyProjects.push(argv[++i]);
     else if (a === "--passphrase-file" && argv[i + 1]) opts.passphraseFile = argv[++i];
     else if (a === "--yes" || a === "-y") opts.yes = true;
     else if (a === "--json") opts.json = true;
     else if (a === "--help" || a === "-h") opts.help = true;
     else if (!a.startsWith("-") && !opts.bundle) opts.bundle = a;
     else throw new Error(`unknown option ${a}`);
+  }
+  if (opts.onlyProjects.length && opts.skipProjects.length) {
+    throw new Error("--only-project and --skip-project cannot be used together");
   }
   return opts;
 }
@@ -86,7 +115,7 @@ async function passphraseFor(file, opts, deps) {
 /** Hashes of an older bundle, streamed (no staging: only its text is kept in memory). */
 async function loadBase(file, opts, deps) {
   const passphrase = await passphraseFor(file, opts, deps);
-  return ancestorsFromEntries((await openBundleFile(file, { passphrase })).entries);
+  return ancestorsFromBundle(await openBundleFile(file, { passphrase }));
 }
 
 function hostsToRepoint(target, collect) {
@@ -106,11 +135,22 @@ function hostsToRepoint(target, collect) {
 function printPlan(plan, out, applied) {
   const m = plan.manifest;
   const v = plan.vault;
-  out.write(`Bundle: created ${m.createdAt} on ${m.source?.platform ?? "?"} from Vault "${m.source?.vaultName ?? "?"}" (plugin ${m.pluginVersion ?? "?"})${plan.encrypted ? ", encrypted" : ""}\n`);
-  if (plan.skipped?.projects.length) out.write(`Left out: project(s) ${plan.skipped.projects.join(", ")} (--skip-project)\n`);
+  const incTag = plan.bundleType === "incremental"
+    ? `incremental (${plan.incremental?.baseKind === "device" ? `since device "${plan.incremental.baseDevice}"` : "since earlier bundle"}), `
+    : "";
+  out.write(`Bundle: ${incTag}created ${m.createdAt} on ${m.source?.platform ?? "?"} from Vault "${m.source?.vaultName ?? "?"}" (plugin ${m.pluginVersion ?? "?"})${plan.encrypted ? ", encrypted" : ""}\n`);
+  if (plan.scope?.mode === "only-project") {
+    const included = plan.scope.onlyProjects.length ? plan.scope.onlyProjects.join(", ") : "(none)";
+    out.write(`Import scope: only project(s) ${included}; 10-Global ${plan.scope.includeGlobal ? "included (--with-global)" : "skipped"}; Laya ${plan.scope.includeLaya ? "included (--with-laya)" : "skipped"}\n`);
+    if (plan.scope.skippedProjects.length) out.write(`Skipped project(s): ${plan.scope.skippedProjects.join(", ")}\n`);
+  } else {
+    if (plan.skipped?.projects.length) out.write(`Left out: project(s) ${plan.skipped.projects.join(", ")} (--skip-project / transfer: local)\n`);
+    if (plan.scope?.skippedGlobal) out.write("Left out: 10-Global (--no-global)\n");
+  }
   out.write(`Target: ${plan.target.path} (${{ missing: "new folder", empty: "empty folder", vault: "existing Vault, merging" }[plan.target.state]})\n\n`);
   const verb = applied ? "" : "would be ";
-  out.write(`Vault files: ${v.add.length} ${verb}added, ${v.same.length} already identical, ${v.merged.length} log(s) ${verb}merged, ${v.conflicts.length} conflict(s), ${v.keptLocal.length} kept local${v.dirs.length ? `; ${v.dirs.length} folder(s) ${verb}created` : ""}\n`);
+  const unchangedPart = v.unchanged?.length ? `, ${v.unchanged.length} unchanged (omitted in incremental bundle)` : "";
+  out.write(`Vault files: ${v.add.length} ${verb}added, ${v.same.length} already identical${unchangedPart}, ${v.merged.length} log(s) ${verb}merged, ${v.conflicts.length} conflict(s), ${v.keptLocal.length} kept local${v.dirs.length ? `; ${v.dirs.length} folder(s) ${verb}created` : ""}\n`);
   if (v.fastForward.length || v.keptNewer.length || v.deletedHere.length || v.deletedThere.length) {
     out.write(`Changed on one side only since the last sync (ancestors from ${plan.sync.ancestors}):\n`);
     if (v.fastForward.length) out.write(`  ${v.fastForward.length} file(s) changed only on the other machine: ${verb}updated here\n`);
@@ -193,10 +233,11 @@ export async function main(argv = process.argv.slice(2), out = process.stdout, e
     const passphrase = await passphraseFor(bundleFile, opts, deps);
     const opened = await openBundleFile(bundleFile, { passphrase, stagingDir: staging });
     const plan = planImport(opened, {
-      targetVault: target, passphrase, maps: opts.maps, includeLaya: opts.includeLaya, replaceHeads: opts.replaceHeads,
-      useIncomingTemplates: opts.useIncomingTemplates,
+      targetVault: target, passphrase, maps: opts.maps, includeLaya: opts.includeLaya, withGlobal: opts.withGlobal,
+      replaceHeads: opts.replaceHeads, useIncomingTemplates: opts.useIncomingTemplates,
       base: opts.base ? await loadBase(path.resolve(opts.base), opts, deps) : null,
       skipProjects: opts.skipProjects,
+      onlyProjects: opts.onlyProjects.length ? opts.onlyProjects : null,
       ...(deps.layaDir ? { layaDir: deps.layaDir } : {}), ...(deps.now ? { now: deps.now } : {})
     });
     if (opts.yes) {

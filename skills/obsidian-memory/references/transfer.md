@@ -16,10 +16,21 @@ are `omem` subcommands and need no Laya service; without the `omem` command run
 - `--project <id>` (repeatable) exports one project; add `--no-global` when it
   goes to someone else. A partial export leaves out Laya data (it holds prompts
   from every project) unless `--with-laya`.
+- **Incremental export**: `--incremental` (or `--since <device|bundle>`) packs
+  only Vault files added or changed since the last synced baseline (recorded in
+  `~/.laya/state/sync/` per peer device) or since an earlier bundle file,
+  omitting unchanged files and large attachments while recording their hashes in
+  `manifest.json` so the importer can verify them and distinguish "unchanged"
+  from "deleted". If no baseline exists yet (or `--full` is passed), `omem export`
+  exports a full bundle and explains why. When synced with multiple devices,
+  pass `--since <device>` (or `--since <bundle>`). Plain `omem export` without
+  `--incremental` / `--since` always creates a self-contained full bundle.
 - `--encrypt` asks for a passphrase on the terminal. The agent never chooses,
   asks for or types it: tell the user to run the command themselves, or to set
   `OBSIDIAN_MEMORY_PASSPHRASE` / pass `--passphrase-file`. Recommend it whenever
-  the file will travel through a chat app or cloud drive.
+  the file will travel through a chat app or cloud drive. (When `--since` points
+  to an encrypted bundle with a different passphrase, pass
+  `--since-passphrase-file <file>`.)
 - Report what was left out and any lines flagged as credentials (paths and
   line numbers only). `--with-decisions` and `--with-obsidian-config` include
   private prompt logs and plugin settings that may contain API keys: only on an
@@ -30,15 +41,38 @@ are `omem` subcommands and need no Laya service; without the `omem` command run
 1. Dry run: `omem import <file> [--vault <folder>]`. The default target is the
    Vault this machine's hosts already use; with none, ask the user where the
    Vault should live (an empty folder gets a fresh copy). Show the user the
-   plan: files added, logs merged, conflicts, projects and how each is placed.
-2. Ask before importing a project this Vault does not have yet. One the user
-   wants to keep off this machine is left out with `--skip-project <id>`: its
-   notes and its `projects.yaml` entry are not imported.
-3. Projects whose code is here under another path: a Git project binds itself
+   plan: bundle type (full or incremental), import scope, files added, logs
+   merged, conflicts, projects and how each is placed.
+2. **Scope and anti-pollution filters**:
+   - `--only-project <id>` (repeatable): whitelist mode — imports only the named
+     project(s)' notes, folders, and `projects.yaml` entries; all other projects
+     and Vault root files are ignored. By default skips `10-Global/` (add
+     `--with-global` to include it) and leaves `~/.laya` untouched (add
+     `--with-laya` to include it). Rejects unknown project IDs not present in
+     the bundle, and cannot be combined with `--skip-project`.
+   - `--no-global`: in normal import mode, skips `10-Global/` (preferences,
+     index, log, Inbox/Raw) so another machine's global memory does not pollute
+     this machine.
+   - `--skip-project <id>` (repeatable): blacklist mode — leaves specific
+     projects out of an otherwise full import.
+   - Projects marked `transfer: local` on this machine are always protected
+     (never imported or overwritten, even if listed in `--only-project`).
+   - Whitelist/partial imports update `~/.laya/state/sync/` only for in-scope
+     paths; out-of-scope projects and skipped `10-Global/` are never recorded as
+     locally deleted.
+3. **Incremental bundles**: `omem import` automatically detects full vs.
+   incremental bundles (and remains compatible with v0.15.0 and earlier full
+   bundles). Before writing anything, it verifies that the target is an existing
+   Vault, matches the target device (for device-based incrementals), and holds
+   every in-scope omitted unchanged file (or has a local sync baseline proving a
+   local edit). If the baseline does not hold (empty folder, missing unchanged
+   files, cross-device or content mismatch), import refuses safely and directs
+   the user to export a full bundle (`omem export --full`).
+4. Projects whose code is here under another path: a Git project binds itself
    the first time its checkout is opened (by remote). For the others ask the
    user for the directory and add `--map <id>=<dir>`. Never search the disk.
-4. After the user confirms, run the same command with `--yes`.
-5. Follow-up the output lists, each with the user's consent:
+5. After the user confirms, run the same command with `--yes`.
+6. Follow-up the output lists, each with the user's consent:
    - hosts still pointing at another Vault: run the printed setup commands;
    - `00-System/import-conflicts/<time>/`: notes that differed. Merge each
      imported copy into the local note following Ingest rules (update the

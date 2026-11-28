@@ -315,9 +315,12 @@ so, and when another writer is active, defer and report the conflict.
 ## Move the memory to another machine
 
 Only on the user's request ("导出知识库", "导入这个记忆包", "迁移到另一台电脑"):
-`omem export` packs the Vault and the user's Laya labels/heads into one file;
-`omem import <file>` merges it into this machine's Vault without overwriting
-local notes. Always show the import dry run first and apply with `--yes` only
+`omem export` packs the Vault and the user's Laya labels/heads into one file
+(use `--incremental` / `--since <device|bundle>` for incremental bundles once a
+baseline exists, or `--full` for a full bundle); `omem import <file>` merges
+full or incremental bundles into this machine's Vault without overwriting local
+notes (supports `--only-project <id>` and `--no-global` to prevent cross-machine
+pollution). Always show the import dry run first and apply with `--yes` only
 after the user confirms. Never ask for or type a bundle passphrase yourself.
 Steps, options and follow-up (conflict copies, project mapping, host setup) are
 in [references/transfer.md](references/transfer.md).
