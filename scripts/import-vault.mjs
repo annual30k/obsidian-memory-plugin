@@ -27,6 +27,8 @@ const USAGE = `Usage: omem import <bundle> [--vault <path>] [options]
   --map <project-id>=<dir>   where a project's code lives on this machine (repeatable)
   --no-laya                  leave ~/.laya untouched
   --replace-heads            use the bundle's trained Laya heads instead of the local ones
+  --skip-project <id>        leave this project out entirely: its notes and its projects.yaml entry
+                             (repeatable), e.g. private material that should stay on the other machine
   --base <older bundle>      the bundle both machines last started from (e.g. the export this Vault was
                              copied from): a file only one side changed since then is not a conflict.
                              Needed once for Vaults synced before 0.13.1; later imports remember it
@@ -38,7 +40,7 @@ const USAGE = `Usage: omem import <bundle> [--vault <path>] [options]
 `;
 
 export function parseArgs(argv = []) {
-  const opts = { bundle: null, vaultPath: null, maps: {}, includeLaya: true, replaceHeads: false, useIncomingTemplates: false, base: null, passphraseFile: null, yes: false, json: false, help: false };
+  const opts = { bundle: null, vaultPath: null, maps: {}, includeLaya: true, replaceHeads: false, useIncomingTemplates: false, base: null, skipProjects: [], passphraseFile: null, yes: false, json: false, help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--vault" && argv[i + 1]) opts.vaultPath = argv[++i];
@@ -52,6 +54,7 @@ export function parseArgs(argv = []) {
     else if (a === "--replace-heads") opts.replaceHeads = true;
     else if (a === "--use-incoming-templates") opts.useIncomingTemplates = true;
     else if (a === "--base" && argv[i + 1]) opts.base = argv[++i];
+    else if (a === "--skip-project" && argv[i + 1]) opts.skipProjects.push(argv[++i]);
     else if (a === "--passphrase-file" && argv[i + 1]) opts.passphraseFile = argv[++i];
     else if (a === "--yes" || a === "-y") opts.yes = true;
     else if (a === "--json") opts.json = true;
@@ -96,6 +99,7 @@ function printPlan(plan, out, applied) {
   const m = plan.manifest;
   const v = plan.vault;
   out.write(`Bundle: created ${m.createdAt} on ${m.source?.platform ?? "?"} from Vault "${m.source?.vaultName ?? "?"}" (plugin ${m.pluginVersion ?? "?"})${plan.encrypted ? ", encrypted" : ""}\n`);
+  if (plan.skipped?.projects.length) out.write(`Left out: project(s) ${plan.skipped.projects.join(", ")} (--skip-project)\n`);
   out.write(`Target: ${plan.target.path} (${{ missing: "new folder", empty: "empty folder", vault: "existing Vault, merging" }[plan.target.state]})\n\n`);
   const verb = applied ? "" : "would be ";
   out.write(`Vault files: ${v.add.length} ${verb}added, ${v.same.length} already identical, ${v.merged.length} log(s) ${verb}merged, ${v.conflicts.length} conflict(s), ${v.keptLocal.length} kept local${v.dirs.length ? `; ${v.dirs.length} folder(s) ${verb}created` : ""}\n`);
@@ -180,6 +184,7 @@ export async function main(argv = process.argv.slice(2), out = process.stdout, e
       targetVault: target, passphrase, maps: opts.maps, includeLaya: opts.includeLaya, replaceHeads: opts.replaceHeads,
       useIncomingTemplates: opts.useIncomingTemplates,
       base: opts.base ? await loadBase(path.resolve(opts.base), opts, deps) : null,
+      skipProjects: opts.skipProjects,
       ...(deps.layaDir ? { layaDir: deps.layaDir } : {}), ...(deps.now ? { now: deps.now } : {})
     });
     if (opts.yes) {

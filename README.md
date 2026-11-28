@@ -438,6 +438,11 @@ omem import ~/Downloads/obsidian-memory-export-20261127-100000.tar.gz.enc --vaul
   （名称相同、代码文件夹同名或 remote 相同）。导入后用 `omem projects merge <旧id> <新id>` 合并：
   笔记移到保留的项目，日志条目合并，内容不同的笔记放进冲突目录，指向旧目录的链接改写，路径和 remote 合并，
   旧条目删除；默认只预演。
+- 只想留在某一台电脑上的项目（例如私人资料），在那台电脑上运行一次 `omem projects local <项目id> --yes`
+  （在 `projects.yaml` 里记为 `transfer: local`）：以后导出都不会带上它的笔记和注册信息，别的电脑的同名项目也不会被导入进来；
+  这时 Laya 标注默认也不导出（标注不记录所属项目，无法单独过滤），其他笔记里提到它的地方会被列出来提醒。
+  只想临时排除某个项目时，导入加 `--skip-project <项目id>`。
+  `00-System/template-backups/`、`00-System/import-conflicts/` 是本机的维护残留，不会被导出，旧包里带着的也会在导入时忽略。
 - 代码在本机另一个路径的项目：Git 项目第一次在该仓库里工作时自动认出；其他项目用
   `--map <项目id>=<本机目录>` 指定，或之后运行 `omem projects bind <项目id> <目录> --yes`。
 - 每台电脑会记住每个文件上次与另一台"对齐"时的版本（存在本机 `~/.laya/state/sync/`，导出时随包带上）。

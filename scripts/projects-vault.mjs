@@ -19,7 +19,7 @@ import path from "node:path";
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { resolveVaultPath } from "../lib/memory-router/vault-index.js";
-import { backfillRemotes, bindProject, listProjects } from "../lib/vault-transfer/project-ops.js";
+import { backfillRemotes, bindProject, listProjects, setLocalOnly } from "../lib/vault-transfer/project-ops.js";
 import { applyMerge, planMerge } from "../lib/vault-transfer/project-merge.js";
 import { likelyDuplicates, parseProjectsYaml } from "../lib/vault-transfer/projects.js";
 import { readProjectsText } from "../lib/vault-transfer/project-ops.js";
@@ -29,17 +29,20 @@ const USAGE = `Usage:
   omem projects bind <project-id> [<dir>] [--vault <path>] [--yes]
   omem projects backfill-remotes [--vault <path>] [--yes]
   omem projects merge <from-id> <into-id> [--vault <path>] [--yes]
-Without --yes, bind, backfill-remotes and merge only show what they would do.
+  omem projects local <project-id> [--off] [--vault <path>] [--yes]
+local keeps a project on this machine: never exported, never taken from another machine's bundle.
+Without --yes, bind, backfill-remotes, merge and local only show what they would do.
 `;
 
 export function parseArgs(argv = []) {
-  const opts = { command: "list", args: [], vaultPath: null, yes: false, json: false, help: false };
+  const opts = { command: "list", args: [], vaultPath: null, yes: false, json: false, help: false, off: false };
   const positional = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--vault" && argv[i + 1]) opts.vaultPath = argv[++i];
     else if (a === "--yes" || a === "-y") opts.yes = true;
     else if (a === "--json") opts.json = true;
+    else if (a === "--off") opts.off = true;
     else if (a === "--help" || a === "-h") opts.help = true;
     else positional.push(a);
   }
@@ -60,7 +63,7 @@ export function main(argv = process.argv.slice(2), out = process.stdout, err = p
     if (opts.json) { out.write(JSON.stringify({ vault: vaultPath, projects }, null, 2) + "\n"); return 0; }
     out.write(`Vault: ${vaultPath}\n`);
     for (const p of projects) {
-      out.write(`\n${p.id}  (${p.scope})${p.rootsHere.length ? "" : "  — not on this machine"}\n`);
+      out.write(`\n${p.id}  (${p.scope})${p.localOnly ? "  [stays on this machine]" : ""}${p.rootsHere.length ? "" : "  — not on this machine"}\n`);
       for (const r of p.roots) out.write(`  root   ${p.rootsHere.includes(r) ? "[here]" : "      "} ${r}\n`);
       for (const r of p.remotes) out.write(`  remote        ${r}\n`);
     }
@@ -69,6 +72,17 @@ export function main(argv = process.argv.slice(2), out = process.stdout, err = p
       out.write("\nProbably the same project under two ids:\n");
       for (const d of dups) out.write(`  ${d.a} ~ ${d.b}: ${d.reasons.join(", ")}  (omem projects merge <from> <into>)\n`);
     }
+    return 0;
+  }
+
+  if (opts.command === "local") {
+    const [id] = opts.args;
+    if (!id) { err.write(USAGE); return 1; }
+    const r = setLocalOnly(vaultPath, id, !opts.off, { apply: opts.yes });
+    if (!r.ok) { err.write(`Error: ${r.error}\n`); return 1; }
+    const state = opts.off ? "may be exported again" : "stays on this machine: never exported, never imported from another machine";
+    if (!r.changed) { out.write(`${id} already ${opts.off ? "is exported normally" : "stays on this machine"}.\n`); return 0; }
+    out.write(opts.yes ? `${id} now ${state}.\n` : `Would mark ${id}: ${state}.\nDry run: pass --yes to write 00-System/projects.yaml.\n`);
     return 0;
   }
 
