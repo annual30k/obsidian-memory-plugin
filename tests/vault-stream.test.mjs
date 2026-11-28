@@ -59,9 +59,16 @@ test("a streamed import copies attachments file to file and reproduces the Vault
   const png = plan.writes.find((w) => w.abs.endsWith("shot.png"));
   assert.ok(png.from && !png.data, "the attachment is copied, not loaded");
   applyImport(plan);
-  for (const rel of ["AGENTS.md", "20-Projects/app-1/raw/assets/cand-x/shot.png"]) {
+  const longNote = `20-Projects/app-1/wiki/knowledge/${"很长的中文名字".repeat(12)}.md`;
+  assert.equal(Buffer.byteLength(path.basename(longNote), "utf8"), 255);
+  for (const rel of ["AGENTS.md", longNote, "20-Projects/app-1/raw/assets/cand-x/shot.png"]) {
     assert.ok(fs.readFileSync(path.join(v, rel)).equals(fs.readFileSync(path.join(target, rel))), rel);
   }
+  assert.deepEqual(
+    fs.readdirSync(path.join(target, "20-Projects", "app-1", "wiki", "knowledge")).filter((f) => f.endsWith(".tmp")),
+    [],
+    "no temporary files left behind"
+  );
   // A changed attachment on both sides is parked as a conflict copy, also without loading it.
   fs.writeFileSync(path.join(target, "20-Projects/app-1/raw/assets/cand-x/shot.png"), crypto.randomBytes(1024));
   fs.writeFileSync(path.join(v, "20-Projects/app-1/raw/assets/cand-x/shot.png"), crypto.randomBytes(2048));
