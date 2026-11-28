@@ -19,6 +19,7 @@ import { resolveVaultPath } from "../lib/memory-router/vault-index.js";
 import { CONFLICTS_DIR } from "../lib/vault-transfer/import.js";
 import { LEDGER_REL, SAME_INGEST_DIR, citedCandidates, localIngestState, textHash } from "../lib/vault-transfer/reconcile.js";
 import { deviceName } from "../lib/vault-ingest.js";
+import { exitAfterFlush } from "../lib/exit-after-flush.js";
 
 const USAGE = `Usage:
   omem reconcile [--vault <path>] [--json]
@@ -128,4 +129,4 @@ export function main(argv = process.argv.slice(2), out = process.stdout, err = p
 const isEntrypoint = process.argv[1] && (() => {
   try { return realpathSync(path.resolve(process.argv[1])) === fileURLToPath(import.meta.url); } catch { return false; }
 })();
-if (isEntrypoint) process.exit(main());
+if (isEntrypoint) exitAfterFlush(main());

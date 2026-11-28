@@ -108,7 +108,9 @@ are `omem` subcommands and need no Laya service; without the `omem` command run
      imported copy into the local note following Ingest rules (update the
      canonical note, mark real contradictions). Never rewrite a local Raw
      note: report a differing Raw to the user instead. Delete the folder only
-     when every pair is resolved;
+     when every pair is resolved. Re-importing the same bundle before that
+     does not copy those notes again (listed as already parked); notes that
+     differ only in trailing spaces or blank lines are kept as they are;
    - `omem index` for semantic hints, `laya train` when labels were merged.
 
 Templates are never conflicts: an unedited older local template is upgraded to

@@ -20,6 +20,7 @@ import { isEncrypted } from "../lib/vault-transfer/archive.js";
 import { defaultBundleName, loadSinceBundle, looksLikeBundlePath, prepareExport } from "../lib/vault-transfer/export.js";
 import { getPassphrase } from "../lib/vault-transfer/passphrase.js";
 import { writeBundleFile } from "../lib/vault-transfer/stream.js";
+import { exitAfterFlush } from "../lib/exit-after-flush.js";
 
 const USAGE = `Usage: omem export [--vault <path>] [--out <file-or-dir>] [options]
   --project <id>                export only this project (repeatable); Laya data is then left out unless --with-laya
@@ -179,4 +180,4 @@ export async function main(argv = process.argv.slice(2), out = process.stdout, e
 const isEntrypoint = process.argv[1] && (() => {
   try { return realpathSync(path.resolve(process.argv[1])) === fileURLToPath(import.meta.url); } catch { return false; }
 })();
-if (isEntrypoint) main().then((code) => process.exit(code));
+if (isEntrypoint) main().then((code) => exitAfterFlush(code));

@@ -25,6 +25,7 @@ import { applyRollback, listImportSnapshots, planRollback } from "../lib/vault-t
 import { ancestorsFromBundle } from "../lib/vault-transfer/sync-base.js";
 import { getPassphrase } from "../lib/vault-transfer/passphrase.js";
 import { refreshVaultIndex } from "./index-vault.mjs";
+import { exitAfterFlush } from "../lib/exit-after-flush.js";
 
 const SCRIPTS = path.dirname(fileURLToPath(import.meta.url));
 
@@ -219,6 +220,14 @@ function printPlan(plan, out, applied) {
   }
   if (v.conflicts.length > 30) out.write(`  … and ${v.conflicts.length - 30} more\n`);
   if (v.conflicts.length) out.write(`  Local notes kept; imported copies ${verb}put in ${plan.conflictsDir}/ (README lists them for the agent to merge).\n`);
+  if (v.alreadyParked?.length) {
+    out.write(`  ${v.alreadyParked.length} conflict(s) already parked by an earlier import and not merged yet (not copied again):\n`);
+    for (const c of v.alreadyParked.slice(0, 20)) out.write(`    ${c.rel} ← ${c.copy}\n`);
+  }
+  if (v.whitespaceOnly?.length) {
+    out.write(`  ${v.whitespaceOnly.length} note(s) differ only in trailing spaces or blank lines: local kept, not a conflict\n`);
+    for (const r of v.whitespaceOnly.slice(0, 10)) out.write(`    ${r}\n`);
+  }
   const ig = plan.ingest;
   if (ig && (ig.candidatesAdvanced.length || ig.rawSame.length || ig.logEntriesSkipped || ig.duplicates.length || ig.indexLines.length || ig.removedFolded.length || ig.alreadyFolded.length)) {
     out.write("\nIngests reconciled by candidate id:\n");
@@ -448,4 +457,4 @@ export async function main(argv = process.argv.slice(2), out = process.stdout, e
 const isEntrypoint = process.argv[1] && (() => {
   try { return realpathSync(path.resolve(process.argv[1])) === fileURLToPath(import.meta.url); } catch { return false; }
 })();
-if (isEntrypoint) main().then((code) => process.exit(code));
+if (isEntrypoint) main().then((code) => exitAfterFlush(code));

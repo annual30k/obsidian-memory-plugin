@@ -14,6 +14,7 @@ import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { memoryJudgeFromEnv } from "../lib/config.js";
 import { createMemoryRouter } from "../lib/memory-router/router.js";
+import { exitAfterFlush } from "../lib/exit-after-flush.js";
 import {
   loadVaultIndex, loadEmbeddingCache, ensureVaultEmbeddings, pendingEmbeddings, resolveVaultPath,
   defaultIndexCachePath, defaultEmbeddingCachePath
@@ -182,4 +183,4 @@ export async function main(argv = process.argv.slice(2), out = process.stdout, e
 const isEntrypoint = process.argv[1] && (() => {
   try { return realpathSync(path.resolve(process.argv[1])) === fileURLToPath(import.meta.url); } catch { return false; }
 })();
-if (isEntrypoint) main().then((code) => process.exit(code));
+if (isEntrypoint) main().then((code) => exitAfterFlush(code));
