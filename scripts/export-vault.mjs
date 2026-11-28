@@ -127,7 +127,7 @@ export async function main(argv = process.argv.slice(2), out = process.stdout, e
       out.write(JSON.stringify({
         file, bytes: result.bundle.length, encrypted: result.encrypted,
         bundleType: result.bundleType, incremental: result.incremental, fallbackReason: result.fallbackReason,
-        vaultFiles, layaFiles,
+        vaultFiles, layaFiles, layaFilter: result.layaFilter,
         projects: result.manifest.projects.map((p) => p.id), keptHere: result.keptHere, mentions: result.mentions,
         remotesAdded: result.remotesAdded, skipped: result.skipped, secrets: result.secrets
       }, null, 2) + "\n");
@@ -143,9 +143,18 @@ export async function main(argv = process.argv.slice(2), out = process.stdout, e
     for (const c of result.remotesAdded) out.write(`  recorded Git remote for ${c.id}: ${c.add.join(", ")}\n`);
     if (result.remotesAdded.length) out.write("  (in the bundle only; `omem projects backfill-remotes --yes` records them in this Vault too)\n");
     for (const s of result.skipped) out.write(`  left out ${s.rel}: ${s.reason}\n`);
+    if (result.layaFilter) {
+      const lf = result.layaFilter;
+      const dropped = lf.droppedProject + lf.droppedScope + lf.droppedUnattributed;
+      const parts = [];
+      if (lf.droppedProject) parts.push(`${lf.droppedProject} excluded project`);
+      if (lf.droppedScope) parts.push(`${lf.droppedScope} excluded global`);
+      if (lf.droppedUnattributed) parts.push(`${lf.droppedUnattributed} unattributed legacy`);
+      out.write(`  Laya labels filtered: kept ${lf.kept}, filtered ${dropped}${parts.length ? ` (${parts.join(", ")})` : ""}\n`);
+    }
     if (result.keptHere.length) {
       out.write(`  kept on this machine (transfer: local): ${result.keptHere.join(", ")}\n`);
-      if (result.layaLeftOut) out.write("  Laya labels left out: they record prompts without their project, so they may include ones about a project that stays here (--with-laya to include them)\n");
+      if (result.layaLeftOut) out.write("  Laya labels left out: no exportable attributed labels remained (--with-laya includes unattributed legacy labels)\n");
     }
     if (result.mentions.length) {
       out.write(`\nWarning: ${result.mentions.length} exported note(s) mention a project that stays on this machine (its name or paths travel with them):\n`);

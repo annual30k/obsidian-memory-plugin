@@ -14,8 +14,12 @@ are `omem` subcommands and need no Laya service; without the `omem` command run
   into `obsidian-memory-export-<time>.tar.gz`. The bundle's copy of
   `projects.yaml` records each local checkout's Git remote.
 - `--project <id>` (repeatable) exports one project; add `--no-global` when it
-  goes to someone else. A partial export leaves out Laya data (it holds prompts
-  from every project) unless `--with-laya`.
+  goes to someone else. When `--project`, `--no-global`, or `transfer: local`
+  projects are present, `labels*.jsonl` is filtered per row by `project_id` /
+  `scope`: rows belonging to excluded projects and unattributed legacy rows are
+  dropped conservatively (report shows kept vs. filtered counts), trained heads
+  are left out for `--project` exports, and `--no-laya` / `--with-laya` still
+  override explicitly.
 - **Incremental export**: `--incremental` (or `--since <device|bundle>`) packs
   only Vault files added or changed since the last synced baseline (recorded in
   `~/.laya/state/sync/` per peer device) or since an earlier bundle file,
@@ -68,11 +72,31 @@ are `omem` subcommands and need no Laya service; without the `omem` command run
    local edit). If the baseline does not hold (empty folder, missing unchanged
    files, cross-device or content mismatch), import refuses safely and directs
    the user to export a full bundle (`omem export --full`).
-4. Projects whose code is here under another path: a Git project binds itself
+4. **Remote renames and deletions**: using the three-way sync baseline, an
+   unmodified local file that disappeared on the other machine while an incoming
+   new file has the same ancestor content hash is migrated cleanly as a rename
+   (local edits on the old path are kept and the incoming rename is parked as a
+   rename/modify conflict). An unmodified local file genuinely deleted on the
+   other machine (absent from both payload and an incremental bundle's
+   `unchanged` list, inside the active scope, and not a protected core file such
+   as `projects.yaml`, `AGENTS.md`, `Home.md`, templates, or scope index/log) is
+   propagated and backed up in the pre-import snapshot; if modified locally, it
+   is kept and reported as a delete/modify conflict.
+5. **Pre-import snapshot, one-click rollback, and auto-index**: every
+   `omem import --yes` automatically saves a pre-import snapshot outside the
+   Vault (`~/.laya/backups/imports/`, keeping the last 10 by default; `--no-backup`
+   disables it) covering overwritten/deleted files, added paths, sync state, and
+   Laya changes. Undo an import with `omem import rollback [snapshot-id] --yes`
+   (`--list` shows snapshots; refuses to overwrite files manually edited after
+   import unless `--force`). After Vault writes or rollbacks, `omem`
+   automatically refreshes the Laya vector index (pruning stale vectors for
+   deleted notes) and degrades gracefully if the Laya service is not running
+   (`--no-index` skips it).
+6. Projects whose code is here under another path: a Git project binds itself
    the first time its checkout is opened (by remote). For the others ask the
    user for the directory and add `--map <id>=<dir>`. Never search the disk.
-5. After the user confirms, run the same command with `--yes`.
-6. Follow-up the output lists, each with the user's consent:
+7. After the user confirms, run the same command with `--yes`.
+8. Follow-up the output lists, each with the user's consent:
    - hosts still pointing at another Vault: run the printed setup commands;
    - `00-System/import-conflicts/<time>/`: notes that differed. Merge each
      imported copy into the local note following Ingest rules (update the

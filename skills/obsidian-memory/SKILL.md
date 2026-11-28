@@ -317,13 +317,16 @@ so, and when another writer is active, defer and report the conflict.
 Only on the user's request ("导出知识库", "导入这个记忆包", "迁移到另一台电脑"):
 `omem export` packs the Vault and the user's Laya labels/heads into one file
 (use `--incremental` / `--since <device|bundle>` for incremental bundles once a
-baseline exists, or `--full` for a full bundle); `omem import <file>` merges
-full or incremental bundles into this machine's Vault without overwriting local
-notes (supports `--only-project <id>` and `--no-global` to prevent cross-machine
-pollution). Always show the import dry run first and apply with `--yes` only
-after the user confirms. Never ask for or type a bundle passphrase yourself.
-Steps, options and follow-up (conflict copies, project mapping, host setup) are
-in [references/transfer.md](references/transfer.md).
+baseline exists, or `--full` for a full bundle; Laya labels are filtered per
+project when `transfer: local` or `--project` is active); `omem import <file>`
+merges full or incremental bundles into this machine's Vault without overwriting
+local notes (supports `--only-project <id>` and `--no-global` to prevent
+cross-machine pollution, propagates safe remote renames/deletions, snapshots
+before `--yes` for `omem import rollback`, and refreshes the Laya vector index
+when available). Always show the import dry run first and apply with `--yes`
+only after the user confirms. Never ask for or type a bundle passphrase
+yourself. Steps, options and follow-up (conflict copies, rollback, project
+mapping, host setup) are in [references/transfer.md](references/transfer.md).
 
 ## Hard boundaries
 

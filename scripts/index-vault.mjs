@@ -57,30 +57,88 @@ const textCount = (notes) => notes.reduce((n, note) => n + (Array.isArray(note.e
  */
 export async function indexVault({
   vaultPath, embedPassages, model, indexCachePath = defaultIndexCachePath(), embeddingCachePath = defaultEmbeddingCachePath(),
-  maxMs = 30 * 60 * 1000, now = Date.now, onProgress = () => {}
+  maxMs = 30 * 60 * 1000, ttlMs = undefined, now = Date.now, onProgress = () => {}
 }) {
   const start = now();
-  const index = loadVaultIndex(vaultPath, { cachePath: indexCachePath });
-  if (!index) return { notes: 0, embedded: 0, pending: 0, texts: 0, seconds: 0, stopped: "no_vault" };
+  const index = loadVaultIndex(vaultPath, { cachePath: indexCachePath, ...(ttlMs !== undefined ? { ttlMs } : {}) });
+  if (!index) return { notes: 0, embedded: 0, pruned: 0, pending: 0, texts: 0, seconds: 0, stopped: "no_vault" };
   const cache = loadEmbeddingCache(embeddingCachePath, { vaultPath, model });
   const total = textCount(pendingEmbeddings(index, cache));
   let embedded = 0;
+  let pruned = 0;
   let done = 0;
   let stopped = null;
+  const live = new Set(index.notes.map((n) => n.path));
+  const staleCount = () => Object.keys(cache.entries).filter((k) => !live.has(k)).length;
+  if (pendingEmbeddings(index, cache).length === 0) {
+    // Still prune ghost vectors for notes removed by import or rollback.
+    const beforeStale = staleCount();
+    await ensureVaultEmbeddings(index, cache, async () => [], { cachePath: embeddingCachePath, maxNotes: 0 });
+    pruned += Math.max(0, beforeStale - staleCount());
+  }
   while (pendingEmbeddings(index, cache).length > 0) {
     if (now() - start > maxMs) { stopped = "time_budget"; break; }
     const before = textCount(pendingEmbeddings(index, cache));
+    const beforeStale = staleCount();
     const r = await ensureVaultEmbeddings(index, cache, async (texts) => {
       const out = await embedPassages(texts);
       if (!out || out.model !== model) throw new Error("the retriever model changed while indexing");
       return out.vectors;
     }, { cachePath: embeddingCachePath, maxNotes: BATCH });
+    pruned += Math.max(0, beforeStale - staleCount());
     if (!r.embedded) { stopped = "no_progress"; break; }
     embedded += r.embedded;
     done += before - textCount(pendingEmbeddings(index, cache));
     onProgress({ done, total, notesLeft: r.pending, seconds: (now() - start) / 1000 });
   }
-  return { notes: index.n, embedded, pending: pendingEmbeddings(index, cache).length, texts: done, seconds: (now() - start) / 1000, stopped };
+  return { notes: index.n, embedded, pruned, pending: pendingEmbeddings(index, cache).length, texts: done, seconds: (now() - start) / 1000, stopped };
+}
+
+/**
+ * Best-effort incremental Vault index + embedding refresh after an import or rollback.
+ * Always updates the lexical Vault index cache; embeds new notes and prunes deleted vectors when the
+ * Laya service is reachable, and degrades gracefully (never throws) when Laya is not running.
+ */
+export async function refreshVaultIndex({
+  vaultPath, layaDir = null, maxMs = 60 * 1000, env = process.env, createRouter = null
+} = {}) {
+  const indexCachePath = layaDir
+    ? path.join(layaDir, "cache", path.basename(defaultIndexCachePath()))
+    : defaultIndexCachePath();
+  const embeddingCachePath = layaDir
+    ? path.join(layaDir, "cache", path.basename(defaultEmbeddingCachePath()))
+    : defaultEmbeddingCachePath();
+  // Refresh the lightweight lexical index immediately (no Laya service needed).
+  try { loadVaultIndex(vaultPath, { cachePath: indexCachePath, ttlMs: 0 }); } catch {}
+
+  const baseCfg = memoryJudgeFromEnv(env);
+  const cfg = layaDir ? { ...baseCfg, serviceFile: path.join(layaDir, "service.json") } : baseCfg;
+  const router = (createRouter ?? ((c) => createMemoryRouter(c, { useCache: true })))(cfg);
+  try {
+    const probe = await router.embedTexts(["index"], "query", { timeout: 5000 });
+    if (!probe?.model) {
+      const why = noRetrieverReason(router.healthInfo);
+      return {
+        ok: false,
+        reason: why ? "no_retriever" : "service_unavailable",
+        message: why ? "Laya service has no retriever enabled" : "Laya service is not running"
+      };
+    }
+    const result = await indexVault({
+      vaultPath,
+      model: probe.model,
+      embedPassages: (texts) => router.embedTexts(texts, "passage", { timeout: 60000 }),
+      indexCachePath,
+      embeddingCachePath,
+      maxMs,
+      ttlMs: 0
+    });
+    return { ok: true, ...result };
+  } catch (error) {
+    return { ok: false, reason: "error", message: error?.message ?? "Laya service unavailable" };
+  } finally {
+    router.dispose?.();
+  }
 }
 
 export async function main(argv = process.argv.slice(2), out = process.stdout, err = process.stderr) {

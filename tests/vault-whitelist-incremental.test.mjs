@@ -77,7 +77,7 @@ test("--only-project imports only selected project(s), skips 10-Global and Laya 
     projects: [{ id: "alpha-1", roots: ["/src/alpha"] }, { id: "beta-2", roots: ["/src/beta"] }, { id: "gamma-3", roots: ["/src/gamma"] }]
   });
   const srcLaya = path.join(base, "laya-src");
-  write(path.join(srcLaya, "labels.jsonl"), "{\"prompt\":\"from src\"}\n");
+  write(path.join(srcLaya, "labels.jsonl"), "{\"prompt\":\"from alpha\",\"project_id\":\"alpha-1\"}\n{\"prompt\":\"from beta\",\"project_id\":\"beta-2\"}\n");
   const bundleFile = path.join(base, "full.tar.gz");
   await asDevice("SRC", () => exportToFile(src, bundleFile, { layaDir: srcLaya }));
 
@@ -126,7 +126,7 @@ test("--only-project imports only selected project(s), skips 10-Global and Laya 
   assert.ok(!fs.existsSync(path.join(dst2, "20-Projects", "beta-2")));
   assert.ok(fs.existsSync(path.join(dst2, "10-Global", "preferences.md")), "--with-global imported 10-Global");
   assert.ok(!fs.existsSync(path.join(dst2, "30-Shared", "shared.md")), "30-Shared still excluded in --only-project mode");
-  assert.equal(read(path.join(dstLaya2, "labels.jsonl")), "{\"prompt\":\"from src\"}\n", "--with-laya imported Laya");
+  assert.equal(read(path.join(dstLaya2, "labels.jsonl")), "{\"prompt\":\"from alpha\",\"project_id\":\"alpha-1\"}\n", "--with-laya imported only in-scope project labels");
   fs.rmSync(base, { recursive: true, force: true });
 });
 

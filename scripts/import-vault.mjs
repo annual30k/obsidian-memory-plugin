@@ -4,11 +4,14 @@
  *
  *   omem import <bundle> [--vault <path>] [--map <project-id>=<dir>]...
  *               [--only-project <id>]... [--with-global | --no-global] [--skip-project <id>]...
- *               [--no-laya | --with-laya] [--replace-heads] [--passphrase-file <file>] [--yes] [--json]
+ *               [--no-laya | --with-laya] [--replace-heads] [--no-backup] [--no-index]
+ *               [--passphrase-file <file>] [--yes] [--json]
+ *   omem import rollback [snapshot-id] [--vault <path>] [--list] [--force] [--no-index] [--yes] [--json]
  *
  * Without --yes it only shows the plan. An empty or missing folder receives the bundle as it is; an
  * existing Vault is merged without overwriting anything local (see lib/vault-transfer/import.js).
- * Afterwards it lists the hosts that still point at another Vault and the commands that repoint them.
+ * Every --yes import captures a pre-import snapshot outside the Vault (~/.laya/backups/imports/) so
+ * `omem import rollback` can undo it safely, and refreshes the Laya vector index when available.
  */
 import fs from "node:fs";
 import os from "node:os";
@@ -18,12 +21,18 @@ import { fileURLToPath } from "node:url";
 import { resolveVaultPath } from "../lib/memory-router/vault-index.js";
 import { isEncrypted } from "../lib/vault-transfer/archive.js";
 import { applyImport, openBundleFile, planImport } from "../lib/vault-transfer/import.js";
+import { applyRollback, listImportSnapshots, planRollback } from "../lib/vault-transfer/snapshot.js";
 import { ancestorsFromBundle } from "../lib/vault-transfer/sync-base.js";
 import { getPassphrase } from "../lib/vault-transfer/passphrase.js";
+import { refreshVaultIndex } from "./index-vault.mjs";
 
 const SCRIPTS = path.dirname(fileURLToPath(import.meta.url));
 
-const USAGE = `Usage: omem import <bundle> [--vault <path>] [options]
+const USAGE = `Usage:
+  omem import <bundle> [--vault <path>] [options]
+  omem import rollback [snapshot-id] [--vault <path>] [--list] [--force] [--no-index] [--yes] [--json]
+
+Import options:
   --vault <path>             where to import (default: the Vault this machine's hosts use); an empty
                              or missing folder gets a fresh copy, an existing Vault is merged
   --map <project-id>=<dir>   where a project's code lives on this machine (repeatable)
@@ -41,16 +50,43 @@ const USAGE = `Usage: omem import <bundle> [--vault <path>] [options]
                              Needed once for Vaults synced before 0.13.1; later imports remember it
   --use-incoming-templates   replace edited or hand-written local templates with the bundle's (backed up
                              first); unedited older templates are upgraded without it
+  --no-backup                skip capturing a pre-import rollback snapshot under ~/.laya/backups/imports/
+  --no-index                 skip automatic Laya vector index refresh after importing
   --passphrase-file <file>   passphrase of an encrypted bundle (or OBSIDIAN_MEMORY_PASSPHRASE, or a prompt)
   --yes                      apply; without it only the plan is shown
   --json                     print the plan as JSON
+
+Rollback options (omem import rollback ...):
+  --list                     list available import snapshots for this Vault
+  --force                    overwrite files that were manually edited after the import
+  --no-index                 skip automatic Laya vector index refresh after rolling back
+  --yes                      apply the rollback; without it only the plan is shown
+  --json                     print the rollback plan/result as JSON
 `;
+
+export function parseRollbackArgs(argv = []) {
+  const opts = { snapshotId: null, vaultPath: null, list: false, force: false, noIndex: false, yes: false, json: false, help: false };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--vault" && argv[i + 1]) opts.vaultPath = argv[++i];
+    else if (a === "--list") opts.list = true;
+    else if (a === "--force") opts.force = true;
+    else if (a === "--no-index") opts.noIndex = true;
+    else if (a === "--yes" || a === "-y") opts.yes = true;
+    else if (a === "--json") opts.json = true;
+    else if (a === "--help" || a === "-h") opts.help = true;
+    else if (!a.startsWith("-") && !opts.snapshotId) opts.snapshotId = a;
+    else throw new Error(`unknown option ${a}`);
+  }
+  return opts;
+}
 
 export function parseArgs(argv = []) {
   const opts = {
     bundle: null, vaultPath: null, maps: {}, includeLaya: undefined, withGlobal: undefined,
     replaceHeads: false, useIncomingTemplates: false, base: null,
-    skipProjects: [], onlyProjects: [], passphraseFile: null, yes: false, json: false, help: false
+    skipProjects: [], onlyProjects: [], passphraseFile: null,
+    backup: true, noIndex: false, yes: false, json: false, help: false
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -79,6 +115,8 @@ export function parseArgs(argv = []) {
     }
     else if (a === "--replace-heads") opts.replaceHeads = true;
     else if (a === "--use-incoming-templates") opts.useIncomingTemplates = true;
+    else if (a === "--no-backup") opts.backup = false;
+    else if (a === "--no-index") opts.noIndex = true;
     else if (a === "--base" && argv[i + 1]) opts.base = argv[++i];
     else if (a === "--skip-project" && argv[i + 1]) opts.skipProjects.push(argv[++i]);
     else if (a === "--only-project" && argv[i + 1]) opts.onlyProjects.push(argv[++i]);
@@ -150,17 +188,31 @@ function printPlan(plan, out, applied) {
   out.write(`Target: ${plan.target.path} (${{ missing: "new folder", empty: "empty folder", vault: "existing Vault, merging" }[plan.target.state]})\n\n`);
   const verb = applied ? "" : "would be ";
   const unchangedPart = v.unchanged?.length ? `, ${v.unchanged.length} unchanged (omitted in incremental bundle)` : "";
-  out.write(`Vault files: ${v.add.length} ${verb}added, ${v.same.length} already identical${unchangedPart}, ${v.merged.length} log(s) ${verb}merged, ${v.conflicts.length} conflict(s), ${v.keptLocal.length} kept local${v.dirs.length ? `; ${v.dirs.length} folder(s) ${verb}created` : ""}\n`);
-  if (v.fastForward.length || v.keptNewer.length || v.deletedHere.length || v.deletedThere.length) {
+  const renamedPart = v.renamed?.length ? `, ${v.renamed.length} ${verb}renamed` : "";
+  out.write(`Vault files: ${v.add.length} ${verb}added, ${v.same.length} already identical${unchangedPart}${renamedPart}, ${v.merged.length} log(s) ${verb}merged, ${v.conflicts.length} conflict(s), ${v.keptLocal.length} kept local${v.dirs.length ? `; ${v.dirs.length} folder(s) ${verb}created` : ""}\n`);
+  if (v.fastForward.length || v.keptNewer.length || v.deletedHere.length || v.deletedThere.length || v.renamed?.length || v.deleteConflicts?.length) {
     out.write(`Changed on one side only since the last sync (ancestors from ${plan.sync.ancestors}):\n`);
     if (v.fastForward.length) out.write(`  ${v.fastForward.length} file(s) changed only on the other machine: ${verb}updated here\n`);
     for (const r of v.fastForward.slice(0, 15)) out.write(`    ${r}\n`);
     if (v.keptNewer.length) out.write(`  ${v.keptNewer.length} file(s) changed only here: kept\n`);
     if (v.deletedHere.length) out.write(`  ${v.deletedHere.length} file(s) deleted here since: not re-added\n`);
-    if (v.deletedThere.length) out.write(`  ${v.deletedThere.length} file(s) the other machine no longer has: kept here (delete by hand if intended)\n`);
+    if (v.renamed?.length) {
+      out.write(`  Renamed on the other machine (${v.renamed.length} file(s) ${verb}moved):\n`);
+      for (const r of v.renamed.slice(0, 20)) out.write(`    ${r.from} -> ${r.to}\n`);
+    }
+    if (v.deletedThere.length) {
+      out.write(`  Deleted on the other machine (${v.deletedThere.length} file(s) ${verb}removed here; backed up in import snapshot for rollback):\n`);
+      for (const r of v.deletedThere.slice(0, 20)) out.write(`    ${r}\n`);
+    }
+    if (v.deleteConflicts?.length) {
+      out.write(`  Delete/modify conflict(s) (${v.deleteConflicts.length} file(s) deleted on the other machine, modified here — local version kept):\n`);
+      for (const d of v.deleteConflicts.slice(0, 20)) out.write(`    ${d.rel}\n`);
+    }
   }
   for (const x of v.merged) out.write(`  merged  ${x.rel} (+${x.added} entries)\n`);
-  for (const c of v.conflicts.slice(0, 30)) out.write(`  conflict ${c.rel}\n`);
+  for (const c of v.conflicts.slice(0, 30)) {
+    out.write(c.renamedFrom ? `  conflict (rename/modify) ${c.renamedFrom} -> ${c.rel}\n` : `  conflict ${c.rel}\n`);
+  }
   if (v.conflicts.length > 30) out.write(`  … and ${v.conflicts.length - 30} more\n`);
   if (v.conflicts.length) out.write(`  Local notes kept; imported copies ${verb}put in ${plan.conflictsDir}/ (README lists them for the agent to merge).\n`);
   const ig = plan.ingest;
@@ -209,17 +261,109 @@ function printPlan(plan, out, applied) {
     for (const d of plan.duplicates) out.write(`  ${d.incoming} (imported) ~ ${d.local} (here): ${d.reasons.join(", ")}\n    omem projects merge <from> <into>   e.g. omem projects merge ${d.local} ${d.incoming}\n`);
   }
   const l = plan.laya;
-  if (!l.skipped && (l.add.length || l.merged.length || l.keptLocal.length || l.same.length)) {
+  if (!l.skipped && (l.add.length || l.merged.length || l.keptLocal.length || l.same.length || l.filtered)) {
     out.write(`\nLaya data (${l.dir}):\n`);
     for (const n of l.add) out.write(`  ${verb}added  ${n}\n`);
     for (const n of l.merged) out.write(n.replaced ? `  ${verb}replaced ${n.name}\n` : `  ${verb}merged ${n.name} (+${n.added} lines)\n`);
     for (const n of l.keptLocal) out.write(`  kept local ${n} (differs; --replace-heads uses the imported one)\n`);
+    if (l.filtered) {
+      const lf = l.filtered;
+      const dropped = lf.droppedProject + lf.droppedScope + lf.droppedUnattributed;
+      const parts = [];
+      if (lf.droppedProject) parts.push(`${lf.droppedProject} excluded project`);
+      if (lf.droppedScope) parts.push(`${lf.droppedScope} excluded global`);
+      if (lf.droppedUnattributed) parts.push(`${lf.droppedUnattributed} unattributed legacy`);
+      out.write(`  labels filtered by import scope: kept ${lf.kept}, filtered ${dropped}${parts.length ? ` (${parts.join(", ")})` : ""}\n`);
+    }
   }
   for (const r of plan.rejected) out.write(`Rejected ${r.name}: ${r.reason}\n`);
   for (const w of plan.warnings) out.write(`Warning: ${w}\n`);
 }
 
+function printIndexStatus(indexResult, out) {
+  if (!indexResult) return;
+  if (indexResult.ok) {
+    const pruned = indexResult.pruned ? `, ${indexResult.pruned} stale vector(s) pruned` : "";
+    out.write(`Index refreshed: ${indexResult.notes} notes (${indexResult.embedded} embedded${pruned}).\n`);
+  } else {
+    out.write(`Index not refreshed (${indexResult.message}); run \`omem index\` later when the Laya service is running.\n`);
+  }
+}
+
+async function runRollback(argv, out, err, deps) {
+  let opts;
+  try { opts = parseRollbackArgs(argv); } catch (error) { err.write(`Error: ${error.message}\n${USAGE}`); return 1; }
+  if (opts.help) { out.write(USAGE); return 0; }
+  const target = opts.vaultPath ? path.resolve(opts.vaultPath) : (deps.resolveVaultPath ?? resolveVaultPath)();
+  if (!target) { err.write("Error: no Vault is configured on this machine; pass --vault <folder>.\n"); return 1; }
+  const layaOpts = deps.layaDir ? { layaDir: deps.layaDir } : {};
+  try {
+    if (opts.list) {
+      const snaps = listImportSnapshots(target, layaOpts);
+      if (opts.json) {
+        out.write(JSON.stringify({ vault: target, snapshots: snaps.map(({ dir, ...rest }) => rest) }, null, 2) + "\n");
+        return 0;
+      }
+      if (!snaps.length) { out.write(`No import snapshots found for ${target}.\n`); return 0; }
+      out.write(`Import snapshots for ${target} (newest first):\n`);
+      for (const s of snaps) {
+        const src = [s.bundle?.name, s.bundle?.sourceDevice ? `from ${s.bundle.sourceDevice}` : null].filter(Boolean).join(" ");
+        const sum = s.summary ?? {};
+        const tag = s.rolledBackAt ? ` [rolled back ${s.rolledBackAt}]` : "";
+        out.write(`  ${s.id}  ${s.createdAt}  ${src || "import"}  (+${sum.added ?? 0} ~${sum.modified ?? 0} -${sum.removed ?? 0})${tag}\n`);
+      }
+      return 0;
+    }
+    const plan = planRollback(target, { snapshotId: opts.snapshotId, force: opts.force, ...layaOpts });
+    let appliedCount = 0;
+    let indexResult = null;
+    if (opts.yes) {
+      appliedCount = applyRollback(plan);
+      const vaultChanged = plan.restore.some((r) => r.kind === "vault") || plan.remove.some((r) => r.kind === "vault");
+      if (vaultChanged && !opts.noIndex) {
+        indexResult = await (deps.refreshIndex ?? refreshVaultIndex)({ vaultPath: target, ...(deps.layaDir ? { layaDir: deps.layaDir } : {}) });
+      }
+    }
+    if (opts.json) {
+      out.write(JSON.stringify({
+        applied: opts.yes,
+        snapshotId: plan.snapshot.id,
+        vault: target,
+        restore: plan.restore.map(({ kind, rel, forced }) => ({ kind, rel, forced })),
+        remove: plan.remove.map(({ kind, rel, forced }) => ({ kind, rel, forced })),
+        alreadyDone: plan.alreadyDone,
+        modifiedSinceImport: plan.modifiedSinceImport,
+        changed: appliedCount,
+        index: indexResult
+      }, null, 2) + "\n");
+      return 0;
+    }
+    const verb = opts.yes ? "" : "would be ";
+    out.write(`Rollback snapshot ${plan.snapshot.id} (created ${plan.snapshot.createdAt}${plan.snapshot.bundle?.name ? ` for ${plan.snapshot.bundle.name}` : ""})\n`);
+    out.write(`Target: ${target}\n\n`);
+    out.write(`Files: ${plan.restore.length} ${verb}restored, ${plan.remove.length} added file(s) ${verb}removed, ${plan.alreadyDone.length} already at pre-import state\n`);
+    for (const r of plan.restore.slice(0, 20)) out.write(`  restore [${r.kind}] ${r.rel}${r.forced ? " (forced)" : ""}\n`);
+    for (const r of plan.remove.slice(0, 20)) out.write(`  remove  [${r.kind}] ${r.rel}${r.forced ? " (forced)" : ""}\n`);
+    out.write(`Sync state (~/.laya/state/sync/): ${verb}restored to pre-import state.\n`);
+    if (plan.modifiedSinceImport.length) {
+      out.write(`\nWarning: ${plan.modifiedSinceImport.length} file(s) were modified after the import and ${opts.force ? "will be overwritten (--force)" : "block rollback without --force"}:\n`);
+      for (const m of plan.modifiedSinceImport.slice(0, 20)) out.write(`  ${m.rel} (${m.reason})\n`);
+    }
+    if (!opts.yes) {
+      out.write(`\nDry run: nothing written. Re-run with --yes${plan.modifiedSinceImport.length ? " --force" : ""} to roll back.\n`);
+      return 0;
+    }
+    out.write(`\nRolled back: ${appliedCount} file(s) restored/removed and sync baseline restored.\n`);
+    printIndexStatus(indexResult, out);
+    return 0;
+  } catch (error) {
+    err.write(`Error: ${error.message}\n`);
+    return 1;
+  }
+}
+
 export async function main(argv = process.argv.slice(2), out = process.stdout, err = process.stderr, deps = {}) {
+  if (argv[0] === "rollback") return runRollback(argv.slice(1), out, err, deps);
   let opts;
   try { opts = parseArgs(argv); } catch (error) { err.write(`Error: ${error.message}\n${USAGE}`); return 1; }
   if (opts.help || !opts.bundle) { (opts.help ? out : err).write(USAGE); return opts.help ? 0 : 1; }
@@ -240,28 +384,53 @@ export async function main(argv = process.argv.slice(2), out = process.stdout, e
       onlyProjects: opts.onlyProjects.length ? opts.onlyProjects : null,
       ...(deps.layaDir ? { layaDir: deps.layaDir } : {}), ...(deps.now ? { now: deps.now } : {})
     });
+    let indexResult = null;
     if (opts.yes) {
       fs.mkdirSync(target, { recursive: true });
-      applyImport(plan);
+      applyImport(plan, {
+        backup: opts.backup,
+        bundleName: path.basename(bundleFile),
+        ...(deps.now ? { now: deps.now } : {})
+      });
+      const vaultChanged = plan.writes.some((w) => path.resolve(w.abs).startsWith(path.resolve(target) + path.sep)) || (plan.removes?.length ?? 0) > 0;
+      if (vaultChanged && !opts.noIndex) {
+        indexResult = await (deps.refreshIndex ?? refreshVaultIndex)({ vaultPath: target, ...(deps.layaDir ? { layaDir: deps.layaDir } : {}) });
+      }
     }
     const collect = opts.yes ? (deps.collectHosts ?? (await import("./doctor.mjs")).collect) : null;
     const repoint = collect ? hostsToRepoint(target, collect) : [];
     if (opts.json) {
-      const { writes, manifest, ...rest } = plan;
-      out.write(JSON.stringify({ applied: opts.yes, writes: writes.length, manifest: { ...manifest, files: manifest.files.length }, ...rest, repoint }, null, 2) + "\n");
+      const { writes, manifest, snapshot, ...rest } = plan;
+      out.write(JSON.stringify({
+        applied: opts.yes,
+        writes: writes.length,
+        manifest: { ...manifest, files: manifest.files.length },
+        snapshot: snapshot ? { id: snapshot.id, createdAt: snapshot.createdAt, summary: snapshot.summary } : null,
+        index: indexResult,
+        ...rest,
+        repoint
+      }, null, 2) + "\n");
       return 0;
     }
     printPlan(plan, out, opts.yes);
     if (!opts.yes) {
-      out.write(`\nDry run: nothing written (${plan.writes.length} file(s) would change). Re-run with --yes to import.\n`);
+      out.write(`\nDry run: nothing written (${plan.writes.length} file(s) would change${plan.removes.length ? `, ${plan.removes.length} file(s) would be removed` : ""}). Re-run with --yes to import.\n`);
       return 0;
     }
-    out.write(`\nImported: ${plan.writes.length} file(s) written.\n`);
+    out.write(`\nImported: ${plan.writes.length} file(s) written${plan.removes.length ? `, ${plan.removes.length} file(s) removed` : ""}.\n`);
+    if (plan.snapshot) {
+      out.write(`Snapshot: ${plan.snapshot.id} (saved outside the Vault; undo with \`omem import rollback ${plan.snapshot.id} --vault "${target}"\`)\n`);
+    }
     if (repoint.length) {
       out.write("\nThese hosts still use another Vault. To switch them to this one:\n");
       for (const r of repoint) out.write(`  ${r.host}${r.vaults.length ? ` (now ${r.vaults.join(", ")})` : ""}:\n    ${r.command}\n`);
     }
-    out.write("\nNext: `omem index` embeds the imported notes for semantic hints (needs the Laya service).\n");
+    if (indexResult) {
+      out.write("\n");
+      printIndexStatus(indexResult, out);
+    } else if (opts.noIndex) {
+      out.write("\nNext: `omem index` embeds the imported notes for semantic hints (needs the Laya service).\n");
+    }
     if (plan.laya.merged.some((n) => n.name.startsWith("labels"))) out.write("Labels were merged: `laya train` retrains the recall head with them.\n");
     return 0;
   } catch (error) {
