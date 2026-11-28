@@ -50,6 +50,8 @@ Write the operational rules, not a pointer to a machine-specific plugin path:
    taxonomy; first meaningful user-triggered ingest establishes that taxonomy.
 4. Apply the selective-capture tests and exclusions from SKILL.md. Preserve
    evidence accurately. Never capture routine execution or credential values.
+   The plugin's background session digest may stage pending candidates; it
+   never ingests.
 5. Ingest only after the user asks: freeze selected candidates and attachments
    into Raw using stable candidate IDs and deterministic paths, compare with
    canonical knowledge, preserve conflicts, update linked

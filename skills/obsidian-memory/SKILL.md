@@ -9,7 +9,9 @@ metadata:
 
 This is the user's existing self-growing memory workflow packaged as an Agent
 plugin. The current Agent maintains the knowledge base; do not start a memory
-server, daemon, database, or second agent.
+server, daemon, database, or second agent. The plugin's own background session
+digest only stages pending Inbox candidates; ingest still happens only when the
+user asks.
 
 ## Check the host skills and connection
 

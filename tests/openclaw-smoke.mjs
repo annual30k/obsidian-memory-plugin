@@ -44,7 +44,9 @@ try {
   const env = {
     ...process.env,
     OPENCLAW_STATE_DIR: state,
-    OPENCLAW_CONFIG_PATH: configPath
+    OPENCLAW_CONFIG_PATH: configPath,
+    // Setup links the `omem` command; keep it in the sandbox, never the user's ~/.local/bin.
+    OBSIDIAN_MEMORY_BIN_DIR: join(sandbox, "bin")
   };
   const binary = process.env.OPENCLAW_BIN || "openclaw";
   const run = (args) => execFileSync(binary, args, {
