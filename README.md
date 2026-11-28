@@ -383,6 +383,8 @@ npm run check:antigravity
 | `omem projects` | 列出项目及其在本机的路径和 Git remote，并提示疑似重复的项目；`bind` 把本机的代码目录绑到已有项目；`merge <旧id> <新id>` 合并同一份代码的两个项目 | 不需要 |
 
 | `omem templates` | 检查 `00-System/templates/` 的 14 个模板：当前版 / 旧版未改动 / 改过但字段齐全 / 缺核心字段 / 缺失；`install` 补缺失的，`update` 再升级旧版，`--replace-custom` 连改过的也换掉（先备份） | 不需要 |
+| `omem ingest freeze / complete <候选id>` | 入库时由代码完成确定性的步骤：把候选冻结成 Raw（任何电脑上逐字节相同）、整理完成后把候选标记为已入库；Wiki 仍由 Agent 整理 | 不需要 |
+| `omem reconcile` | 列出导入时因"两台电脑都入库了同一条候选"而暂放的页面；`fold <暂放页> --into <本地页>` 记录合并，让两台电脑收敛到同一页 | 不需要 |
 | `omem digest` / `omem doctor` | 立即整理已结束的会话 / 只读检查四个宿主的安装和 Vault 路径 | 不需要 |
 
 命令分两组：**`omem`** 是记忆库工具，不依赖 Laya（只有 `omem index` 要用 Laya 服务的检索模型）；
@@ -427,6 +429,11 @@ omem import ~/Downloads/obsidian-memory-export-20261127-100000.tar.gz.enc --vaul
   新文件加入，`log.md` 追加本地没有的条目，`projects.yaml` 按项目 id 合并路径和远程地址；
   其余内容不同的笔记保留本地版本，导入的那份放到 `00-System/import-conflicts/<时间>/`，
   由 Agent 按入库规则合并。两台电脑都在用时，可以互相导出导入。
+- 两台电脑都可以 ingest，同一条候选在两边都入库也没关系：Raw 由 `omem ingest freeze` 按候选原样生成，两边逐字节相同；
+  导入按候选 id 对账——相同的候选和 Raw 不算冲突，日志里同一候选的入库记录不重复追加，index 只补真正新增页面的条目；
+  对方根据本机已入库的候选写出的页面不直接加入，而是暂放到冲突目录的 `same-ingest/`，Agent 把多出的内容并进本地页面后用
+  `omem reconcile fold` 记录。这份记录（`00-System/reconciliation.jsonl`）随 Vault 一起导出，另一台导入时会删掉自己那份
+  未改动的旧页面，并在日志里写明去向，两台电脑因此收敛到同一个页面。
 - 同一份代码在两台电脑上各自建了项目（id 不同，常见于不是 git 仓库的目录）时，预演会提示"疑似同一个项目"
   （名称相同、代码文件夹同名或 remote 相同）。导入后用 `omem projects merge <旧id> <新id>` 合并：
   笔记移到保留的项目，日志条目合并，内容不同的笔记放进冲突目录，指向旧目录的链接改写，路径和 remote 合并，

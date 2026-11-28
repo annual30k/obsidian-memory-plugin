@@ -58,6 +58,25 @@ created under different ids for the same code is reported as "probably the
 same project" (same name, a code folder of the same name, or a shared remote);
 ask the user before merging such projects.
 
+## Same candidates ingested on both machines: `omem reconcile`
+
+Ingest may happen on any machine. An import reconciles by candidate id: the
+same candidate and Raw on both sides are recognised as the same, a log entry
+for a candidate already ingested here is not appended again, and the index
+only gains lines for pages actually added. A page the other machine wrote from
+candidates already ingested here is parked in
+`00-System/import-conflicts/<time>/same-ingest/<its path>` instead of added.
+
+For each parked page (`omem reconcile` lists them with the local pages citing
+the same Raw): merge into the local page what the parked one adds, classifying
+it as in an ingest (support, extension, duplicate, conflict; keep real
+contradictions visible), then record it with
+`omem reconcile fold <parked copy> --into <local page> --yes`. Never just
+delete a parked page: the recorded fold (`00-System/reconciliation.jsonl`,
+synced with the Vault) is what makes the other machine drop its copy on its
+next import, so both converge on one page. A parked page no local page cites
+can be moved to its original path instead.
+
 ## Projects across machines: `omem projects` (`projects-vault.mjs`)
 
 - `omem projects` lists each project, its roots (marking those on this machine)

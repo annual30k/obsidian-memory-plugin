@@ -373,7 +373,7 @@ test("mergeProjects and mergeLog are no-ops on identical input", () => {
   const yaml = "projects:\n  - id: a\n    roots:\n      - /x\n    scope: private\n";
   assert.equal(mergeProjects(yaml, yaml).text, yaml);
   const log = "# Log\n\n## [2026-01-01] ingest | x\n\n- y\n";
-  assert.deepEqual(mergeLog(log, log), { text: log, added: 0 });
+  assert.deepEqual(mergeLog(log, log), { text: log, added: 0, skipped: 0 });
 });
 
 test("omem export / import CLIs: encrypted round trip, dry run by default, hosts to repoint", async () => {

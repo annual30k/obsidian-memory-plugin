@@ -92,6 +92,20 @@ function printPlan(plan, out, applied) {
   for (const c of v.conflicts.slice(0, 30)) out.write(`  conflict ${c.rel}\n`);
   if (v.conflicts.length > 30) out.write(`  … and ${v.conflicts.length - 30} more\n`);
   if (v.conflicts.length) out.write(`  Local notes kept; imported copies ${verb}put in ${plan.conflictsDir}/ (README lists them for the agent to merge).\n`);
+  const ig = plan.ingest;
+  if (ig && (ig.candidatesAdvanced.length || ig.rawSame.length || ig.logEntriesSkipped || ig.duplicates.length || ig.indexLines.length || ig.removedFolded.length || ig.alreadyFolded.length)) {
+    out.write("\nIngests reconciled by candidate id:\n");
+    if (ig.candidatesAdvanced.length) out.write(`  ${ig.candidatesAdvanced.length} candidate(s) ${verb}updated to the other machine's later status (ingested there)\n`);
+    if (ig.rawSame.length) out.write(`  ${ig.rawSame.length} Raw note(s) frozen on both machines with the same evidence: kept local\n`);
+    if (ig.logEntriesSkipped) out.write(`  ${ig.logEntriesSkipped} log entr${ig.logEntriesSkipped === 1 ? "y" : "ies"} for candidates already ingested here: not appended again\n`);
+    for (const r of ig.removedFolded) out.write(`  ${r.rel} ${verb}removed: folded into ${r.into}${r.device ? ` on ${r.device}` : ""} (logged)\n`);
+    if (ig.alreadyFolded.length) out.write(`  ${ig.alreadyFolded.length} page(s) already folded here earlier: skipped\n`);
+    for (const x of ig.indexLines) out.write(`  ${x.rel}: ${x.added} line(s) for new pages ${verb}appended${x.removed ? `, ${x.removed} line(s) for removed pages ${verb}dropped` : ""} (local index kept)\n`);
+    if (ig.duplicates.length) {
+      out.write(`  ${ig.duplicates.length} page(s) written on the other machine from candidates already ingested here: not added; ${verb}parked in ${plan.conflictsDir}/same-ingest/ to fold into the local pages:\n`);
+      for (const d of ig.duplicates.slice(0, 20)) out.write(`    ${d.rel} -> ${d.localPages.length ? d.localPages.join(", ") : "(no local page cites the same Raw)"}\n`);
+    }
+  }
   const tp = plan.templates;
   if (tp.upgraded.length || tp.replaced.length || tp.keptLocal.length) {
     out.write("\nTemplates (00-System/templates):\n");
