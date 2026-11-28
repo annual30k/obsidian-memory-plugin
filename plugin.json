@@ -1,6 +1,6 @@
 {
   "name": "obsidian-memory-plugin",
-  "version": "0.16.1",
+  "version": "0.17.0",
   "description": "The Obsidian Memory skill packaged for Antigravity, OpenClaw, Codex, Claude Code, and Hermes.",
   "author": {
     "name": "Cyber Health"
