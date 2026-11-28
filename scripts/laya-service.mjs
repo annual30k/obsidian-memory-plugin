@@ -36,14 +36,15 @@ export function ensureLayaDir(customHome = null) {
 
 export const LAYA_MLX_MODEL = "aac6fef/laya-multilingual-mlx";
 export const LAYA_TORCH_MODEL = "convaiinnovations/laya-multilingual";
-// Vault retriever (sentence embeddings) beside the judge; MLX only for now. Mirrors EMBED_MODEL_DEFAULT in service.py.
+// Vault retriever (sentence embeddings) beside the judge, on MLX (bert_embed.py) or PyTorch (transformers).
+// Mirrors EMBED_MODEL_DEFAULT in service.py; both backends read the same three files.
 export const EMBED_MODEL = "intfloat/multilingual-e5-small";
 export const EMBED_MODEL_FILES = ["config.json", "model.safetensors", "tokenizer.json"];
 
-/** Models the service loads for a backend (the judge, plus the retriever on MLX). */
+/** Models the service loads for a backend (the judge, plus the retriever). */
 export function modelsForBackend(backend, { model = null, embedModel = null } = {}) {
   const judge = model || (backend === "pytorch" ? LAYA_TORCH_MODEL : LAYA_MLX_MODEL);
-  if (backend !== "mlx") return [judge];
+  if (backend !== "mlx" && backend !== "pytorch") return [judge];
   const retriever = (embedModel || EMBED_MODEL).trim();
   return /^(?:off|none|0|false)$/iu.test(retriever) ? [judge] : [judge, retriever];
 }
@@ -364,11 +365,12 @@ export async function installCommand(args = {}) {
   const shouldDownload = backend !== "mock" && !args.skipModel;
   if (shouldDownload) {
     process.stdout.write("Downloading model weights into local cache...\n");
-    // The MLX backend also fetches the Vault retriever checkpoint (three files, ~450 MB); the service
-    // runs it with lib/laya-service/bert_embed.py, so no extra package is installed.
+    // Both backends also fetch the Vault retriever checkpoint (~470 MB): MLX runs it with
+    // lib/laya-service/bert_embed.py, PyTorch with transformers (already a laya dependency).
+    const retriever = `\nfrom huggingface_hub import snapshot_download; snapshot_download(${JSON.stringify(EMBED_MODEL)}, allow_patterns=${JSON.stringify(EMBED_MODEL_FILES)})`;
     const downloadScript = backend === "mlx"
-      ? `import laya_mlx; laya_mlx.load(${JSON.stringify(LAYA_MLX_MODEL)})\nfrom huggingface_hub import snapshot_download; snapshot_download(${JSON.stringify(EMBED_MODEL)}, allow_patterns=${JSON.stringify(EMBED_MODEL_FILES)})`
-      : `import laya; laya.load(${JSON.stringify(LAYA_TORCH_MODEL)})`;
+      ? `import laya_mlx; laya_mlx.load(${JSON.stringify(LAYA_MLX_MODEL)})${retriever}`
+      : `import laya; laya.load(${JSON.stringify(LAYA_TORCH_MODEL)})${retriever}`;
     const dlRes = spawnSync(pythonBin, ["-c", downloadScript], {
       stdio: "inherit",
       windowsHide: true

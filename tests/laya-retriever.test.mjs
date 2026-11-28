@@ -320,10 +320,10 @@ test("MemoryRouter asks for the prompt vector when the service can embed, indexe
   }
 });
 
-test("modelsForBackend lists the retriever on MLX only and offlineModelEnv needs every model cached", () => {
+test("modelsForBackend lists the retriever on MLX and PyTorch and offlineModelEnv needs every model cached", () => {
   assert.deepEqual(modelsForBackend("mlx"), ["aac6fef/laya-multilingual-mlx", "intfloat/multilingual-e5-small"]);
   assert.deepEqual(modelsForBackend("mlx", { embedModel: "off" }), ["aac6fef/laya-multilingual-mlx"]);
-  assert.deepEqual(modelsForBackend("pytorch"), ["convaiinnovations/laya-multilingual"]);
+  assert.deepEqual(modelsForBackend("pytorch"), ["convaiinnovations/laya-multilingual", "intfloat/multilingual-e5-small"]);
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "laya-hf2-"));
   try {
     fs.mkdirSync(path.join(home, ".cache", "huggingface", "hub", "models--org--a", "snapshots", "x"), { recursive: true });
@@ -480,4 +480,16 @@ test("the embedding cache round-trips through its binary file, a quarter of the 
   const m = matchVaultSemantic(idx, many, vec(3), { projectId: "p", thresholds: { weak: -1, strong: -1 } });
   assert.equal(m.hits[0].path, "20-Projects/p/wiki/long.md", "its third chunk equals the query");
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("omem index explains a service without a retriever instead of reporting a broken service", async () => {
+  const { noRetrieverReason } = await import("../scripts/index-vault.mjs");
+  assert.equal(noRetrieverReason(null), null, "no service: the caller reports the error");
+  assert.equal(noRetrieverReason({ capabilities: ["recall", "embed"], backend: "mlx" }), null);
+  assert.equal(noRetrieverReason({ backend: "pytorch" }), null, "unknown capabilities: not concluded");
+  const torch = noRetrieverReason({ capabilities: ["recall"], backend: "pytorch" });
+  assert.match(torch, /backend: pytorch\) but has no retriever/u);
+  assert.match(torch, /word matching/u);
+  assert.match(torch, /laya stop && laya start/u);
+  assert.match(noRetrieverReason({ capabilities: ["recall"], backend: "mlx" }), /--embed-model off/u);
 });

@@ -33,6 +33,22 @@ export function parseArgs(argv = []) {
   return opts;
 }
 
+/**
+ * When the service answers but has no retriever, say why instead of reporting a broken service: Vault
+ * hints and `omem search` then match words, which is the designed fallback, so it is not a failure.
+ */
+export function noRetrieverReason(health) {
+  if (!health || typeof health !== "object") return null;
+  const caps = Array.isArray(health.capabilities) ? health.capabilities : null;
+  if (!caps || caps.includes("embed")) return null;
+  const backend = health.backend ?? "unknown";
+  return `The Laya service is running (backend: ${backend}) but has no retriever, so there are no note vectors to build.\n` +
+    "Vault hints and `omem search` use word matching on this machine (exact terms work; reworded questions match less well).\n" +
+    (backend === "pytorch"
+      ? "Plugin 0.14 adds the retriever for the PyTorch backend: after upgrading, restart the service (laya stop && laya start) and run `omem index` again; the first run downloads the model (~470 MB).\n"
+      : "Start the service without `--embed-model off` to enable it.\n");
+}
+
 const textCount = (notes) => notes.reduce((n, note) => n + (Array.isArray(note.embedChunks) ? note.embedChunks.length : 1), 0);
 
 /**
@@ -78,7 +94,12 @@ export async function main(argv = process.argv.slice(2), out = process.stdout, e
   const router = createMemoryRouter(memoryJudgeFromEnv(process.env), { useCache: true });
   try {
     const probe = await router.embedTexts(["index"], "query", { timeout: 15000 });
-    if (!probe?.model) { err.write("Error: the Laya service is not answering embeddings (try `laya status` / `laya start`).\n"); return 1; }
+    if (!probe?.model) {
+      const why = noRetrieverReason(router.healthInfo);
+      if (why) { out.write(why); return 0; }
+      err.write("Error: the Laya service is not answering embeddings (try `laya status` / `laya start`).\n");
+      return 1;
+    }
     let last = 0;
     const result = await indexVault({
       vaultPath,

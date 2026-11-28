@@ -777,8 +777,77 @@ class MlxEmbedder(BaseEmbedder):
         return self.encoder.embed([prefix + t for t in texts]).tolist()
 
 
+# The checkpoint files both retrievers read (bert_embed.FILES; EMBED_MODEL_FILES in laya-service.mjs).
+EMBED_CHECKPOINT_FILES = ("config.json", "model.safetensors", "tokenizer.json")
+
+
+class TorchEmbedder(BaseEmbedder):
+    """The same bi-encoder on PyTorch, for machines without Apple Silicon (Windows, Linux, Intel Macs).
+
+    Uses torch + transformers, which the PyTorch Laya backend already installs (laya>=0.3.5 depends on
+    both), so nothing extra is needed. It mirrors bert_embed.py step by step: the same three checkpoint
+    files, the same tokenizer.json through `tokenizers` (truncated to the same length, padded by hand),
+    mean pooling over the attention mask, then L2 normalisation (in BaseEmbedder.embed). The vectors
+    therefore match the MLX ones and the same similarity thresholds apply.
+    """
+
+    BATCH = 4
+
+    def __init__(self, model_name: str = EMBED_MODEL_DEFAULT):
+        super().__init__(model_name)
+        self.model = None
+        self.tokenizer = None
+
+    def _load(self) -> None:
+        import torch
+        from tokenizers import Tokenizer
+        from transformers import AutoModel
+        # bert_embed.py imports mlx at module level, so its checkpoint lookup is repeated here.
+        folder = Path(os.path.expanduser(self.model_name))
+        if not (folder.is_dir() and all((folder / f).is_file() for f in EMBED_CHECKPOINT_FILES)):
+            from huggingface_hub import snapshot_download
+            folder = Path(snapshot_download(self.model_name, allow_patterns=list(EMBED_CHECKPOINT_FILES)))
+        config = json.loads((folder / "config.json").read_text(encoding="utf-8"))
+        self.max_length = max(8, min(EMBED_MAX_LENGTH, int(config["max_position_embeddings"])))
+        self.pad_id = int(config.get("pad_token_id", 0))
+        tokenizer = Tokenizer.from_file(str(folder / "tokenizer.json"))
+        tokenizer.enable_truncation(self.max_length)
+        model = AutoModel.from_pretrained(str(folder)).float()
+        model.eval()
+        self.tokenizer, self.model, self._torch = tokenizer, model, torch
+
+    def _unload(self) -> None:
+        self.model = None
+        self.tokenizer = None
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+
+    def _embed(self, texts: list, kind: str) -> list:
+        torch = self._torch
+        prefix = embed_prefix(self.model_name, kind)
+        rows: list = []
+        with torch.no_grad():
+            for start in range(0, len(texts), self.BATCH):
+                encoded = [enc.ids for enc in self.tokenizer.encode_batch([prefix + t for t in texts[start:start + self.BATCH]])]
+                length = max(1, max(len(ids) for ids in encoded))
+                ids = torch.full((len(encoded), length), self.pad_id, dtype=torch.long)
+                mask = torch.zeros((len(encoded), length), dtype=torch.long)
+                for i, seq in enumerate(encoded):
+                    ids[i, :len(seq)] = torch.tensor(seq, dtype=torch.long)
+                    mask[i, :len(seq)] = 1
+                hidden = self.model(input_ids=ids, attention_mask=mask).last_hidden_state
+                m = mask.unsqueeze(-1).to(hidden.dtype)
+                pooled = (hidden * m).sum(dim=1) / m.sum(dim=1).clamp(min=1.0)
+                rows.extend(pooled.tolist())
+        return rows
+
+
 def create_embedder(backend_type: str, model_name: Optional[str]) -> Optional[BaseEmbedder]:
-    """None when disabled ("off") or when the backend has no embedding support (PyTorch, for now)."""
+    """None when disabled ("off") or when the backend's packages are missing."""
     name = (model_name or os.environ.get("LAYA_EMBED_MODEL") or EMBED_MODEL_DEFAULT).strip()
     if name.lower() in ("off", "none", "0", "false"):
         return None
@@ -791,6 +860,13 @@ def create_embedder(backend_type: str, model_name: Optional[str]) -> Optional[Ba
         except Exception:
             return None
         return MlxEmbedder(name)
+    if backend_type == "pytorch":
+        try:
+            import torch  # noqa: F401
+            import transformers  # noqa: F401
+        except Exception:
+            return None
+        return TorchEmbedder(name)
     return None
 
 
