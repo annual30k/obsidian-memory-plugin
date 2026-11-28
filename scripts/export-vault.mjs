@@ -84,7 +84,7 @@ export async function main(argv = process.argv.slice(2), out = process.stdout, e
     const layaFiles = result.manifest.files.filter((f) => f.path.startsWith("laya/")).map((f) => f.path.slice(5));
     if (opts.json) {
       out.write(JSON.stringify({ file, bytes: result.bundle.length, encrypted: result.encrypted, vaultFiles, layaFiles,
-        projects: result.manifest.projects.map((p) => p.id), remotesAdded: result.remotesAdded, skipped: result.skipped, secrets: result.secrets }, null, 2) + "\n");
+        projects: result.manifest.projects.map((p) => p.id), keptHere: result.keptHere, mentions: result.mentions, remotesAdded: result.remotesAdded, skipped: result.skipped, secrets: result.secrets }, null, 2) + "\n");
       return 0;
     }
     out.write(`Exported ${vaultPath}\n  -> ${file} (${kb(result.bundle.length)}${result.encrypted ? ", encrypted" : ""})\n`);
@@ -92,6 +92,15 @@ export async function main(argv = process.argv.slice(2), out = process.stdout, e
     for (const c of result.remotesAdded) out.write(`  recorded Git remote for ${c.id}: ${c.add.join(", ")}\n`);
     if (result.remotesAdded.length) out.write("  (in the bundle only; `omem projects backfill-remotes --yes` records them in this Vault too)\n");
     for (const s of result.skipped) out.write(`  left out ${s.rel}: ${s.reason}\n`);
+    if (result.keptHere.length) {
+      out.write(`  kept on this machine (transfer: local): ${result.keptHere.join(", ")}\n`);
+      if (result.layaLeftOut) out.write("  Laya labels left out: they record prompts without their project, so they may include ones about a project that stays here (--with-laya to include them)\n");
+    }
+    if (result.mentions.length) {
+      out.write(`\nWarning: ${result.mentions.length} exported note(s) mention a project that stays on this machine (its name or paths travel with them):\n`);
+      for (const m of result.mentions.slice(0, 20)) out.write(`  ${m.rel} (${m.project})\n`);
+      out.write("Remove those mentions first if the project's name must not leave this machine.\n");
+    }
     if (result.secrets.length) {
       out.write(`\nWarning: ${result.secrets.length} line(s) look like credentials (values not shown):\n`);
       for (const s of result.secrets.slice(0, 20)) out.write(`  ${s.rel}:${s.line} (${s.kind})\n`);

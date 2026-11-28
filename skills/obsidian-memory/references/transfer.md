@@ -31,11 +31,14 @@ are `omem` subcommands and need no Laya service; without the `omem` command run
    Vault this machine's hosts already use; with none, ask the user where the
    Vault should live (an empty folder gets a fresh copy). Show the user the
    plan: files added, logs merged, conflicts, projects and how each is placed.
-2. Projects whose code is here under another path: a Git project binds itself
+2. Ask before importing a project this Vault does not have yet. One the user
+   wants to keep off this machine is left out with `--skip-project <id>`: its
+   notes and its `projects.yaml` entry are not imported.
+3. Projects whose code is here under another path: a Git project binds itself
    the first time its checkout is opened (by remote). For the others ask the
    user for the directory and add `--map <id>=<dir>`. Never search the disk.
-3. After the user confirms, run the same command with `--yes`.
-4. Follow-up the output lists, each with the user's consent:
+4. After the user confirms, run the same command with `--yes`.
+5. Follow-up the output lists, each with the user's consent:
    - hosts still pointing at another Vault: run the printed setup commands;
    - `00-System/import-conflicts/<time>/`: notes that differed. Merge each
      imported copy into the local note following Ingest rules (update the
@@ -93,6 +96,13 @@ can be moved to its original path instead.
   existing project (see "Resolve and onboard a project").
 - `omem projects backfill-remotes --yes` records the remotes of every project
   checked out here; offer it once after an upgrade, with the user's consent.
+- `omem projects local <id> --yes` keeps a project on this machine for good
+  (`transfer: local` in `projects.yaml`): exports leave out its notes and its
+  registry entry, and imports never take another machine's copy of it. Use it
+  when the user says a project is private to one machine; `--off` undoes it.
+  While such a project exists, exports also leave out Laya labels (they do not
+  record their project) unless `--with-laya`, and list other notes that still
+  mention it, which the user may want to edit before sending the bundle.
 - `omem projects merge <from> <into>`: the same code registered under two ids
   (each machine onboarded it under its own path). Only after the user confirms
   which id survives (usually the one with the notes). Show the dry run, then

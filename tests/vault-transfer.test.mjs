@@ -11,7 +11,7 @@ import {
   addToProjectList, appendProjectEntry, filterProjectsYaml, gitRemotes, normalizeRemote, parseProjectsYaml, resolveProject
 } from "../lib/vault-transfer/projects.js";
 import { backfillRemotes, bindProject } from "../lib/vault-transfer/project-ops.js";
-import { createTarGz, decryptBundle, encryptBundle, isEncrypted, readTarGz, unsafeEntryReason } from "../lib/vault-transfer/archive.js";
+import { createTarGz, decryptBundle, encryptBundle, isEncrypted, readTarGz, sha256 as sha256Hex, unsafeEntryReason } from "../lib/vault-transfer/archive.js";
 import { buildExport, collectVaultFiles, scanSecrets } from "../lib/vault-transfer/export.js";
 import { applyImport, mergeLog, mergeProjects, planImport } from "../lib/vault-transfer/import.js";
 import { resolveProjectIdFromCwd } from "../lib/memory-router/vault-index.js";
@@ -608,4 +608,76 @@ test("a package copy in the temp folder never takes over the user's omem command
   assert.equal(linkOmem(null, { env: { OBSIDIAN_MEMORY_BIN_DIR: path.join(home, "bin") }, home }).ok, true);
   fs.rmSync(copy, { recursive: true, force: true });
   fs.rmSync(home, { recursive: true, force: true });
+});
+
+test("machine-local folders never travel, and --skip-project leaves a project on the other machine", () => {
+  const base = tmp("om-skip-");
+  const win = makeVault(path.join(base, "win"), { projects: [{ id: "app-1", roots: [] }, { id: "private-notes", roots: ["E:/private"] }] });
+  write(path.join(win, "00-System", "template-backups", "20261128-003533", "decision.md"), "old template\n");
+  write(path.join(win, "00-System", "import-conflicts", "20261128-000000", "README.md"), "parked\n");
+  const exported = buildExport(win, { layaDir: path.join(base, "none") });
+  const names = exported.manifest.files.map((f) => f.path);
+  assert.ok(!names.some((n) => n.includes("template-backups") || n.includes("import-conflicts")), "not exported");
+  assert.ok(!exported.manifest.dirs.some((d) => d.includes("template-backups")));
+
+  // A bundle made before the exclusion still carries them: the import ignores them.
+  const { files } = readTarGz(exported.bundle);
+  const legacyFiles = [...files, { name: "vault/00-System/template-backups/x/decision.md", data: Buffer.from("old\n") }];
+  const manifest = JSON.parse(legacyFiles.find((f) => f.name === "manifest.json").data.toString("utf8"));
+  manifest.files.push({ path: "vault/00-System/template-backups/x/decision.md", size: 4, sha256: sha256Hex(Buffer.from("old\n")) });
+  const legacy = createTarGz(legacyFiles.map((f) => f.name === "manifest.json" ? { ...f, data: Buffer.from(JSON.stringify(manifest)) } : f));
+
+  const mac = makeVault(path.join(base, "mac"), { projects: [{ id: "app-1", roots: [] }] });
+  const plan = planImport(legacy, { targetVault: mac, layaDir: path.join(base, "none"), skipProjects: ["private-notes"] });
+  assert.deepEqual(plan.skipped, { projects: ["private-notes"], files: 4 });
+  assert.ok(!plan.vault.add.some((r) => r.startsWith("20-Projects/private-notes/") || r.includes("template-backups")));
+  assert.ok(!plan.vault.dirs.some((d) => d.startsWith("20-Projects/private-notes")));
+  assert.deepEqual(plan.projects.map((p) => p.id), ["app-1"]);
+  applyImport(plan);
+  assert.ok(!fs.existsSync(path.join(mac, "20-Projects", "private-notes")));
+  assert.ok(!fs.existsSync(path.join(mac, "00-System", "template-backups")));
+  assert.deepEqual(parseProjectsYaml(read(path.join(mac, "00-System", "projects.yaml"))).map((p) => p.id), ["app-1"]);
+  fs.rmSync(base, { recursive: true, force: true });
+});
+
+test("a project marked to stay on this machine is never exported, never imported, and its mentions are reported", async () => {
+  const { setLocalOnly } = await import("../lib/vault-transfer/project-ops.js");
+  const base = tmp("om-local-");
+  const a = makeVault(path.join(base, "a"), { projects: [{ id: "app-1", roots: [] }, { id: "private-notes", roots: ["E:/private"] }] });
+  write(path.join(a, "10-Global", "index.md"), "# Index\n\n- [[20-Projects/private-notes/wiki/knowledge/note]]\n");
+  const layaDir = path.join(base, "laya");
+  write(path.join(layaDir, "labels.jsonl"), "{\"text\":\"a private prompt\"}\n");
+  assert.equal(setLocalOnly(a, "private-notes", true).changed, true);
+  assert.equal(parseProjectsYaml(read(path.join(a, "00-System", "projects.yaml"))).find((p) => p.id === "private-notes").transfer, null, "dry run");
+  setLocalOnly(a, "private-notes", true, { apply: true });
+  assert.match(read(path.join(a, "00-System", "projects.yaml")), /^    transfer: local$/mu);
+
+  const out = sink();
+  assert.equal(projectsMain(["--vault", a], out, sink()), 0);
+  assert.match(out.text, /private-notes  \(private\)  \[stays on this machine\]/u);
+
+  const r = buildExport(a, { layaDir });
+  const names = r.manifest.files.map((f) => f.path);
+  assert.ok(!names.some((n) => n.includes("private-notes/")), "no notes of the project");
+  assert.ok(!r.manifest.dirs.some((d) => d.includes("private-notes")));
+  assert.deepEqual(r.manifest.projects.map((p) => p.id), ["app-1"], "not in the registry either");
+  const registry = readTarGz(r.bundle).files.find((f) => f.name === "vault/00-System/projects.yaml").data.toString("utf8");
+  assert.doesNotMatch(registry, /private-notes|E:\/private/u);
+  assert.ok(!names.some((n) => n.startsWith("laya/")), "labels cannot be filtered by project: left out");
+  assert.equal(r.layaLeftOut, true);
+  assert.deepEqual(r.mentions, [{ rel: "vault/10-Global/index.md", project: "private-notes" }]);
+  assert.ok(buildExport(a, { layaDir, withLaya: true }).manifest.files.some((f) => f.path === "laya/labels.jsonl"), "unless asked");
+  assert.throws(() => buildExport(a, { layaDir, projects: ["private-notes"] }), /stay on this machine/u);
+
+  // The other machine's copy of a project this Vault keeps to itself is not taken either.
+  const b = makeVault(path.join(base, "b"), { projects: [{ id: "app-1", roots: [] }, { id: "private-notes", roots: ["/elsewhere"] }] });
+  write(path.join(b, "20-Projects", "private-notes", "wiki", "knowledge", "note.md"), "changed elsewhere\n");
+  const plan = planImport(buildExport(b, { layaDir: path.join(base, "none") }).bundle, { targetVault: a, layaDir: path.join(base, "none") });
+  assert.deepEqual(plan.skipped.projects, ["private-notes"]);
+  assert.ok(!plan.writes.some((w) => w.abs.includes(`${path.sep}private-notes${path.sep}`)));
+  assert.ok(!plan.vault.conflicts.some((c) => c.rel.includes("private-notes")));
+
+  setLocalOnly(a, "private-notes", false, { apply: true });
+  assert.doesNotMatch(read(path.join(a, "00-System", "projects.yaml")), /transfer:/u);
+  fs.rmSync(base, { recursive: true, force: true });
 });
