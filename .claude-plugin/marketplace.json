@@ -1,0 +1,15 @@
+{
+  "name": "obsidian-memory",
+  "owner": {
+    "name": "Cyber Health"
+  },
+  "description": "Obsidian Memory: self-growing long-term memory for Claude Code, shared with Codex, OpenClaw, Hermes and Antigravity through one Obsidian Vault.",
+  "plugins": [
+    {
+      "name": "obsidian-memory",
+      "source": "./",
+      "description": "Recalls past project decisions and selectively captures durable knowledge in an Obsidian Vault (Inbox -> Raw -> Wiki).",
+      "category": "productivity"
+    }
+  ]
+}

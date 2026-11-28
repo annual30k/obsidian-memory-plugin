@@ -161,7 +161,7 @@ function hostsToRepoint(target, collect) {
   let report;
   try { report = collect(); } catch { return []; }
   const same = (p) => { try { return realpathSync(p) === realpathSync(target); } catch { return path.resolve(p) === path.resolve(target); } };
-  const scripts = { OpenClaw: "setup-openclaw.mjs", Codex: "setup-codex.mjs", Antigravity: "setup-antigravity.mjs", Hermes: "setup-hermes.mjs" };
+  const scripts = { OpenClaw: "setup-openclaw.mjs", Codex: "setup-codex.mjs", "Claude Code": "setup-claude.mjs", Antigravity: "setup-antigravity.mjs", Hermes: "setup-hermes.mjs" };
   return report.hosts
     .filter((h) => h.install?.installed && scripts[h.host] && !(h.vaults.length && h.vaults.every((v) => same(v.path))))
     .map((h) => ({

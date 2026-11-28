@@ -29,7 +29,7 @@ test("version:set rewrites every manifest and the README in place", () => {
     fs.copyFileSync(path.join(root, file), path.join(dir, file));
   }
   const changed = setVersion("9.8.7", dir);
-  assert.equal(changed.length, 6);
+  assert.equal(changed.length, 7);
   for (const file of JSON_MANIFESTS) assert.equal(JSON.parse(fs.readFileSync(path.join(dir, file), "utf8")).version, "9.8.7", file);
   assert.match(fs.readFileSync(path.join(dir, "plugin.yaml"), "utf8"), /^version: 9\.8\.7$/mu);
   assert.match(fs.readFileSync(path.join(dir, "README.md"), "utf8"), /当前包版本：`9\.8\.7`/u);

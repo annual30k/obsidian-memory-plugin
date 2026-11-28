@@ -17,6 +17,10 @@ process.env.OBSIDIAN_MEMORY_LAYA_DIR = process.env.OBSIDIAN_MEMORY_TEST_CACHE;
 // ~/.gemini/GEMINI.md and add Vault hints to turns the tests expect to stay unchanged.
 process.env.OBSIDIAN_MEMORY_VAULT = "/nonexistent-obsidian-memory-test-vault";
 process.env.CODEX_HOME = process.env.OBSIDIAN_MEMORY_TEST_CACHE;
+// The same for Claude Code (~/.claude/CLAUDE.md), and never let a test run inside a Claude Code hook
+// make the shared hooks think they were called by Claude Code.
+process.env.CLAUDE_CONFIG_DIR = process.env.OBSIDIAN_MEMORY_TEST_CACHE;
+delete process.env.CLAUDE_PROJECT_DIR;
 // Keep tests offline from a Laya service the developer may have running (~/.laya/service.json);
 // tests that need a service start their own and pass its file explicitly.
 if (!process.env.OBSIDIAN_MEMORY_TEST_KEEP_SERVICE) {

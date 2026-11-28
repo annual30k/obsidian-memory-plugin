@@ -8,6 +8,7 @@
  *   package.json              npm / OpenClaw install
  *   openclaw.plugin.json      OpenClaw
  *   .codex-plugin/plugin.json Codex
+ *   .claude-plugin/plugin.json Claude Code
  *   plugin.json               Antigravity, and Hermes' install-time check (Agent Plugins v1)
  *   plugin.yaml               Hermes (native loader)
  * plus the "当前包版本" line in README.md. tests/manifests.test.mjs fails when they disagree.
@@ -16,7 +17,7 @@ import { readFileSync, writeFileSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const JSON_MANIFESTS = ["package.json", "openclaw.plugin.json", ".codex-plugin/plugin.json", "plugin.json"];
+export const JSON_MANIFESTS = ["package.json", "openclaw.plugin.json", ".codex-plugin/plugin.json", ".claude-plugin/plugin.json", "plugin.json"];
 const SEMVER = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u;
 
 export function setVersion(version, root = fileURLToPath(new URL("..", import.meta.url))) {

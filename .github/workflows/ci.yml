@@ -55,5 +55,8 @@ jobs:
       - name: Validate Codex manifest
         run: npm run check:codex
 
+      - name: Validate Claude Code manifest
+        run: npm run check:claude
+
       - name: Verify package contents
         run: npm pack --dry-run

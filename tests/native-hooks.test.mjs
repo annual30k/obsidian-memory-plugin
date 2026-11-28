@@ -55,7 +55,10 @@ test("Codex hooks.json conforms to official discovery structure and nested schem
 
   const innerHook = container.hooks[0];
   assert.equal(innerHook.type, "command");
-  assert.match(innerHook.command, /\$\{PLUGIN_ROOT\}\/scripts\/codex-hook\.mjs/, "Must prioritize official PLUGIN_ROOT");
+  // Codex and Claude Code both load this file and both substitute ${CLAUDE_PLUGIN_ROOT}; Claude Code does
+  // not know Codex's own ${PLUGIN_ROOT}, so the shared spelling is the only one that works in both.
+  assert.match(innerHook.command, /\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/codex-hook\.mjs/, "Must use the plugin root both hosts substitute");
+  assert.doesNotMatch(raw, /\$\{PLUGIN_ROOT\}/u);
   assert.equal(innerHook.timeout, HOST_HOOK_TIMEOUT_SECONDS);
 });
 

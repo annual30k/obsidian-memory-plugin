@@ -117,6 +117,28 @@ export function hermesSettings(yamlText) {
   return out;
 }
 
+export const CLAUDE_PLUGIN_KEY = "obsidian-memory@obsidian-memory";
+
+/** Claude Code's view of the plugin: { host, enabled, vaults, install }. */
+export function claudeCodeHost({ home = os.homedir(), env = process.env } = {}) {
+  const claudeHome = env.CLAUDE_CONFIG_DIR?.trim() || path.join(home, ".claude");
+  const claudeMd = path.join(claudeHome, "CLAUDE.md");
+  const vault = vaultPathFromRuleText(readText(claudeMd));
+  const registry = readJson(path.join(claudeHome, "plugins", "installed_plugins.json"));
+  const raw = registry?.plugins?.[CLAUDE_PLUGIN_KEY];
+  const record = (Array.isArray(raw) ? raw : raw ? [raw] : []).find((r) => r && typeof r === "object") ?? null;
+  const settings = readJson(path.join(claudeHome, "settings.json"));
+  const flag = settings?.enabledPlugins?.[CLAUDE_PLUGIN_KEY];
+  const dir = record?.installPath ?? path.join(claudeHome, "plugins", "cache", "obsidian-memory", "obsidian-memory");
+  const version = record?.version ?? readJson(path.join(dir, ".claude-plugin", "plugin.json"))?.version ?? null;
+  return {
+    host: "Claude Code",
+    enabled: Boolean(record) && flag !== false,
+    vaults: vault ? [{ where: claudeMd, path: vault }] : [],
+    install: record ? { installed: true, dir, linkedTo: null, version } : { installed: false, dir }
+  };
+}
+
 /** Collect the report. `home`/`env` are injectable for tests. */
 export function collect({ home = os.homedir(), env = process.env, packageVersion = null } = {}) {
   const hosts = [];
@@ -163,6 +185,10 @@ export function collect({ home = os.homedir(), env = process.env, packageVersion
         trusted: (inPlugin && trustedUnder("obsidian-memory@obsidian-memory:hooks/hooks.json")) || (inUser && trustedUnder(path.join(codexHome, "hooks.json")))
       };
     }) });
+
+  // Claude Code: managed block in ~/.claude/CLAUDE.md; plugin recorded in plugins/installed_plugins.json and
+  // switched on in settings.json enabledPlugins. Its hooks (the plugin's hooks/hooks.json) need no approval.
+  hosts.push(claudeCodeHost({ home, env }));
 
   // Antigravity: managed block in ~/.gemini/GEMINI.md; plugin in ~/.gemini/config/plugins/<id>.
   const gemini = path.join(home, ".gemini", "GEMINI.md");
