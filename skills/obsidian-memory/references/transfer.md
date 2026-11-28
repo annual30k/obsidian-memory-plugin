@@ -51,6 +51,14 @@ the bundle's current one; an edited or hand-written one is kept and listed, and
 local templates lacking core fields. Files that differ only in line endings
 (Windows CRLF) count as identical.
 
+Each machine remembers which version of every file it last agreed on with the
+other one (`~/.laya/state/sync/`), and every export carries that record. A file
+changed on only one side since is then simply taken from that side; only files
+both machines changed are conflicts. Vaults that synced before this record
+existed (plugin < 0.13.1) have none: if the user still has the bundle both
+started from (usually the earlier export), pass it once as
+`--base <that bundle>`; ask the user for it rather than guessing.
+
 An existing Vault is merged, never overwritten: identical files are skipped,
 new files added, `log.md` entries appended, `projects.yaml` merged by id (roots
 and remotes only added), `.obsidian` kept local. A project the two machines
