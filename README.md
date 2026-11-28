@@ -417,6 +417,7 @@ omem export --out ~/Desktop --encrypt
   输入，或用 `OBSIDIAN_MEMORY_PASSPHRASE` / `--passphrase-file` 提供，不接受命令行参数。
 - `--project <id>` 只导出一个项目（`--no-global` 连 Global 也不带，适合交给别人）；
   导出时会提示疑似凭据的行（只给位置，不显示内容）。
+- **增量导出**：`omem export` 默认打自包含全量包（`--full` 也可显式强制全量）。完成过同步后，加 `--incremental` 或 `--since <设备名|旧包路径>` 可只打包自基线以来新增或修改的文件，跳过未变更的文件和大型附件，显著减小包体积（若该设备尚无基线则自动回退全量导出并说明；多台设备时请用 `--since <设备名>` 指定目标）。
 
 在新电脑上装好插件后（或对 Agent 说“导入这个记忆包”）：
 
@@ -424,7 +425,16 @@ omem export --out ~/Desktop --encrypt
 omem import ~/Downloads/obsidian-memory-export-20261127-100000.tar.gz.enc --vault "/path/to/Vault"
 ```
 
-- 默认只预演，列出要新增、合并、冲突的文件和每个项目在本机的落点；确认后加 `--yes` 写入。
+- 默认只预演，列出包类型（全量/增量）、导入范围、要新增、合并、冲突的文件和每个项目在本机的落点；确认后加 `--yes` 写入。
+- **导入白名单与防污染**：
+  - `--only-project <项目id>`（可重复）：仅导入指定项目的笔记、目录与 `projects.yaml` 条目，忽略包里其他项目与 Vault 根目录文件；默认跳过 `10-Global/`（加 `--with-global` 可显式包含）且默认不修改 `~/.laya`（加 `--with-laya` 可显式包含）。不能与 `--skip-project` 同时传入，指定包中不存在的项目 id 会直接报错；本机标记 `transfer: local` 的项目依然受保护。
+  - `--no-global`：普通导入模式下单独跳过 `10-Global/`，防止另一台机器的全局偏好、索引、日志与 Inbox/Raw 污染本机。
+  - 白名单或局部导入只更新本次纳入范围的路径的同步基线，不会把未纳入范围的项目或 `10-Global/` 误记为“本机已删除”。
+- **导入前快照与一键回滚**：每次 `omem import --yes` 写入前都会在 Vault 之外（`~/.laya/backups/imports/`，默认保留最近 10 次，`--no-backup` 可关闭）自动备份即将改动/删除的文件、新增路径、同步基线与 Laya 变更；随时可用 `omem import rollback --list` 查看快照，并用 `omem import rollback [快照id] [--yes]` 预演或一键还原（若文件在导入后又被手工编辑，默认拒绝覆盖防误伤，需 `--force` 才强制覆盖）。
+- **导入 / 回滚后自动刷新向量索引**：`omem import --yes` 与 `omem import rollback --yes` 写入完成后自动触发增量索引刷新并清理已删笔记的残留向量；Laya 服务未运行时优雅降级为一行提示，不阻断导入/回滚（`--no-index` 可显式跳过）。
+- **Laya 标注按项目细粒度隔离**：新记录的决策与标注自带可选 `project_id` / `scope` 字段（完全兼容旧标注）；存在 `transfer: local` 项目或传 `--project` / `--no-global` 时按条目过滤 `labels*.jsonl`，剔除被排除项目和无归属旧标注并汇报保留/过滤数量；导入侧在启用白名单/跳过/`transfer: local` 且包含 Laya 时同步按范围过滤。
+- **对方重命名与删除的安全同步传播**：基于三方基线，在允许的导入范围内自动识别对方重命名（本机未改则直接迁移，本机改过则保留本机并按 rename/modify 冲突暂放）与对方真实删除（严格区分增量包 `unchanged` 省略项，范围外文件及 `projects.yaml`、`AGENTS.md`、`Home.md`、模板、各作用域 `index.md`/`log.md` 等核心文件受保护；本机未改则安全同步删除并记入回滚快照，本机改过则保留并报 delete/modify 冲突）。
+- **增量包自动识别与安全校验**：`omem import` 自动识别全量包与增量包（完全兼容 v0.15.0 及更早版本的全量包）。导入增量包前会先核验目标 Vault 必须已存在、目标设备匹配（按设备基线导出时），且每个纳入范围的未变更文件在目标库中真实存在并匹配基线（或本机同步记录证实为本机改动）；基线不成立时（空目录、缺文件、跨设备或内容不匹配）会直接安全拒绝并提示改用 `omem export --full`，绝不静默丢文件。未变更省略的文件保持原样，不会被误判为对方删除。
 - 目标是空目录或不存在：原样还原。目标已经是 Vault：逐文件合并，**不覆盖本地内容**——相同的跳过，
   新文件加入，`log.md` 追加本地没有的条目，`projects.yaml` 按项目 id 合并路径和远程地址；
   其余内容不同的笔记保留本地版本，导入的那份放到 `00-System/import-conflicts/<时间>/`，

@@ -86,6 +86,26 @@ export const DURABLE_ANSWERS = Object.freeze({ d: true, c: true, y: false, n: fa
 const LABEL_TEXT = { recall: "y = look up memory", capture: "c = save to memory", none: "n = no memory needed", context: "x = can't tell alone" };
 const HELP = "y = look up memory first, c = asks to save something, d = states a lasting rule/preference/decision, n = prompt/code/conversation is enough, x = can't tell from this prompt alone";
 
+export function buildLabelRecord(item, answer, now = new Date()) {
+  const label = ANSWER_LABELS[answer];
+  if (!label) return null;
+  const pid = typeof item?.project_id === "string" && item.project_id.trim()
+    ? item.project_id.trim()
+    : (typeof item?.projectId === "string" && item.projectId.trim() ? item.projectId.trim() : null);
+  const scope = typeof item?.scope === "string" && item.scope.trim() ? item.scope.trim() : (pid ? "project" : null);
+  return {
+    text: item.text,
+    label,
+    recall: label === "recall" || label === "capture",
+    durable: DURABLE_ANSWERS[answer],
+    action: item.action,
+    score: item.score,
+    ...(pid ? { project_id: pid } : {}),
+    ...(scope ? { scope } : {}),
+    ts: now.toISOString()
+  };
+}
+
 export function labelOf(row) {
   if (Object.values(ANSWER_LABELS).includes(row.label)) return row.label;
   return typeof row.recall === "boolean" ? (row.recall ? "recall" : "none") : null;
@@ -175,10 +195,10 @@ async function main() {
       console.log(`\n[${meta}]\n${item.text}`);
       const answer = (await rl.question("Label? (y/c/d/n/x/s/q) ")).trim().toLowerCase();
       if (answer === "q") break;
-      const label = ANSWER_LABELS[answer];
-      if (!label) continue;
+      const record = buildLabelRecord(item, answer);
+      if (!record) continue;
       fs.mkdirSync(path.dirname(args.labels), { recursive: true, mode: 0o700 });
-      fs.appendFileSync(args.labels, JSON.stringify({ text: item.text, label, recall: label === "recall" || label === "capture", durable: DURABLE_ANSWERS[answer], action: item.action, score: item.score, ts: new Date().toISOString() }) + "\n", { mode: 0o600 });
+      fs.appendFileSync(args.labels, JSON.stringify(record) + "\n", { mode: 0o600 });
       done++;
     }
   } finally {
