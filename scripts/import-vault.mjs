@@ -10,12 +10,13 @@
  * Afterwards it lists the hosts that still point at another Vault and the commands that repoint them.
  */
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { resolveVaultPath } from "../lib/memory-router/vault-index.js";
 import { isEncrypted } from "../lib/vault-transfer/archive.js";
-import { applyImport, openBundle, planImport } from "../lib/vault-transfer/import.js";
+import { applyImport, openBundleFile, planImport } from "../lib/vault-transfer/import.js";
 import { ancestorsFromEntries } from "../lib/vault-transfer/sync-base.js";
 import { getPassphrase } from "../lib/vault-transfer/passphrase.js";
 
@@ -75,10 +76,17 @@ const STATUS = {
   "map-conflict": "--map directory already belongs to another project"
 };
 
+async function passphraseFor(file, opts, deps) {
+  const fd = fs.openSync(file, "r");
+  const head = Buffer.alloc(32);
+  try { fs.readSync(fd, head, 0, 32, 0); } finally { fs.closeSync(fd); }
+  return isEncrypted(head) ? (deps.getPassphrase ?? getPassphrase)({ file: opts.passphraseFile }) : null;
+}
+
+/** Hashes of an older bundle, streamed (no staging: only its text is kept in memory). */
 async function loadBase(file, opts, deps) {
-  const buffer = fs.readFileSync(file);
-  const passphrase = isEncrypted(buffer) ? await (deps.getPassphrase ?? getPassphrase)({ file: opts.passphraseFile }) : null;
-  return ancestorsFromEntries(openBundle(buffer, { passphrase }).entries);
+  const passphrase = await passphraseFor(file, opts, deps);
+  return ancestorsFromEntries((await openBundleFile(file, { passphrase })).entries);
 }
 
 function hostsToRepoint(target, collect) {
@@ -177,10 +185,14 @@ export async function main(argv = process.argv.slice(2), out = process.stdout, e
   if (opts.help || !opts.bundle) { (opts.help ? out : err).write(USAGE); return opts.help ? 0 : 1; }
   const target = opts.vaultPath ? path.resolve(opts.vaultPath) : (deps.resolveVaultPath ?? resolveVaultPath)();
   if (!target) { err.write("Error: no Vault is configured on this machine; pass --vault <folder> (an empty folder for a fresh copy).\n"); return 1; }
+  // The bundle is streamed into a private staging folder (removed at the end, whatever happens), so a
+  // Vault with gigabytes of attachments imports without holding them in memory.
+  const staging = fs.mkdtempSync(path.join(os.tmpdir(), "omem-import-"));
   try {
-    const buffer = fs.readFileSync(path.resolve(opts.bundle));
-    const passphrase = isEncrypted(buffer) ? await (deps.getPassphrase ?? getPassphrase)({ file: opts.passphraseFile }) : null;
-    const plan = planImport(buffer, {
+    const bundleFile = path.resolve(opts.bundle);
+    const passphrase = await passphraseFor(bundleFile, opts, deps);
+    const opened = await openBundleFile(bundleFile, { passphrase, stagingDir: staging });
+    const plan = planImport(opened, {
       targetVault: target, passphrase, maps: opts.maps, includeLaya: opts.includeLaya, replaceHeads: opts.replaceHeads,
       useIncomingTemplates: opts.useIncomingTemplates,
       base: opts.base ? await loadBase(path.resolve(opts.base), opts, deps) : null,
@@ -214,6 +226,8 @@ export async function main(argv = process.argv.slice(2), out = process.stdout, e
   } catch (error) {
     err.write(`Error: ${error.message}\n`);
     return 1;
+  } finally {
+    fs.rmSync(staging, { recursive: true, force: true });
   }
 }
 

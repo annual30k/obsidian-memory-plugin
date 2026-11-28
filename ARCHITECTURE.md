@@ -159,7 +159,8 @@ scripts/*-vault.mjs          omem export / import / projects / search / index �
 lib/vault-transfer/          导出包、导入合并、projects.yaml 与 Git remote
 lib/cli-link.js              把 omem 链接到 ~/.local/bin
 lib/vault-ingest.js          入库的确定性步骤（冻结 Raw、标记完成）
-lib/vault-transfer/sync-base.js  三方比较的共同祖先：本机记录（~/.laya/state/sync/）、导出包里的 synced、--base
+lib/vault-transfer/stream.js     流式导出导入（tar + 分段 gzip + 可选加密），已压缩格式原样存放，内存占用恒定
+lib/vault-transfer/sync-base.js  三方比较的共同祖先：按对方电脑分开的本机记录（~/.laya/state/sync/）、导出包里的 syncedByDevice、--base
 lib/vault-transfer/reconcile.js  导入时按候选 id 对账与合并记录（00-System/reconciliation.jsonl）
 lib/vault-templates.js       Vault 模板的分类、安装与升级；lib/template-hashes.json 是各版本模板指纹（scripts/build-template-hashes.mjs 生成）
 scripts/doctor.mjs           体检
