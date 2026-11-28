@@ -125,6 +125,8 @@ Laya 的 `capture` 判断（`obsidian-memory-laya-judge --capture`）在回合�
 | `omem search` | 只读分段检索 Vault（按项目隔离、默认跳过 `deprecated`，返回命中章节名与行号范围） |
 | `omem index` | 一次补齐笔记向量（需要 Laya 服务） |
 | `omem templates` | 检查 / 安装 / 升级 Vault 模板（按指纹区分当前版、旧版、改过、缺字段） |
+| `omem ingest` | 入库的确定性部分：`freeze` 由候选生成 Raw（逐字节可复现），`complete` 校验后标记已入库 |
+| `omem reconcile` | 两台电脑都入库同一候选后，记录"某页并入另一页"，让双方收敛 |
 | `omem digest` | 立即整理已结束的会话，把结论暂存进 inbox（`--now` 包括未空闲的会话，`--dry-run` 只报告） |
 | `omem doctor` / `check` | 只读体检：四个宿主的版本、安装方式、Vault 路径是否一致 / Vault 健康检查 |
 | `laya install` / `start` / `stop` / `status` | 管理本地 Laya 服务（`status` 显示分类头和检索器；`start --embed-model off` 关闭检索器） |
@@ -156,6 +158,8 @@ scripts/omem.mjs             omem 命令入口（记忆库工具）
 scripts/*-vault.mjs          omem export / import / projects / search / index 的实现
 lib/vault-transfer/          导出包、导入合并、projects.yaml 与 Git remote
 lib/cli-link.js              把 omem 链接到 ~/.local/bin
+lib/vault-ingest.js          入库的确定性步骤（冻结 Raw、标记完成）
+lib/vault-transfer/reconcile.js  导入时按候选 id 对账与合并记录（00-System/reconciliation.jsonl）
 lib/vault-templates.js       Vault 模板的分类、安装与升级；lib/template-hashes.json 是各版本模板指纹（scripts/build-template-hashes.mjs 生成）
 scripts/doctor.mjs           体检
 scripts/set-version.mjs      同步版本号

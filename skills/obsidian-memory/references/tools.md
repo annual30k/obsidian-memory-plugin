@@ -11,6 +11,8 @@ Only `omem index` needs the Laya service.
 
 Export, import and cross-machine project binding are in [transfer.md](transfer.md).
 Template install and checks (`omem templates`) are in [templates.md](templates.md).
+`omem ingest freeze|complete|status` is part of the Ingest steps in SKILL.md;
+`omem reconcile` is in [transfer.md](transfer.md).
 
 ## Section search: `omem search` (`search-vault.mjs`)
 

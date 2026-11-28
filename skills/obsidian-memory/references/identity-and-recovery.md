@@ -46,10 +46,13 @@ was interrupted, inspect the candidate path and read it back before retrying.
    candidate only after checking for an earlier ingest; reuse a verified existing
    Raw instead of renaming or duplicating it. Ambiguous identity requires a user
    decision, not automatic migration. Do not add fields to immutable legacy Raw.
-3. If Raw does not exist, re-read the candidate and freeze its factual evidence,
-   original source reference, capture context, sensitivity and attachment bytes.
-   `created` on Raw is the freeze time; `captured_at` is the candidate's creation
-   time. Keep conclusions out of Raw. Retain the Inbox candidate (in `inbox/` or
+3. If Raw does not exist, freeze it with `omem ingest freeze` (SKILL.md Ingest
+   step 2). That Raw is a pure function of the candidate (`frozen_by:
+   omem-ingest/1`): `created` and `captured_at` are the candidate's creation
+   time, and the freeze time and machine go in the ingest log entry
+   (`ingested_on`), so the same candidate frozen on two machines is the same
+   file. A hand-frozen Raw (fallback) keeps the old rule: `created` is the
+   freeze time; `captured_at` is the candidate's creation time. Keep conclusions out of Raw. Retain the Inbox candidate (in `inbox/` or
    optionally archived to `inbox/archive/YYYY-MM/` once processed) and its assets.
    When retrying or checking duplicates, inspect both `inbox/` and `inbox/archive/`.
 4. If Raw exists, verify its candidate identity, scope, original evidence/source

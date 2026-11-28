@@ -14,6 +14,8 @@ export const OMEM_COMMANDS = Object.freeze({
   import: "import-vault.mjs",
   projects: "projects-vault.mjs",
   templates: "templates-vault.mjs",
+  ingest: "ingest-vault.mjs",
+  reconcile: "reconcile-vault.mjs",
   search: "search-vault.mjs",
   index: "index-vault.mjs",
   doctor: "doctor.mjs",
@@ -27,6 +29,8 @@ Move:    omem export             pack the Vault + your Laya labels/heads into on
          omem import <file>      dry-run an import into this machine's Vault (--vault, --map id=dir, --yes)
          omem projects           list projects; bind <id> [dir] adds this machine's checkout; backfill-remotes
 Vault:   omem templates          are the Vault's templates this plugin's? install | update [--replace-custom]
+Ingest:  omem ingest freeze <id>  freeze a candidate into Raw (same bytes on every machine); complete <id> after Wiki/log
+         omem reconcile          pages ingested on both machines, parked by an import; fold <copy> --into <page>
 Recall:  omem search "<query>"   search Vault sections (file, ## section and line range)
          omem index              embed every Vault note now (needs the Laya service: laya start)
 Capture: omem digest             stage Inbox candidates from finished sessions now (--now, --dry-run)
