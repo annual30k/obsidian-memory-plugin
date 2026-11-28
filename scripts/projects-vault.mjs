@@ -23,6 +23,7 @@ import { backfillRemotes, bindProject, listProjects, setLocalOnly } from "../lib
 import { applyMerge, planMerge } from "../lib/vault-transfer/project-merge.js";
 import { likelyDuplicates, parseProjectsYaml } from "../lib/vault-transfer/projects.js";
 import { readProjectsText } from "../lib/vault-transfer/project-ops.js";
+import { exitAfterFlush } from "../lib/exit-after-flush.js";
 
 const USAGE = `Usage:
   omem projects [list] [--vault <path>] [--json]
@@ -136,4 +137,4 @@ export function main(argv = process.argv.slice(2), out = process.stdout, err = p
 const isEntrypoint = process.argv[1] && (() => {
   try { return realpathSync(path.resolve(process.argv[1])) === fileURLToPath(import.meta.url); } catch { return false; }
 })();
-if (isEntrypoint) process.exit(main());
+if (isEntrypoint) exitAfterFlush(main());

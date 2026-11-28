@@ -20,6 +20,7 @@ import { fileURLToPath } from "node:url";
 import { parseMemoryJudgeConfig } from "../lib/config.js";
 import { MemoryRouter } from "../lib/memory-router/router.js";
 import { buildGuidance } from "../lib/prompt.js";
+import { exitAfterFlush } from "../lib/exit-after-flush.js";
 
 // Rough token estimate: ~1 token per CJK character, ~4 characters per token otherwise.
 export function estimateTokens(text) {
@@ -232,7 +233,7 @@ const isEntrypoint = process.argv[1] && (() => {
 })();
 
 if (isEntrypoint) {
-  runEval().then((code) => process.exit(code), (err) => {
+  runEval().then((code) => exitAfterFlush(code), (err) => {
     process.stderr.write(`eval-laya failed: ${err.message}\n`);
     process.exit(1);
   });

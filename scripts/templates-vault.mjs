@@ -17,6 +17,7 @@ import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { resolveVaultPath } from "../lib/memory-router/vault-index.js";
 import { VAULT_TEMPLATE_DIR, templateStatus, updateTemplates } from "../lib/vault-templates.js";
+import { exitAfterFlush } from "../lib/exit-after-flush.js";
 
 const USAGE = `Usage:
   omem templates [status] [--vault <path>] [--json]
@@ -106,4 +107,4 @@ export function main(argv = process.argv.slice(2), out = process.stdout, err = p
 const isEntrypoint = process.argv[1] && (() => {
   try { return realpathSync(path.resolve(process.argv[1])) === fileURLToPath(import.meta.url); } catch { return false; }
 })();
-if (isEntrypoint) process.exit(main());
+if (isEntrypoint) exitAfterFlush(main());

@@ -32,6 +32,7 @@ import { evaluateFastPath } from "../lib/memory-router/fast-path.js";
 import { createOpenClawPlugin } from "../index.js";
 import { findPython } from "./python.mjs";
 import { computeMetrics, loadDataset } from "./eval-laya.mjs";
+import { exitAfterFlush } from "../lib/exit-after-flush.js";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const SERVICE_PY = path.join(ROOT, "lib", "laya-service", "service.py");
@@ -347,5 +348,5 @@ const isEntrypoint = process.argv[1] && (() => {
   try { return realpathSync(path.resolve(process.argv[1])) === fileURLToPath(import.meta.url); } catch { return false; }
 })();
 if (isEntrypoint) {
-  runBench().then(() => process.exit(0), (err) => { process.stderr.write(`bench-laya failed: ${err.message}\n`); process.exit(1); });
+  runBench().then(() => exitAfterFlush(0), (err) => { process.stderr.write(`bench-laya failed: ${err.message}\n`); process.exit(1); });
 }

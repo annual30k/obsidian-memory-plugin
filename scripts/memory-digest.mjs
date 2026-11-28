@@ -36,6 +36,7 @@ import {
 import { enqueueTurnEnd, sessionIdFor } from "../lib/memory-router/turn-context.js";
 import { listTranscripts, markTranscriptChecked, antigravityLastExchange } from "../lib/memory-router/transcripts.js";
 import { resolveVaultPath } from "../lib/memory-router/vault-index.js";
+import { exitAfterFlush } from "../lib/exit-after-flush.js";
 
 const WAITER_MAX_SLEEP_MS = 10 * 60 * 1000;
 const WAITER_LIFETIME_MS = 24 * 60 * 60 * 1000;
@@ -237,5 +238,5 @@ const isEntrypoint = process.argv[1] && (() => {
   try { return realpathSync(resolve(process.argv[1])) === fileURLToPath(import.meta.url); } catch { return false; }
 })();
 if (isEntrypoint) {
-  main().then((code) => process.exit(code)).catch(() => process.exit(0));
+  main().then((code) => exitAfterFlush(code)).catch(() => process.exit(0));
 }
