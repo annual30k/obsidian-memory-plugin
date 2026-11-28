@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * Codex UserPromptSubmit native hook for obsidian-memory-plugin.
+ * UserPromptSubmit native hook for obsidian-memory-plugin, shared by Codex and Claude Code (both load
+ * hooks/hooks.json and speak the same JSON; lib/memory-router/hook-host.js tells them apart).
  *
  * Runs synchronously before a prompt is submitted to the model.
  * In auto mode: Fast-Path -> Laya (if needed) -> injects additionalContext; fails open on error.
@@ -15,6 +16,7 @@ import { memoryJudgeFromEnv, memoryJudgeModeFromEnv } from "../lib/config.js";
 import { createMemoryRouter } from "../lib/memory-router/router.js";
 import { buildLayaNotice } from "../lib/prompt.js";
 import { resolveVaultPath } from "../lib/memory-router/vault-index.js";
+import { hookHost } from "../lib/memory-router/hook-host.js";
 
 // Fixed, user-facing block text; only the sanitized reason category is appended (never raw errors).
 export function strictBlockReason(category) {
@@ -87,10 +89,12 @@ async function main() {
   }
 
   const router = createMemoryRouter(judgeConfig, { useCache: true });
+  const host = hookHost(payload);
+  const audit = (t, extra = {}) => emitAuditTrace(t, { hostCapability: `${host}_user_prompt_submit`, ...extra });
 
   try {
     const decision = await router.evaluateRecall(promptText, null, {
-      host: "codex",
+      host,
       sessionKey: typeof payload.session_id === "string" ? payload.session_id : null,
       cwd: typeof payload.cwd === "string" ? payload.cwd : process.cwd(),
       vaultPath: resolveVaultPath()
@@ -100,7 +104,7 @@ async function main() {
     }
 
     if (decision.blocked) {
-      emitAuditTrace({
+      audit({
         ...(decision.trace || {}),
         decision: "block",
         reason: decision.reason
@@ -112,7 +116,7 @@ async function main() {
       return;
     }
 
-    emitAuditTrace(decision.trace);
+    audit(decision.trace);
 
     const notice = buildLayaNotice(decision);
     if (notice) {
@@ -131,7 +135,7 @@ async function main() {
     }
   } catch (_err) {
     process.stderr.write("[codex-hook] Evaluation error: evaluation_failed\n");
-    emitAuditTrace({
+    audit({
       route: "fallback",
       decision: mode === "strict" ? "block" : "none",
       reason: mode === "strict" ? "strict_mode_evaluation_error" : "evaluation_error",

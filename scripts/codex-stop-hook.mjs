@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * Codex Stop hook: runs when the agent is about to finish a turn. Two checks, in order:
+ * Stop hook shared by Codex and Claude Code (both load hooks/hooks.json; lib/memory-router/hook-host.js
+ * tells them apart): runs when the agent is about to finish a turn. Two checks, in order:
  *
  *  1. An explicit "remember this" request whose turn produced no inbox candidate: ask for one more pass
  *     ({"decision": "block", "reason": ...}). Once per request; turn-context.js marks it.
@@ -21,6 +22,7 @@ import { fileURLToPath } from "node:url";
 import { pendingCaptureEnforcement, judgeTurnEndCapture, turnEndNeedsScore, enqueueTurnEnd } from "../lib/memory-router/turn-context.js";
 import { DEFAULT_MEMORY_JUDGE, memoryJudgeFromEnv } from "../lib/config.js";
 import { createMemoryRouter } from "../lib/memory-router/router.js";
+import { hookHost } from "../lib/memory-router/hook-host.js";
 
 async function readStdin() {
   const chunks = [];
@@ -28,7 +30,11 @@ async function readStdin() {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-/** Last assistant message of a Codex rollout transcript (JSONL), or null. Reads at most the last 2 MB. */
+/**
+ * Last assistant message of a Codex rollout or a Claude Code session transcript (JSONL), or null. Reads at
+ * most the last 2 MB. Claude Code lines are {type:"assistant", message:{content:[{type:"text", text}]}};
+ * a line holding only tool calls is skipped.
+ */
 export function lastAssistantMessageFromTranscript(transcriptPath) {
   try {
     if (typeof transcriptPath !== "string" || !transcriptPath) return null;
@@ -40,6 +46,11 @@ export function lastAssistantMessageFromTranscript(transcriptPath) {
       if (!line) continue;
       let event;
       try { event = JSON.parse(line); } catch { continue; }
+      if (event?.type === "assistant" && event.isSidechain !== true && Array.isArray(event.message?.content)) {
+        const text = event.message.content.filter((c) => c?.type === "text" && typeof c.text === "string").map((c) => c.text).join("\n");
+        if (text.trim()) return text;
+        continue;
+      }
       const payload = event?.payload ?? {};
       if (event?.type === "event_msg" && payload.type === "task_complete" && typeof payload.last_agent_message === "string") return payload.last_agent_message;
       if (event?.type === "response_item" && payload.type === "message" && payload.role === "assistant" && Array.isArray(payload.content)) {
@@ -56,7 +67,7 @@ export function judgeConfigFromEnv(env = process.env) {
 }
 
 /**
- * options: { sessionStatePath, now, config, layaScore (number|null|undefined), readTranscript }.
+ * options: { sessionStatePath, now, config, layaScore (number|null|undefined), readTranscript, host, env }.
  * `layaScore` undefined means "not looked up"; the script passes the router's score when it has one.
  */
 export function decideStop(payload, options = {}) {
@@ -66,8 +77,9 @@ export function decideStop(payload, options = {}) {
   if ((options.config ?? DEFAULT_MEMORY_JUDGE).mode === "off") return null;
   const sessionKey = typeof payload.session_id === "string" ? payload.session_id : null;
   if (!sessionKey) return null;
+  const host = options.host ?? hookHost(payload, options.env ?? process.env);
   const stateOpts = { ...(options.sessionStatePath ? { sessionStatePath: options.sessionStatePath } : {}), ...(options.now ? { now: options.now } : {}) };
-  const pending = pendingCaptureEnforcement({ host: "codex", sessionKey, ...stateOpts });
+  const pending = pendingCaptureEnforcement({ host, sessionKey, ...stateOpts });
   if (pending) return { decision: "block", reason: pending.instruction };
   const config = options.config ?? DEFAULT_MEMORY_JUDGE;
   if (config.proactiveCapture === false || config.autoCapture === "off") return null;
@@ -75,11 +87,11 @@ export function decideStop(payload, options = {}) {
     : (options.readTranscript ?? lastAssistantMessageFromTranscript)(payload.transcript_path);
   if (!reply) return null;
   if (config.autoCapture === "digest") {
-    enqueueTurnEnd({ host: "codex", sessionKey, assistantText: reply, ...stateOpts,
+    enqueueTurnEnd({ host, sessionKey, assistantText: reply, ...stateOpts,
       ...(options.queueDir ? { queueDir: options.queueDir } : {}), ...(options.scheduleDigest ? { scheduleDigest: options.scheduleDigest } : {}) });
     return null;
   }
-  const verdict = judgeTurnEndCapture({ host: "codex", sessionKey, assistantText: reply, mode: config.autoCapture, layaScore: options.layaScore ?? null, ...stateOpts });
+  const verdict = judgeTurnEndCapture({ host, sessionKey, assistantText: reply, mode: config.autoCapture, layaScore: options.layaScore ?? null, ...stateOpts });
   if (!verdict || config.autoCapture !== "revise") return null;
   return { decision: "block", reason: verdict.instruction };
 }
@@ -101,7 +113,7 @@ export async function main() {
     const sessionKey = typeof payload.session_id === "string" ? payload.session_id : null;
     // No router (service discovery, health handshake, model call) unless the cheap features cannot decide.
     if (reply && config.mode !== "off" && config.proactiveCapture !== false && config.autoCapture !== "digest" &&
-        turnEndNeedsScore({ host: "codex", sessionKey, assistantText: reply, mode: config.autoCapture })) {
+        turnEndNeedsScore({ host: hookHost(payload), sessionKey, assistantText: reply, mode: config.autoCapture })) {
       router = createMemoryRouter(config, { useCache: true });
       layaScore = await router.captureScoreFor(reply);
     }

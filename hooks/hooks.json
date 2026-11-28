@@ -1,12 +1,12 @@
 {
-  "description": "Deterministic memory routing and proactive capture hooks for Codex.",
+  "description": "Deterministic memory routing and proactive capture hooks for Codex and Claude Code.",
   "hooks": {
     "UserPromptSubmit": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${PLUGIN_ROOT}/scripts/codex-hook.mjs\"",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/codex-hook.mjs\"",
             "timeout": 10
           }
         ]
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${PLUGIN_ROOT}/scripts/codex-stop-hook.mjs\"",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/codex-stop-hook.mjs\"",
             "timeout": 10
           }
         ]

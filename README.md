@@ -2,14 +2,14 @@
 
 独立、可复用的 Obsidian 长期记忆插件。本文档只说明本插件自身的宿主接入、规则与排障；应用产品可以选择集成它，但不拥有或复制它。
 
-将已有的 **obsidian-memory Skill 内置到 Antigravity、OpenClaw、Codex 与 Hermes 插件**。
+将已有的 **obsidian-memory Skill 内置到 Antigravity、OpenClaw、Codex、Claude Code 与 Hermes 插件**。
 插件负责加载入口与元数据配置；当前 Agent 按内置 Skill 建设与维护自生长知识库。
 整体分层、名词表（"查记忆提示 / 召回 / 记忆需求分"各指什么）和"写入由谁决定"见 [ARCHITECTURE.md](ARCHITECTURE.md)。
 
 ## 包含与依赖
 
 ```text
-宿主 (Antigravity / OpenClaw / Codex / Hermes)
+宿主 (Antigravity / OpenClaw / Codex / Claude Code / Hermes)
   → 本插件内置 obsidian-memory Skill
   → 宿主独立安装的完整 kepano/obsidian-skills 套件（按任务加载）
   → 受限的 Vault 文件系统读写（默认）
@@ -259,6 +259,31 @@ npm run check:codex
 该检查随本包提供，只依赖 Node.js；不依赖本机的 Codex 私有目录、Python 或
 额外的 Python 包。
 
+## Claude Code 接入
+
+根目录的 `.claude-plugin/plugin.json` 是 Claude Code 插件清单，`.claude-plugin/marketplace.json` 把本仓库声明为一个 Marketplace。Claude Code 和 Codex 用的是同一份 Skill（`skills/obsidian-memory/`）和同一份 `hooks/hooks.json`（`UserPromptSubmit` 召回提示、`Stop` 回合结束暂存），所以两边的记忆完全一样：读写同一个 Vault，自动暂存的候选也进同一个 Inbox，来源标为 `claude session …`。
+
+一步安装（Claude Code 2.1.275 及以上）：
+
+```sh
+claude plugin install obsidian-memory --marketplace annual30k/obsidian-memory-plugin
+```
+
+或在 Claude Code 里输入 `/plugin install obsidian-memory --marketplace annual30k/obsidian-memory-plugin`。Claude Code 的插件 hook 启用插件后直接生效，不需要像 Codex 那样再点一次"Trust all"。
+
+然后写入 Vault 路径和常驻规则（写进用户级 `~/.claude/CLAUDE.md`，设置了 `CLAUDE_CONFIG_DIR` 时写进该目录；只增删自己的标记区块）：
+
+```sh
+npm run setup:claude
+npm run setup:claude -- --vault "/absolute/path/to/My Vault" --yes
+```
+
+新开一个 Claude Code 会话即可使用。`npm run check:claude` 校验插件清单、Marketplace 和共用 hook；`omem doctor` 会列出 Claude Code 的插件版本、是否启用和 Vault 路径。
+
+两个宿主共用 hook，靠会话记录的位置（`~/.claude/projects/…` 或 `~/.codex/sessions/…`）和 Claude Code 的 hook 环境变量区分是谁在调用；hook 命令统一写 `${CLAUDE_PLUGIN_ROOT}`，两个宿主都会替换它。
+
+Claude Code 自带的 auto-memory（`~/.claude/projects/<项目>/memory/`）只在 Claude Code 里可见。需要在各个宿主之间共享的项目状态和决定，应当写进 Vault。
+
 ## Hermes 接入
 
 本包现在包含 Hermes 原生插件。它注册一个**缓存安全、每个新会话仅生成一次**的系统提示词区块，
@@ -385,7 +410,7 @@ npm run check:antigravity
 | `omem templates` | 检查 `00-System/templates/` 的 14 个模板：当前版 / 旧版未改动 / 改过但字段齐全 / 缺核心字段 / 缺失；`install` 补缺失的，`update` 再升级旧版，`--replace-custom` 连改过的也换掉（先备份） | 不需要 |
 | `omem ingest freeze / complete <候选id>` | 入库时由代码完成确定性的步骤：把候选冻结成 Raw（任何电脑上逐字节相同）、整理完成后把候选标记为已入库；Wiki 仍由 Agent 整理 | 不需要 |
 | `omem reconcile` | 列出导入时因"两台电脑都入库了同一条候选"而暂放的页面；`fold <暂放页> --into <本地页>` 记录合并，让两台电脑收敛到同一页 | 不需要 |
-| `omem digest` / `omem doctor` | 立即整理已结束的会话 / 只读检查四个宿主的安装和 Vault 路径 | 不需要 |
+| `omem digest` / `omem doctor` | 立即整理已结束的会话 / 只读检查各宿主的安装和 Vault 路径 | 不需要 |
 
 命令分两组：**`omem`** 是记忆库工具，不依赖 Laya（只有 `omem index` 要用 Laya 服务的检索模型）；
 **`laya`** 只管 Laya 服务和模型（`install`、`start`、`stop`、`status`、`label`、`train` 等）。
@@ -641,7 +666,7 @@ Laya 只看提示文本，不知道 Vault 里已经有哪些笔记。插件会�
 分两条路（详见 [ARCHITECTURE.md](ARCHITECTURE.md#写入由谁决定)）：
 
 - **显式要求**（"记住……""记一下这个坑"）：回合内同步完成，agent 按 Skill 写 inbox 候选。OpenClaw / Codex 在回合结束时检查 inbox 里有没有这一轮新写或更新的候选，没有就要求模型补一轮（每次请求最多一次）。回合结束时仍没写入的（agent 没照做，或 Antigravity / Hermes 这类没有回合结束控制的宿主），由后台整理把你的原话写成候选，不会丢。
-- **自动暂存**（`autoCapture: "digest"`，默认）：回合结束时钩子只把本轮提问和最终回复（≥ 200 字，脱敏后）追加到本地队列，不调用模型、不让你等。会话空闲 20 分钟后，后台的会话整理把整个会话交给本机的一个大模型 CLI（优先已登录的 Codex，用你在 Codex 里配置的模型；没有就用 Hermes），由它挑出以后的会话还用得上、代码里又看不出来的内容：决策和原因、你定下的做法、你本人的偏好、环境事实，只在会反复踩到时才记技术坑；进度汇报、普通 bug 修复、你的提问本身都不记。每个会话最多 3～5 条（按会话长度），每条是一句能独立看懂的陈述加会话里的原话证据，标 `origin: auto-digest`。调用在后台进行（每个会话约 10～30 秒），关闭钩子和插件、不留会话记录；失败时保留队列下次重试。本机两个 CLI 都没有时，退回按结论词和 Laya 分选轮次的旧办法（原话证据，质量明显较差，`npm run doctor` 会提示）。你不再聊天也会整理（后台等待进程），下一轮 agent 会用一句话告诉你暂存了几条；`npm run doctor` 能看到队列积压和上次整理时间。OpenClaw 的定时任务、心跳和模型报错的回合不入队。Vault 未初始化、项目 `rules.md` 里写了 `no-auto-capture`、含凭据时都不写；项目内容不会进 Global。**会话没有对应项目时不猜范围**：结论先放在 Vault 之外的暂存区，下一轮 agent 会问你归到哪个项目、Global 还是丢弃（关于你本人的偏好，如"我对花生过敏"，直接进 Global）；30 天未处理自动过期。四个宿主都覆盖：Codex `Stop`、OpenClaw `agent_end`、Hermes `post_llm_call`、Antigravity 在下一轮开始时补记上一轮、会话空闲后从会话记录补记最后一轮。
+- **自动暂存**（`autoCapture: "digest"`，默认）：回合结束时钩子只把本轮提问和最终回复（≥ 200 字，脱敏后）追加到本地队列，不调用模型、不让你等。会话空闲 20 分钟后，后台的会话整理把整个会话交给本机的一个大模型 CLI（优先已登录的 Codex，用你在 Codex 里配置的模型；没有就用 Hermes），由它挑出以后的会话还用得上、代码里又看不出来的内容：决策和原因、你定下的做法、你本人的偏好、环境事实，只在会反复踩到时才记技术坑；进度汇报、普通 bug 修复、你的提问本身都不记。每个会话最多 3～5 条（按会话长度），每条是一句能独立看懂的陈述加会话里的原话证据，标 `origin: auto-digest`。调用在后台进行（每个会话约 10～30 秒），关闭钩子和插件、不留会话记录；失败时保留队列下次重试。本机两个 CLI 都没有时，退回按结论词和 Laya 分选轮次的旧办法（原话证据，质量明显较差，`npm run doctor` 会提示）。你不再聊天也会整理（后台等待进程），下一轮 agent 会用一句话告诉你暂存了几条；`npm run doctor` 能看到队列积压和上次整理时间。OpenClaw 的定时任务、心跳和模型报错的回合不入队。Vault 未初始化、项目 `rules.md` 里写了 `no-auto-capture`、含凭据时都不写；项目内容不会进 Global。**会话没有对应项目时不猜范围**：结论先放在 Vault 之外的暂存区，下一轮 agent 会问你归到哪个项目、Global 还是丢弃（关于你本人的偏好，如"我对花生过敏"，直接进 Global）；30 天未处理自动过期。五个宿主都覆盖：Codex 和 Claude Code `Stop`、OpenClaw `agent_end`、Hermes `post_llm_call`、Antigravity 在下一轮开始时补记上一轮、会话空闲后从会话记录补记最后一轮。
 
 ```sh
 omem digest              # 立即整理已空闲的会话
@@ -693,7 +718,7 @@ OpenClaw 在 `memoryJudge.autoCapture` 设置；Hermes 在插件设置 `auto_cap
 
 长期规则陈述由 Laya 持久性判断头识别（作者的 520 条真实提示上折外精确率约 60%、召回约 40%）。想让它更准：`laya label` 时用 `d` 标出陈述长期规则的提示，然后 `npm run laya:train -- --target durable`。
 
-日常只需两步：`laya label` 标注新积累的提示，`laya train` 重新训练并自动重启服务（`laya help` 列出 Laya 的全部子命令；对应的 `npm run laya:*` 仍可用）。`omem doctor`（或 `npm run doctor`）只读地列出四个宿主各自的插件版本、安装方式和 Vault 路径，路径不一致、插件落后、软链接到开发目录、Codex 钩子重复注册都会标出来。
+日常只需两步：`laya label` 标注新积累的提示，`laya train` 重新训练并自动重启服务（`laya help` 列出 Laya 的全部子命令；对应的 `npm run laya:*` 仍可用）。`omem doctor`（或 `npm run doctor`）只读地列出各宿主的插件版本、安装方式和 Vault 路径，路径不一致、插件落后、软链接到开发目录、Codex 钩子重复注册都会标出来。
 
 ```sh
 npm run laya:label -- --stats   # 统计：各判断数量、补判断次数、疑似漏判（标注时 d = 这句话陈述了长期规则）
