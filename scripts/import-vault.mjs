@@ -15,7 +15,8 @@ import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { resolveVaultPath } from "../lib/memory-router/vault-index.js";
 import { isEncrypted } from "../lib/vault-transfer/archive.js";
-import { applyImport, planImport } from "../lib/vault-transfer/import.js";
+import { applyImport, openBundle, planImport } from "../lib/vault-transfer/import.js";
+import { ancestorsFromEntries } from "../lib/vault-transfer/sync-base.js";
 import { getPassphrase } from "../lib/vault-transfer/passphrase.js";
 
 const SCRIPTS = path.dirname(fileURLToPath(import.meta.url));
@@ -26,6 +27,9 @@ const USAGE = `Usage: omem import <bundle> [--vault <path>] [options]
   --map <project-id>=<dir>   where a project's code lives on this machine (repeatable)
   --no-laya                  leave ~/.laya untouched
   --replace-heads            use the bundle's trained Laya heads instead of the local ones
+  --base <older bundle>      the bundle both machines last started from (e.g. the export this Vault was
+                             copied from): a file only one side changed since then is not a conflict.
+                             Needed once for Vaults synced before 0.13.1; later imports remember it
   --use-incoming-templates   replace edited or hand-written local templates with the bundle's (backed up
                              first); unedited older templates are upgraded without it
   --passphrase-file <file>   passphrase of an encrypted bundle (or OBSIDIAN_MEMORY_PASSPHRASE, or a prompt)
@@ -34,7 +38,7 @@ const USAGE = `Usage: omem import <bundle> [--vault <path>] [options]
 `;
 
 export function parseArgs(argv = []) {
-  const opts = { bundle: null, vaultPath: null, maps: {}, includeLaya: true, replaceHeads: false, useIncomingTemplates: false, passphraseFile: null, yes: false, json: false, help: false };
+  const opts = { bundle: null, vaultPath: null, maps: {}, includeLaya: true, replaceHeads: false, useIncomingTemplates: false, base: null, passphraseFile: null, yes: false, json: false, help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--vault" && argv[i + 1]) opts.vaultPath = argv[++i];
@@ -47,6 +51,7 @@ export function parseArgs(argv = []) {
     else if (a === "--no-laya") opts.includeLaya = false;
     else if (a === "--replace-heads") opts.replaceHeads = true;
     else if (a === "--use-incoming-templates") opts.useIncomingTemplates = true;
+    else if (a === "--base" && argv[i + 1]) opts.base = argv[++i];
     else if (a === "--passphrase-file" && argv[i + 1]) opts.passphraseFile = argv[++i];
     else if (a === "--yes" || a === "-y") opts.yes = true;
     else if (a === "--json") opts.json = true;
@@ -66,6 +71,12 @@ const STATUS = {
   "map-missing": "--map directory not found",
   "map-conflict": "--map directory already belongs to another project"
 };
+
+async function loadBase(file, opts, deps) {
+  const buffer = fs.readFileSync(file);
+  const passphrase = isEncrypted(buffer) ? await (deps.getPassphrase ?? getPassphrase)({ file: opts.passphraseFile }) : null;
+  return ancestorsFromEntries(openBundle(buffer, { passphrase }).entries);
+}
 
 function hostsToRepoint(target, collect) {
   let report;
@@ -88,6 +99,14 @@ function printPlan(plan, out, applied) {
   out.write(`Target: ${plan.target.path} (${{ missing: "new folder", empty: "empty folder", vault: "existing Vault, merging" }[plan.target.state]})\n\n`);
   const verb = applied ? "" : "would be ";
   out.write(`Vault files: ${v.add.length} ${verb}added, ${v.same.length} already identical, ${v.merged.length} log(s) ${verb}merged, ${v.conflicts.length} conflict(s), ${v.keptLocal.length} kept local${v.dirs.length ? `; ${v.dirs.length} folder(s) ${verb}created` : ""}\n`);
+  if (v.fastForward.length || v.keptNewer.length || v.deletedHere.length || v.deletedThere.length) {
+    out.write(`Changed on one side only since the last sync (ancestors from ${plan.sync.ancestors}):\n`);
+    if (v.fastForward.length) out.write(`  ${v.fastForward.length} file(s) changed only on the other machine: ${verb}updated here\n`);
+    for (const r of v.fastForward.slice(0, 15)) out.write(`    ${r}\n`);
+    if (v.keptNewer.length) out.write(`  ${v.keptNewer.length} file(s) changed only here: kept\n`);
+    if (v.deletedHere.length) out.write(`  ${v.deletedHere.length} file(s) deleted here since: not re-added\n`);
+    if (v.deletedThere.length) out.write(`  ${v.deletedThere.length} file(s) the other machine no longer has: kept here (delete by hand if intended)\n`);
+  }
   for (const x of v.merged) out.write(`  merged  ${x.rel} (+${x.added} entries)\n`);
   for (const c of v.conflicts.slice(0, 30)) out.write(`  conflict ${c.rel}\n`);
   if (v.conflicts.length > 30) out.write(`  … and ${v.conflicts.length - 30} more\n`);
@@ -160,6 +179,7 @@ export async function main(argv = process.argv.slice(2), out = process.stdout, e
     const plan = planImport(buffer, {
       targetVault: target, passphrase, maps: opts.maps, includeLaya: opts.includeLaya, replaceHeads: opts.replaceHeads,
       useIncomingTemplates: opts.useIncomingTemplates,
+      base: opts.base ? await loadBase(path.resolve(opts.base), opts, deps) : null,
       ...(deps.layaDir ? { layaDir: deps.layaDir } : {}), ...(deps.now ? { now: deps.now } : {})
     });
     if (opts.yes) {
